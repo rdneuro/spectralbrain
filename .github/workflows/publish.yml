@@ -1,0 +1,135 @@
+# .github/workflows/publish.yml
+# ──────────────────────────────────────────────────────────────────────
+# Publish to PyPI — triggered automatically when you create a GitHub
+# Release (which also creates a git tag).
+#
+# Security model: OIDC Trusted Publishers (no API tokens stored).
+# Build and publish run in SEPARATE jobs with different permissions,
+# following PyPA's recommended security architecture.
+#
+# Setup required (one-time):
+#   1. Go to https://pypi.org/manage/account/publishing/
+#   2. Add a "pending publisher" with:
+#        - PyPI project name:  spectralbrain
+#        - Owner:              <your-github-username-or-org>
+#        - Repository:         spectralbrain
+#        - Workflow name:      publish.yml
+#        - Environment name:   pypi
+#   3. In your GitHub repo → Settings → Environments, create
+#      an environment called "pypi" with protection rules
+#      (recommended: require manual approval for production).
+#   4. Repeat steps 1-3 for TestPyPI if desired (environment: testpypi).
+# ──────────────────────────────────────────────────────────────────────
+
+name: Publish to PyPI
+
+on:
+  release:
+    types: [published]
+
+# ── Job 1: Build ──────────────────────────────────────────────────────
+# Builds sdist + wheel in a RESTRICTED environment (no special perms).
+# Uploads the built artifacts for the publish job to consume.
+jobs:
+  build:
+    name: Build distribution
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # hatch-vcs needs full git history + tags
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: ">=0.11"
+
+      - name: Build sdist and wheel
+        run: uv build
+
+      - name: Verify version matches release tag
+        run: |
+          # Extract version from the built wheel filename.
+          WHEEL=$(ls dist/*.whl)
+          PKG_VERSION=$(echo "$WHEEL" | sed -E 's/.*-([0-9]+\.[0-9]+\.[0-9]+[^-]*)-py.*/\1/')
+          TAG_VERSION="${GITHUB_REF_NAME#v}"  # strip leading 'v'
+
+          echo "Package version: $PKG_VERSION"
+          echo "Release tag:     $TAG_VERSION"
+
+          if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::Version mismatch! Package=$PKG_VERSION, Tag=$TAG_VERSION"
+            echo "Make sure hatch-vcs picks up the git tag correctly."
+            exit 1
+          fi
+
+      - name: Inspect distribution artifacts
+        run: |
+          ls -lh dist/
+          # Quick sanity: make sure the wheel contains the package.
+          python3 -m zipfile -l dist/*.whl | grep "spectralbrain/__init__.py"
+
+      # Upload as a GitHub Actions artifact so the publish job can grab it.
+      - name: Upload distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-package-distributions
+          path: dist/
+          if-no-files-found: error
+
+  # ── Job 2: Publish to TestPyPI (optional dry-run) ──────────────────
+  # Runs first as a sanity check.  If you don't use TestPyPI, you can
+  # remove this job and drop the `needs: [publish-testpypi]` from the
+  # real publish job below.
+  publish-testpypi:
+    name: Publish to TestPyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment: testpypi       # GitHub Environment for TestPyPI
+    permissions:
+      id-token: write           # REQUIRED for OIDC trusted publishing
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: python-package-distributions
+          path: dist/
+
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          print-hash: true
+          skip-existing: true   # don't fail if this version already on TestPyPI
+
+  # ── Job 3: Publish to PyPI (the real deal) ─────────────────────────
+  publish-pypi:
+    name: Publish to PyPI
+    needs: [build, publish-testpypi]
+    runs-on: ubuntu-latest
+    environment: pypi           # GitHub Environment for PyPI — set up manual approval!
+    permissions:
+      id-token: write           # REQUIRED for OIDC trusted publishing
+      contents: write           # needed to attach assets to the release
+
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: python-package-distributions
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          print-hash: true
+          # attestations: true  # Uncomment when Sigstore attestations stabilize
+
+      # Attach the built wheel and sdist to the GitHub Release page
+      # so users can download them directly from GitHub too.
+      - name: Upload release assets to GitHub
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" dist/* \
+            --repo "${{ github.repository }}"
