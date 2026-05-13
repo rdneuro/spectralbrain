@@ -70,6 +70,7 @@ dependencies = [
 
 gpu = [
     "torch>=2.4",
+    "torchvision",
     "cupy-cuda13x; platform_system != 'Darwin'",
     "jax[cuda13]",
 ]
