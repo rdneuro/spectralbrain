@@ -1,0 +1,160 @@
+# environment.yml — SpectralBrain + computational neuroscience workbench
+#
+# A single, robust conda environment pinned to Python 3.11 (required by
+# yabplot and open3d).  Uses conda-forge exclusively — do NOT mix with
+# the 'defaults' or 'pytorch' channels to avoid ABI conflicts.
+#
+# Create:   conda env create -f environment.yml
+# Update:   conda env update -f environment.yml --prune
+# Lock:     conda-lock lock -f environment.yml -p linux-64 -p osx-arm64
+# Activate: conda activate spectralbrain
+#
+# For the SpectralBrain library itself in editable mode, after activating:
+#   pip install -e ".[full]"
+# Or, for faster resolution:
+#   uv pip install -e ".[full]"
+
+name: spectralbrain
+channels:
+  - conda-forge
+
+dependencies:
+  # ────────────────────────────────────────────────────────────────────
+  # Python — pinned to 3.11 (yabplot / open3d / hippunfold-plot ceiling)
+  # ────────────────────────────────────────────────────────────────────
+  - python=3.11
+
+  # ────────────────────────────────────────────────────────────────────
+  # Core scientific computing
+  # ────────────────────────────────────────────────────────────────────
+  - numpy>=2.0
+  - scipy>=1.13
+  - scikit-learn>=1.4
+  - pandas>=2.2
+  - statsmodels>=0.14
+  - pingouin>=0.5
+  - networkx>=3.2
+  - h5py>=3.10
+  - sympy>=1.12
+
+  # ────────────────────────────────────────────────────────────────────
+  # Neuroimaging — core I/O and analysis
+  # ────────────────────────────────────────────────────────────────────
+  - nibabel>=5.2
+  - nilearn>=0.10
+  - dipy>=1.9
+  - mne>=1.7
+  - mne-connectivity>=0.7
+  - pybids>=0.16
+  - templateflow>=24.0
+  - fslpy>=3.18
+  - datalad>=1.0
+  - brainspace>=0.1.10
+
+  # ────────────────────────────────────────────────────────────────────
+  # Spectral geometry and 3D surfaces
+  # ────────────────────────────────────────────────────────────────────
+  - lapy>=1.0
+  - trimesh>=4.0
+  - igl>=2.5              # libigl Python bindings
+  - pyglet>=2.0
+  - vtk>=9.3
+  - pyvista>=0.44
+  - pyvistaqt>=0.11
+
+  # ────────────────────────────────────────────────────────────────────
+  # 2D visualization
+  # ────────────────────────────────────────────────────────────────────
+  - matplotlib>=3.8
+  - seaborn>=0.13
+  - plotly>=5.18
+  - statannotations
+  - python-ternary
+
+  # ────────────────────────────────────────────────────────────────────
+  # 3D visualization
+  # ────────────────────────────────────────────────────────────────────
+  - vedo>=2024.5
+
+  # ────────────────────────────────────────────────────────────────────
+  # Deep learning (conda-forge CUDA builds — single source of truth)
+  # Comment out pytorch-cuda for CPU-only machines.
+  # ────────────────────────────────────────────────────────────────────
+  - pytorch>=2.4
+  - torchvision
+  - torchaudio
+  - pytorch-cuda=12.4     # ← remove this line for CPU-only environments
+  - lightning>=2.3
+
+  # ────────────────────────────────────────────────────────────────────
+  # Bayesian inference
+  # ────────────────────────────────────────────────────────────────────
+  - pymc>=5.16
+  - arviz>=0.18
+  - bambi>=0.14
+  - nutpie>=0.12          # Rust NUTS sampler — fastest on conda-forge
+
+  # ────────────────────────────────────────────────────────────────────
+  # Jupyter / interactive / Trame
+  # ────────────────────────────────────────────────────────────────────
+  - jupyterlab>=4.2
+  - ipywidgets>=8.1
+  - trame>=3.5
+  - trame-vtk
+  - trame-vuetify
+  - nodejs>=20
+
+  # ────────────────────────────────────────────────────────────────────
+  # Graph and network analysis
+  # ────────────────────────────────────────────────────────────────────
+  - networkx>=3.2
+  - python-igraph>=0.11
+
+  # ────────────────────────────────────────────────────────────────────
+  # Development and testing
+  # ────────────────────────────────────────────────────────────────────
+  - pytest>=8.0
+  - pytest-cov>=5.0
+  - ruff>=0.5
+  - pre-commit>=3.5
+
+  # ────────────────────────────────────────────────────────────────────
+  # Build toolchain (needed by some pip packages below)
+  # ────────────────────────────────────────────────────────────────────
+  - pip
+  - setuptools>=70
+  - wheel
+  - cython>=3.0
+  - cmake>=3.27
+
+  # ────────────────────────────────────────────────────────────────────
+  # pip-only / research-only packages (not on conda-forge or pip is
+  # the canonical install method)
+  # ────────────────────────────────────────────────────────────────────
+  - pip:
+    # 3D point cloud analysis
+    - open3d>=0.19
+    - meshplot
+
+    # Brain-specific visualization
+    - scienceplots>=2.1
+    - yabplot
+    - hippunfold-plot
+    - hippomaps
+    - enigmatoolbox
+
+    # ANTsPy (complex build; pip wheel is more reliable)
+    - antspyx>=0.4
+
+    # SuStaIn (disease progression modeling)
+    - git+https://github.com/ucl-pond/pySuStaIn.git
+
+    # SpectralBrain itself (editable install from local checkout)
+    # Uncomment after cloning the repo:
+    # - -e ".[full]"
+
+variables:
+  # Prevent macOS OpenMP duplicate-runtime crash
+  KMP_DUPLICATE_LIB_OK: "TRUE"
+  # Force EGL for headless rendering (VTK 9.5+ PyPI wheel has EGL built-in)
+  PYOPENGL_PLATFORM: "egl"

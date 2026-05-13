@@ -1,0 +1,245 @@
+# pyproject.toml — SpectralBrain
+# PEP 621 (metadata) + PEP 735 (dependency-groups) + hatchling build backend.
+
+[build-system]
+requires = ["hatchling>=1.27", "hatch-vcs>=0.4"]
+build-backend = "hatchling.build"
+
+# =============================================================================
+# Project metadata (PEP 621)
+# =============================================================================
+[project]
+name = "spectralbrain"
+dynamic = ["version"]
+description = "Spectral shape analysis for brain structures via the Laplace-Beltrami operator."
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+license = "MIT"
+license-files = ["LICENSE"]
+keywords = [
+    "neuroscience", "neuroimaging", "spectral-analysis", "laplace-beltrami",
+    "shape-analysis", "brain", "morphometry", "HKS", "WKS", "ShapeDNA",
+]
+authors = [
+    { name = "Rodrigo Dalvit", email = "rodrigo.dalvit@posgrad.ufsc.br" },
+]
+maintainers = [
+    { name = "Rodrigo Dalvit", email = "rodrigo.dalvit@posgrad.ufsc.br" },
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Medical Science Apps.",
+    "Topic :: Scientific/Engineering :: Visualization",
+    "Typing :: Typed",
+]
+
+# ── Core runtime dependencies ────────────────────────────────────────────────
+# Strategy: lower bound only (SPEC-0), no upper bound unless confirmed breakage.
+dependencies = [
+    # Core scientific
+    "numpy>=1.26",
+    "scipy>=1.13",
+    "scikit-learn>=1.4",
+    # Neuroimaging I/O
+    "nibabel>=5.2",
+    # Spectral geometry (Laplace-Beltrami)
+    "lapy>=1.0",
+    # 3D visualization core
+    "pyvista>=0.44",
+    "vtk>=9.3",
+    # 2D visualization core
+    "matplotlib>=3.8",
+    "seaborn>=0.13",
+    # Data handling
+    "pandas>=2.2",
+    "h5py>=3.10",
+    # CLI / UX
+    "tqdm>=4.66",
+    "rich>=13.7",
+]
+
+# ── Optional dependency groups (user-facing extras via pip install .[extra]) ──
+[project.optional-dependencies]
+
+gpu = [
+    "torch>=2.4",
+    "cupy-cuda12x>=13.0; platform_system != 'Darwin'",
+    "jax[cpu]>=0.4.30",
+]
+
+bayesian = [
+    "pymc>=5.16",
+    "arviz>=0.18",
+    "bambi>=0.14",
+]
+
+viz = [
+    "vedo>=2024.5",
+    "open3d>=0.19; python_version < '3.13'",
+    "scienceplots>=2.1",
+    "yabplot; python_version == '3.11.*'",
+    "hippunfold-plot",
+    "brainspace>=0.1.16",
+    "hippomaps",
+]
+
+neuro = [
+    "nilearn>=0.13",
+    "dipy>=1.9",
+    "mne>=1.7",
+    "mne-connectivity>=0.7",
+    "pybids>=0.16",
+    "templateflow>=24.0",
+    "antspyx>=0.4; platform_system != 'Windows'",
+    "brainspace>=0.1.16",
+]
+
+notebooks = [
+    "jupyterlab>=4.2",
+    "ipywidgets>=8.1",
+    "trame>=3.6",
+    "trame-vtk",
+    "trame-vuetify",
+]
+
+full = [
+    "spectralbrain[gpu,bayesian,viz,neuro,notebooks]",
+]
+
+# =============================================================================
+# PEP 735 — dependency groups (NOT shipped in wheel; dev/CI only)
+# Install: uv sync --group dev   OR   pip install --group dev (pip >= 25.0)
+# =============================================================================
+[dependency-groups]
+dev = [
+    { include-group = "test" },
+    { include-group = "lint" },
+    { include-group = "docs" },
+    "ipython>=8.20",
+    "jupyterlab>=4.2",
+]
+
+test = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "pytest-xdist>=3.5",
+    "hypothesis>=6.100",
+]
+
+lint = [
+    "ruff>=0.5",
+    "mypy>=1.10",
+    "pre-commit>=3.7",
+]
+
+docs = [
+    "sphinx>=7.3",
+    "pydata-sphinx-theme>=0.15",
+    "myst-parser>=3.0",
+    "sphinx-design>=0.6",
+    "numpydoc>=1.7",
+]
+
+# =============================================================================
+# Project URLs
+# =============================================================================
+[project.urls]
+Homepage      = "https://github.com/spectralbrain/spectralbrain"
+Documentation = "https://spectralbrain.readthedocs.io"
+Repository    = "https://github.com/spectralbrain/spectralbrain"
+Issues        = "https://github.com/spectralbrain/spectralbrain/issues"
+Changelog     = "https://github.com/spectralbrain/spectralbrain/blob/main/CHANGELOG.md"
+
+# =============================================================================
+# Build configuration
+# =============================================================================
+[tool.hatch.version]
+source = "vcs"
+fallback-version = "0.1.0.dev0"
+
+[tool.hatch.build.targets.wheel]
+packages = ["spectralbrain"]
+
+[tool.hatch.build.targets.sdist]
+exclude = [
+    ".github", "docs/_build", "tests/data/*.nii.gz",
+    "notebooks", "*.egg-info",
+]
+
+# =============================================================================
+# uv configuration
+# =============================================================================
+[tool.uv]
+default-groups = ["dev"]
+
+# PyTorch from official CUDA wheel index (only used with --extra gpu)
+[[tool.uv.index]]
+name     = "pytorch-cu126"
+url      = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+[tool.uv.sources]
+torch       = [{ index = "pytorch-cu126", extra = "gpu" }]
+torchvision = [{ index = "pytorch-cu126", extra = "gpu" }]
+
+# =============================================================================
+# Tool configuration
+# =============================================================================
+
+# ── Ruff ──
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "NPY", "RUF"]
+ignore = ["E501"]  # line length handled by formatter
+
+[tool.ruff.lint.isort]
+known-first-party = ["spectralbrain"]
+
+# ── Pytest ──
+[tool.pytest.ini_options]
+minversion = "8.0"
+addopts = "-ra --strict-markers --strict-config -x"
+testpaths = ["tests"]
+filterwarnings = [
+    "error",
+    "ignore::DeprecationWarning:lapy.*",
+    "ignore::DeprecationWarning:nibabel.*",
+    "ignore::PendingDeprecationWarning",
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "gpu: marks tests requiring GPU",
+    "bayesian: marks tests requiring PyMC",
+]
+
+# ── Coverage ──
+[tool.coverage.run]
+source = ["spectralbrain"]
+branch = true
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "pass",
+]
+show_missing = true
+skip_empty = true
+
+# ── MyPy ──
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
