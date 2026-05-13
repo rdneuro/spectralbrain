@@ -21,10 +21,10 @@ keywords = [
     "shape-analysis", "brain", "morphometry", "HKS", "WKS", "ShapeDNA",
 ]
 authors = [
-    { name = "Rodrigo Dalvit", email = "rodrigo.dalvit@posgrad.ufsc.br" },
+    { name = "Rodrigo Debona", email = "r.debona@posgrad.ufsc.br" },
 ]
 maintainers = [
-    { name = "Rodrigo Dalvit", email = "rodrigo.dalvit@posgrad.ufsc.br" },
+    { name = "Rodrigo Debona", email = "r.debona@posgrad.ufsc.br" },
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -70,8 +70,8 @@ dependencies = [
 
 gpu = [
     "torch>=2.4",
-    "cupy-cuda12x>=13.0; platform_system != 'Darwin'",
-    "jax[cpu]>=0.4.30",
+    "cupy-cuda13x; platform_system != 'Darwin'",
+    "jax[cuda13]",
 ]
 
 bayesian = [
