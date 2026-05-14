@@ -73,6 +73,7 @@ gpu = [
     "torchvision",
     "cupy-cuda13x; platform_system != 'Darwin'",
     "jax[cuda13]",
+    "jaxlib",
 ]
 
 bayesian = [
