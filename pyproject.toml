@@ -87,7 +87,7 @@ viz = [
     "scienceplots>=2.1",
     "yabplot; python_version == '3.11.*'",
     "hippunfold-plot",
-    "brainspace>=0.1.16",
+    "brainspace",
     "hippomaps",
 ]
 
