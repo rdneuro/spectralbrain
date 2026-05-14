@@ -92,14 +92,14 @@ viz = [
 ]
 
 neuro = [
-    "nilearn>=0.13",
+    "nilearn",
     "dipy>=1.9",
     "mne>=1.7",
     "mne-connectivity>=0.7",
     "pybids>=0.16",
     "templateflow>=24.0",
     "antspyx>=0.4; platform_system != 'Windows'",
-    "brainspace>=0.1.16",
+    "brainspace",
 ]
 
 notebooks = [
