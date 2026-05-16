@@ -1,4 +1,4 @@
-"""SpectralBrain statistics — EDA, frequentist, Bayesian, normative, surrogates."""
+"""SpectralBrain statistics — EDA, frequentist, Bayesian, normative, surrogates, clustering."""
 
 from spectralbrain.statistics.eda import (  # noqa: F401
     SpectralQCReport, spectral_qc,
@@ -35,4 +35,43 @@ from spectralbrain.statistics.surrogates import (  # noqa: F401
     null_spin_permutation, null_subject_permutation,
     null_edge_rewiring, null_parametric,
     SyntheticDescriptors, SyntheticMesh, SyntheticPointCloud,
+)
+from spectralbrain.statistics.clustering import (  # noqa: F401
+    # Result containers
+    ClusterResult, TemporalClusterResult, FusionResult,
+    BayesianClusterConfirmation,
+    VineyardResult, MapperResult, TensorDecompositionResult,
+    ScaleSpaceBlobResult,
+    # Distance / affinity construction
+    build_descriptor_distance, build_hybrid_distance,
+    build_hks_affinity_graph,
+    # Spatial clustering
+    cluster_hdbscan, cluster_leiden, cluster_gnmf, cluster_dpmm,
+    cluster_persistence, cluster_spectral_coclustering,
+    # Temporal / scale clustering
+    cluster_temporal_fpca, cluster_temporal_dtw,
+    # Spatio-temporal joint clustering
+    cluster_spatiotemporal_gnmf, cluster_spatiotemporal_stdbscan,
+    # HKS + WKS descriptor fusion
+    fuse_concatenate, fuse_joint_nmf, fuse_multi_kernel,
+    # Bayesian cluster confirmation
+    confirm_clusters_bayesian,
+    # Quality metrics
+    cluster_quality, cluster_comparison,
+    # Persistence vineyards
+    cluster_vineyards,
+    # Mapper TDA
+    cluster_mapper,
+    # Tensor decomposition
+    cluster_tensor_decomposition,
+    # Joint time-vertex GSP
+    denoise_joint_timevertex, cluster_joint_spectral,
+    # Scale-space blob tracking
+    cluster_scalespace_blobs,
+    # Multi-view clustering
+    cluster_multiview,
+    # Wavelet clustering
+    cluster_wavelet_coefficients,
+    # Convenience
+    auto_cluster,
 )

@@ -1,4 +1,4 @@
-"""SpectralBrain visualization — 6 modules across 2D stats, 3D brain, and geometry.
+"""SpectralBrain visualization — 7 modules across 2D stats, 3D brain, geometry, and clustering.
 
 ============================  ==========================  ============================
 Viz module                    Domain                      Paired statistics module
@@ -9,6 +9,7 @@ Viz module                    Domain                      Paired statistics modu
 ``bayes``                     Posterior / trace / ROPE     ``statistics.bayesian``
 ``geometry.points``           Point cloud 3D renders      ``statistics.eda``
 ``geometry.meshes``           Mesh 3D renders             ``statistics.eda``
+``clusters``                  Cluster 3D + 2D plots       ``statistics.clustering``
 ============================  ==========================  ============================
 """
 
@@ -64,4 +65,22 @@ from spectralbrain.viz.geometry.meshes import (  # noqa: F401
     plot_mesh, plot_wireframe, plot_curvature,
     plot_multi_view, plot_mesh_comparison,
     plot_scalar_difference, plot_mesh_pyvista,
+)
+
+# ── clusters ──
+from spectralbrain.viz.clusters import (  # noqa: F401
+    CLUSTER_COLORS, VIEWS_3POSE,
+    # 3D mesh renders (vedo)
+    plot_cluster_map, plot_cluster_boundaries,
+    plot_method_comparison_3d, plot_gnmf_components,
+    plot_soft_membership, plot_cluster_exploded,
+    plot_hks_cluster_progression, plot_fusion_panel,
+    # 2D statistical plots (matplotlib)
+    plot_cluster_profiles, plot_silhouette_diagram,
+    plot_quality_comparison, plot_agreement_heatmap,
+    plot_persistence_diagram, plot_gnmf_temporal_factors,
+    plot_bayesian_confirmation, plot_cluster_sizes,
+    plot_cluster_scatter, plot_coclustering_heatmap,
+    # Summary panel
+    plot_cluster_summary,
 )
