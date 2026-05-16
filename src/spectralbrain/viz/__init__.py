@@ -41,6 +41,7 @@ from spectralbrain.viz.hipp import (  # noqa: F401
     plot_hippocampus, plot_hippocampus_bilateral,
     plot_hippocampus_comparison, plot_hippocampus_gallery,
     plot_hippocampus_normative,
+    plot_hippocampus_spatiotemporal, plot_hippocampus_hovmoller,
 )
 
 # ── bayes.py ──
@@ -83,4 +84,8 @@ from spectralbrain.viz.clusters import (  # noqa: F401
     plot_cluster_scatter, plot_coclustering_heatmap,
     # Summary panel
     plot_cluster_summary,
+    # Spatio-temporal field visualization
+    plot_spatiotemporal_field, plot_spatiotemporal_animation,
+    plot_hovmoller, plot_kymograph,
+    plot_warped_surface, plot_descriptor_evolution_comparison,
 )

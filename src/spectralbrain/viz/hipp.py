@@ -710,6 +710,231 @@ def plot_hippocampus_normative(
 
 
 # ======================================================================
+# §6  SPATIO-TEMPORAL DESCRIPTOR FIELD ON HIPPOCAMPAL UNFOLDED SHEET
+# ======================================================================
+
+def plot_hippocampus_spatiotemporal(
+    H: np.ndarray,
+    *,
+    hemi: Literal["left", "right"] = "left",
+    density: str = "0p5mm",
+    t_values: Optional[np.ndarray] = None,
+    n_panels: int = 8,
+    t_indices: Optional[List[int]] = None,
+    cmap: str = "magma",
+    log_norm: bool = True,
+    show_subfields: bool = True,
+    descriptor_name: str = "HKS",
+    unfolded_surf_path: Optional[Union[str, Path]] = None,
+    subfield_label_path: Optional[Union[str, Path]] = None,
+    figsize: Optional[Tuple[float, float]] = None,
+    save: Optional[PathLike] = None,
+    formats: Tuple[str, ...] = ("png", "pdf"),
+) -> Tuple[Figure, np.ndarray]:
+    """Spatio-temporal descriptor field on the HippUnfold unfolded sheet.
+
+    Wraps :func:`spectralbrain.viz.clusters.plot_spatiotemporal_field`
+    with HippUnfold-aware defaults: loads the canonical unfolded
+    mid-thickness surface and subfield labels automatically when paths
+    are provided, applies the AP × PD coordinate convention, and uses
+    neuroimaging-standard axis labels.
+
+    This is the hippocampal-specific version of the general
+    spatio-temporal small-multiples visualization.  Each panel shows
+    how HKS/WKS varies across the unfolded hippocampal sheet at a
+    different diffusion time, revealing the local → global
+    progression and how it relates to subfield boundaries.
+
+    Parameters
+    ----------
+    H : (V, T) array
+        Per-vertex spectral descriptor matrix.  V must match the
+        number of vertices in the unfolded surface.
+    hemi : str
+        ``"left"`` or ``"right"``.
+    density : str
+        HippUnfold density label (e.g. ``"0p5mm"``, ``"2mm"``).
+    t_values : (T,) array or None
+        Scale parameter values.
+    n_panels : int
+    t_indices : list of int or None
+    cmap : str
+    log_norm : bool
+    show_subfields : bool
+        Overlay subfield boundary lines.
+    descriptor_name : str
+    unfolded_surf_path : str or Path or None
+        Path to the unfolded ``midthickness.surf.gii``.  If None,
+        attempts to load from hippunfold_plot's bundled data.
+    subfield_label_path : str or Path or None
+        Path to ``subfields.label.gii``.  If None and show_subfields
+        is True, attempts to load from hippunfold_plot's bundled data.
+    figsize : tuple or None
+    save : PathLike or None
+    formats : tuple of str
+        Export formats.
+
+    Returns
+    -------
+    (Figure, ndarray of Axes)
+
+    Notes
+    -----
+    The unfolded surface from HippUnfold uses Laplace-solved coordinates
+    (AP × PD), not physical millimetres.  Axes are labelled accordingly
+    as "AP coordinate" and "PD coordinate" to avoid misleading the
+    reader.  Metric distortion between folded and unfolded spaces does
+    not affect the plotted descriptor values (HKS/WKS are isometry-
+    invariant), but it does affect area-based statistics — use folded-
+    surface vertex areas for any integration.
+    """
+    try:
+        import nibabel as nib
+    except ImportError:
+        raise ImportError("nibabel required: pip install nibabel")
+
+    H = np.asarray(H, dtype=np.float64)
+
+    # --- load unfolded surface ---
+    if unfolded_surf_path is not None:
+        surf_gii = nib.load(str(unfolded_surf_path))
+        coords = surf_gii.agg_data("pointset")       # (V, 3)
+        faces = surf_gii.agg_data("triangle")         # (F, 3)
+        # project 3D → 2D (drop the flat z ≈ 0)
+        unfolded_2d = coords[:, :2]
+    else:
+        # attempt to get from hippunfold_plot bundled data
+        try:
+            from hippunfold_plot.utils import get_surf_coords
+            coords, faces = get_surf_coords(
+                density=density, hemi=hemi, space="unfold",
+            )
+            unfolded_2d = coords[:, :2]
+        except (ImportError, Exception) as e:
+            raise ValueError(
+                f"Could not load unfolded surface. Provide "
+                f"unfolded_surf_path explicitly. Error: {e}"
+            )
+
+    # --- load subfield labels ---
+    subfield_labels = None
+    if show_subfields:
+        if subfield_label_path is not None:
+            lab_gii = nib.load(str(subfield_label_path))
+            subfield_labels = lab_gii.agg_data().astype(np.int64)
+        else:
+            try:
+                from hippunfold_plot.utils import get_label_data
+                subfield_labels = get_label_data(
+                    density=density, hemi=hemi,
+                ).astype(np.int64)
+            except (ImportError, Exception):
+                logger.warning(
+                    "Could not load subfield labels.  "
+                    "Set show_subfields=False or provide subfield_label_path."
+                )
+
+    # --- validate shapes ---
+    if H.shape[0] != unfolded_2d.shape[0]:
+        raise ValueError(
+            f"H has {H.shape[0]} vertices but the unfolded surface "
+            f"has {unfolded_2d.shape[0]}.  They must match."
+        )
+
+    # --- delegate to the generic spatio-temporal field plotter ---
+    from spectralbrain.viz.clusters import plot_spatiotemporal_field
+
+    fig, axes = plot_spatiotemporal_field(
+        unfolded_coords=unfolded_2d,
+        faces=faces,
+        H=H,
+        t_values=t_values,
+        n_panels=n_panels,
+        t_indices=t_indices,
+        cmap=cmap,
+        log_norm=log_norm,
+        subfield_labels=subfield_labels,
+        descriptor_name=descriptor_name,
+        xlabel="AP coordinate (Laplace)",
+        ylabel="PD coordinate (Laplace)",
+        figsize=figsize,
+        save=save,
+    )
+
+    return fig, axes
+
+
+def plot_hippocampus_hovmoller(
+    H: np.ndarray,
+    *,
+    hemi: Literal["left", "right"] = "left",
+    density: str = "0p5mm",
+    t_values: Optional[np.ndarray] = None,
+    axis: Literal["AP", "PD"] = "AP",
+    unfolded_surf_path: Optional[Union[str, Path]] = None,
+    cmap: str = "viridis",
+    descriptor_name: str = "HKS",
+    figsize: Tuple[float, float] = (8, 4),
+    save: Optional[PathLike] = None,
+) -> Tuple[Figure, Axes]:
+    """Hovmöller diagram of descriptor along hippocampal axis × scale.
+
+    Wraps :func:`spectralbrain.viz.clusters.plot_hovmoller` with
+    HippUnfold-aware coordinate loading.
+
+    Parameters
+    ----------
+    H : (V, T) array
+    hemi, density : str
+    t_values : (T,) or None
+    axis : str
+        ``"AP"`` or ``"PD"``.
+    unfolded_surf_path : str or None
+    cmap, descriptor_name, figsize, save
+
+    Returns
+    -------
+    (Figure, Axes)
+    """
+    try:
+        import nibabel as nib
+    except ImportError:
+        raise ImportError("nibabel required: pip install nibabel")
+
+    H = np.asarray(H, dtype=np.float64)
+
+    if unfolded_surf_path is not None:
+        surf_gii = nib.load(str(unfolded_surf_path))
+        coords = surf_gii.agg_data("pointset")
+        unfolded_2d = coords[:, :2]
+    else:
+        try:
+            from hippunfold_plot.utils import get_surf_coords
+            coords, _ = get_surf_coords(
+                density=density, hemi=hemi, space="unfold",
+            )
+            unfolded_2d = coords[:, :2]
+        except (ImportError, Exception) as e:
+            raise ValueError(
+                f"Could not load unfolded coordinates: {e}"
+            )
+
+    from spectralbrain.viz.clusters import plot_hovmoller
+
+    return plot_hovmoller(
+        unfolded_coords=unfolded_2d,
+        H=H,
+        t_values=t_values,
+        axis=axis,
+        cmap=cmap,
+        descriptor_name=descriptor_name,
+        title=f"Hovmöller — {descriptor_name} along {axis} ({hemi})",
+        figsize=figsize,
+        save=save,
+    )
+
+
+# ======================================================================
 
 __all__ = [
     # Constants
@@ -725,4 +950,7 @@ __all__ = [
     "plot_hippocampus_gallery",
     # Normative
     "plot_hippocampus_normative",
+    # Spatio-temporal
+    "plot_hippocampus_spatiotemporal",
+    "plot_hippocampus_hovmoller",
 ]

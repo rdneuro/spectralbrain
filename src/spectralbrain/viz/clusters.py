@@ -1673,3 +1673,811 @@ def plot_cluster_summary(
     fig.tight_layout()
     _savefig(fig, save)
     return fig, axes
+
+
+# ======================================================================
+# §21  SPATIO-TEMPORAL FIELD — small multiples on unfolded coordinates
+# ======================================================================
+
+def plot_spatiotemporal_field(
+    unfolded_coords: np.ndarray,
+    faces: np.ndarray,
+    H: np.ndarray,
+    t_values: Optional[np.ndarray] = None,
+    *,
+    n_panels: int = 8,
+    t_indices: Optional[List[int]] = None,
+    cmap: str = "magma",
+    log_norm: bool = True,
+    vmin: Optional[float] = None,
+    vmax: Optional[float] = None,
+    subfield_labels: Optional[np.ndarray] = None,
+    boundary_color: str = "k",
+    boundary_width: float = 0.6,
+    descriptor_name: str = "HKS",
+    xlabel: str = "AP coordinate",
+    ylabel: str = "PD coordinate",
+    n_cols: int = 4,
+    figsize: Optional[Tuple[float, float]] = None,
+    save: Optional[PathLike] = None,
+) -> Tuple[Figure, np.ndarray]:
+    """Small-multiples grid of a descriptor field on unfolded surface.
+
+    Renders per-vertex spectral descriptor values (HKS, WKS) on the
+    2D unfolded coordinate system (e.g., HippUnfold's AP × PD sheet)
+    at log-spaced diffusion times, producing a publication-ready
+    panel that shows the local-to-global progression of HKS.
+
+    Each panel is rendered with ``tripcolor`` directly on the mesh
+    triangulation — no interpolation to a regular grid is needed,
+    preserving vertex-exact values.
+
+    Parameters
+    ----------
+    unfolded_coords : (V, 2) array
+        Per-vertex 2D coordinates in unfolded space.
+        Column 0 = AP (or u), column 1 = PD (or v).
+    faces : (F, 3) array
+        Triangle indices (same mesh topology as the folded surface).
+    H : (V, T) array
+        Per-vertex descriptor matrix across T scales.
+    t_values : (T,) array or None
+        Scale parameter values for axis labels. None → integer indices.
+    n_panels : int
+        Number of panels to show (overridden by t_indices).
+    t_indices : list of int or None
+        Specific column indices into H. None → geometrically spaced.
+    cmap : str
+        Colourmap for the descriptor field.
+    log_norm : bool
+        Use ``LogNorm`` for colour scaling (recommended for HKS).
+    vmin, vmax : float or None
+        Colour range. None → robust 2nd/98th percentiles of full H.
+    subfield_labels : (V,) int array or None
+        If provided, overlay subfield boundaries via ``tricontour``.
+    boundary_color : str
+        Colour for subfield boundary lines.
+    boundary_width : float
+        Width of boundary lines.
+    descriptor_name : str
+        Label for colourbar (e.g. ``"HKS"``, ``"WKS"``).
+    xlabel, ylabel : str
+        Axis labels for the unfolded coordinate axes.
+    n_cols : int
+        Number of columns in the panel grid.
+    figsize : tuple or None
+        Figure size. None → auto from n_panels.
+    save : PathLike or None
+
+    Returns
+    -------
+    (Figure, ndarray of Axes)
+    """
+    _apply_style()
+    import matplotlib.tri as mtri
+    from matplotlib.colors import LogNorm, Normalize
+
+    H = np.asarray(H, dtype=np.float64)
+    uv = np.asarray(unfolded_coords, dtype=np.float64)
+    fcs = np.asarray(faces, dtype=np.int64)
+    V, T = H.shape
+
+    # --- select scale indices ---
+    if t_indices is not None:
+        sel = list(t_indices)
+    else:
+        # geometrically spaced indices for log-spaced t
+        sel = np.unique(
+            np.geomspace(1, T, n_panels, dtype=int).clip(0, T - 1)
+        ).tolist()
+    n_panels = len(sel)
+
+    if t_values is None:
+        t_values = np.arange(T, dtype=np.float64)
+    t_values = np.asarray(t_values, dtype=np.float64)
+
+    # --- build triangulation ---
+    tri = mtri.Triangulation(uv[:, 0], uv[:, 1], fcs)
+
+    # --- colour normalisation (shared across all panels) ---
+    if vmin is None:
+        vmin = float(np.nanpercentile(H[:, sel], 2))
+    if vmax is None:
+        vmax = float(np.nanpercentile(H[:, sel], 98))
+
+    if log_norm:
+        vmin_safe = max(vmin, 1e-12)
+        norm = LogNorm(vmin=vmin_safe, vmax=max(vmax, vmin_safe * 2))
+    else:
+        norm = Normalize(vmin=vmin, vmax=vmax)
+
+    # --- layout ---
+    n_rows = (n_panels + n_cols - 1) // n_cols
+    if figsize is None:
+        # 2:1 aspect ratio per panel (AP is typically ~2× PD)
+        figsize = (4.0 * n_cols, 2.5 * n_rows)
+
+    fig, axes = plt.subplots(
+        n_rows, n_cols, figsize=figsize,
+        sharex=True, sharey=True,
+        constrained_layout=True,
+    )
+    axes_flat = np.atleast_1d(axes).ravel()
+
+    # --- render each panel ---
+    tpc = None
+    for pi, t_idx in enumerate(sel):
+        ax = axes_flat[pi]
+        scalar = H[:, t_idx]
+
+        tpc = ax.tripcolor(
+            tri, scalar,
+            shading="gouraud",
+            cmap=cmap,
+            norm=norm,
+            rasterized=True,  # keeps PDF/SVG file sizes small
+        )
+
+        # subfield boundaries
+        if subfield_labels is not None:
+            labels_f = np.asarray(subfield_labels, dtype=np.float64)
+            ax.tricontour(
+                tri, labels_f,
+                levels=np.arange(labels_f.max()) + 0.5,
+                colors=boundary_color,
+                linewidths=boundary_width,
+            )
+
+        # scale label
+        t_val = t_values[t_idx]
+        ax.set_title(f"t = {t_val:.2g}", fontsize=8)
+        ax.set_aspect("equal")
+
+    # hide unused panels
+    for pi in range(n_panels, len(axes_flat)):
+        axes_flat[pi].set_visible(False)
+
+    # axis labels on edge panels only
+    for ax in axes_flat:
+        if ax.get_visible():
+            ax.set_xlabel(xlabel, fontsize=7)
+            ax.set_ylabel(ylabel, fontsize=7)
+            ax.tick_params(labelsize=6)
+
+    # shared colourbar
+    if tpc is not None:
+        cbar = fig.colorbar(
+            tpc, ax=axes_flat[:n_panels].tolist(),
+            location="right", shrink=0.8, pad=0.02,
+        )
+        cbar.set_label(
+            f"{descriptor_name} ({'log scale' if log_norm else 'linear'})",
+            fontsize=8,
+        )
+        cbar.ax.tick_params(labelsize=6)
+
+    _savefig(fig, save)
+    return fig, axes
+
+
+# ======================================================================
+# §22  SPATIO-TEMPORAL ANIMATION — GIF / MP4 across scales
+# ======================================================================
+
+def plot_spatiotemporal_animation(
+    unfolded_coords: np.ndarray,
+    faces: np.ndarray,
+    H: np.ndarray,
+    t_values: Optional[np.ndarray] = None,
+    *,
+    cmap: str = "magma",
+    log_norm: bool = True,
+    vmin: Optional[float] = None,
+    vmax: Optional[float] = None,
+    subfield_labels: Optional[np.ndarray] = None,
+    descriptor_name: str = "HKS",
+    fps: int = 8,
+    figsize: Tuple[float, float] = (6, 3.5),
+    save: Optional[PathLike] = None,
+) -> Optional[Any]:
+    """Animate descriptor field across scales on the unfolded surface.
+
+    Produces a GIF or MP4 (determined by file extension of ``save``)
+    showing how HKS/WKS evolves from fine-scale (local curvature)
+    to coarse-scale (global topology) as the diffusion time increases.
+
+    Uses ``FuncAnimation`` with a single ``tripcolor`` artist and
+    ``set_array`` updates for efficient rendering.
+
+    Parameters
+    ----------
+    unfolded_coords : (V, 2) array
+    faces : (F, 3) array
+    H : (V, T) array
+    t_values : (T,) array or None
+    cmap : str
+    log_norm : bool
+    vmin, vmax : float or None
+    subfield_labels : (V,) int array or None
+    descriptor_name : str
+    fps : int
+        Frames per second for the output animation.
+    figsize : tuple
+    save : PathLike or None
+        Output path. Extension determines format:
+        ``.gif`` → Pillow writer, ``.mp4`` → ffmpeg writer.
+
+    Returns
+    -------
+    matplotlib.animation.FuncAnimation or None
+        The animation object (for notebook display). None if save-only.
+    """
+    import matplotlib.tri as mtri
+    import matplotlib.animation as animation
+    from matplotlib.colors import LogNorm, Normalize
+
+    _apply_style()
+
+    H = np.asarray(H, dtype=np.float64)
+    uv = np.asarray(unfolded_coords, dtype=np.float64)
+    fcs = np.asarray(faces, dtype=np.int64)
+    V, T = H.shape
+
+    if t_values is None:
+        t_values = np.arange(T, dtype=np.float64)
+    t_values = np.asarray(t_values, dtype=np.float64)
+
+    tri = mtri.Triangulation(uv[:, 0], uv[:, 1], fcs)
+
+    # --- normalisation ---
+    if vmin is None:
+        vmin = float(np.nanpercentile(H, 2))
+    if vmax is None:
+        vmax = float(np.nanpercentile(H, 98))
+
+    if log_norm:
+        vmin_safe = max(vmin, 1e-12)
+        norm = LogNorm(vmin=vmin_safe, vmax=max(vmax, vmin_safe * 2))
+    else:
+        norm = Normalize(vmin=vmin, vmax=vmax)
+
+    # --- setup figure with first frame ---
+    fig, ax = plt.subplots(figsize=figsize)
+    tpc = ax.tripcolor(
+        tri, H[:, 0], shading="gouraud",
+        cmap=cmap, norm=norm, rasterized=True,
+    )
+    fig.colorbar(tpc, ax=ax, label=descriptor_name, shrink=0.8)
+
+    # static subfield boundaries (drawn once)
+    if subfield_labels is not None:
+        labels_f = np.asarray(subfield_labels, dtype=np.float64)
+        ax.tricontour(
+            tri, labels_f,
+            levels=np.arange(labels_f.max()) + 0.5,
+            colors="k", linewidths=0.5,
+        )
+
+    ax.set_aspect("equal")
+    ax.set_xlabel("AP coordinate", fontsize=8)
+    ax.set_ylabel("PD coordinate", fontsize=8)
+    title_text = ax.set_title(
+        f"{descriptor_name}  t = {t_values[0]:.2g}", fontsize=9,
+    )
+
+    # --- animation update ---
+    def _update(frame_idx):
+        # tripcolor stores face-averaged values for flat shading
+        # and vertex values for gouraud — set_array on the collection
+        tpc.set_array(H[:, frame_idx])
+        title_text.set_text(
+            f"{descriptor_name}  t = {t_values[frame_idx]:.2g}"
+        )
+        return (tpc, title_text)
+
+    ani = animation.FuncAnimation(
+        fig, _update, frames=T,
+        interval=1000 // fps,
+        blit=False,  # tripcolor + blit can produce blank frames
+    )
+
+    if save is not None:
+        save = Path(save)
+        save.parent.mkdir(parents=True, exist_ok=True)
+        ext = save.suffix.lower()
+        if ext == ".gif":
+            ani.save(str(save), writer="pillow", fps=fps, dpi=200)
+        elif ext in (".mp4", ".avi", ".mov"):
+            ani.save(str(save), writer="ffmpeg", fps=fps, dpi=200)
+        else:
+            ani.save(str(save), fps=fps, dpi=200)
+        logger.info("Saved animation → %s", save)
+
+    return ani
+
+
+# ======================================================================
+# §23  HOVMÖLLER DIAGRAM — position × scale 2D heatmap
+# ======================================================================
+
+def plot_hovmoller(
+    unfolded_coords: np.ndarray,
+    H: np.ndarray,
+    t_values: Optional[np.ndarray] = None,
+    *,
+    axis: Literal["AP", "PD"] = "AP",
+    n_bins: int = 100,
+    cmap: str = "viridis",
+    log_norm: bool = True,
+    log_t: bool = True,
+    descriptor_name: str = "HKS",
+    title: Optional[str] = None,
+    figsize: Tuple[float, float] = (8, 4),
+    save: Optional[PathLike] = None,
+) -> Tuple[Figure, Axes]:
+    """Hovmöller diagram: averaged descriptor along one spatial axis × scale.
+
+    Collapses the orthogonal spatial axis by averaging, producing a
+    2D heatmap of (position along AP or PD) × (diffusion scale t).
+    Reveals how the multi-scale spectral signature varies along the
+    hippocampal long axis (AP) or proximal-distal axis (PD).
+
+    Parameters
+    ----------
+    unfolded_coords : (V, 2) array
+        Column 0 = AP, column 1 = PD.
+    H : (V, T) array
+        Per-vertex descriptor matrix.
+    t_values : (T,) array or None
+    axis : str
+        Which spatial axis to retain: ``"AP"`` (column 0) or ``"PD"``
+        (column 1). The other is averaged out.
+    n_bins : int
+        Number of bins along the retained spatial axis.
+    cmap : str
+    log_norm : bool
+    log_t : bool
+        Log-scale the t-axis.
+    descriptor_name : str
+    title : str or None
+    figsize, save
+
+    Returns
+    -------
+    (Figure, Axes)
+    """
+    _apply_style()
+    from matplotlib.colors import LogNorm, Normalize
+
+    H = np.asarray(H, dtype=np.float64)
+    uv = np.asarray(unfolded_coords, dtype=np.float64)
+    V, T = H.shape
+
+    if t_values is None:
+        t_values = np.arange(T, dtype=np.float64)
+    t_values = np.asarray(t_values, dtype=np.float64)
+
+    # --- select spatial coordinate ---
+    col_idx = 0 if axis == "AP" else 1
+    pos = uv[:, col_idx]
+
+    # --- bin vertices along the chosen axis ---
+    bin_edges = np.linspace(pos.min(), pos.max(), n_bins + 1)
+    bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+    digitized = np.digitize(pos, bin_edges) - 1
+    digitized = np.clip(digitized, 0, n_bins - 1)
+
+    # average H within each spatial bin → (n_bins, T)
+    H_binned = np.zeros((n_bins, T), dtype=np.float64)
+    counts = np.zeros(n_bins, dtype=np.float64)
+    for i in range(V):
+        b = digitized[i]
+        H_binned[b] += H[i]
+        counts[b] += 1.0
+    counts[counts == 0] = 1.0
+    H_binned /= counts[:, None]
+
+    # --- normalisation ---
+    vmin = float(np.nanpercentile(H_binned[H_binned > 0], 2)) if log_norm else float(H_binned.min())
+    vmax = float(np.nanpercentile(H_binned, 98))
+    if log_norm:
+        norm = LogNorm(vmin=max(vmin, 1e-12), vmax=max(vmax, vmin * 2))
+    else:
+        norm = Normalize(vmin=vmin, vmax=vmax)
+
+    # --- plot ---
+    fig, ax = plt.subplots(figsize=figsize)
+    mesh_plot = ax.pcolormesh(
+        t_values, bin_centers, H_binned,
+        shading="auto", cmap=cmap, norm=norm, rasterized=True,
+    )
+
+    if log_t:
+        ax.set_xscale("log")
+
+    ax.set_xlabel("Diffusion scale t (log)" if log_t else "Scale t")
+    ax.set_ylabel(f"{axis} coordinate")
+    ax.set_title(title or f"Hovmöller — {descriptor_name} along {axis}")
+
+    cbar = fig.colorbar(mesh_plot, ax=ax, pad=0.02)
+    cbar.set_label(descriptor_name)
+
+    fig.tight_layout()
+    _savefig(fig, save)
+    return fig, ax
+
+
+# ======================================================================
+# §24  KYMOGRAPH — 1D line through the surface × scale
+# ======================================================================
+
+def plot_kymograph(
+    unfolded_coords: np.ndarray,
+    faces: np.ndarray,
+    H: np.ndarray,
+    t_values: Optional[np.ndarray] = None,
+    *,
+    line_axis: Literal["AP", "PD"] = "AP",
+    line_position: float = 0.5,
+    n_samples: int = 200,
+    cmap: str = "viridis",
+    log_norm: bool = True,
+    log_t: bool = True,
+    descriptor_name: str = "HKS",
+    title: Optional[str] = None,
+    figsize: Tuple[float, float] = (8, 4),
+    save: Optional[PathLike] = None,
+) -> Tuple[Figure, Axes]:
+    """Kymograph: descriptor values along a 1D line × scale.
+
+    Unlike the Hovmöller diagram (which averages over the orthogonal
+    axis), the kymograph traces a single line through the unfolded
+    surface — e.g. the midline of PD — and plots the descriptor
+    along that line for each scale t.
+
+    Parameters
+    ----------
+    unfolded_coords : (V, 2) array
+    faces : (F, 3) array
+    H : (V, T) array
+    t_values : (T,) array or None
+    line_axis : str
+        Axis along which the line runs. ``"AP"`` → horizontal line
+        at fixed PD = ``line_position``; ``"PD"`` → vertical line
+        at fixed AP.
+    line_position : float
+        Position on the orthogonal axis (0–1 in normalised coords).
+    n_samples : int
+        Number of sample points along the line.
+    cmap, log_norm, log_t : str, bool, bool
+    descriptor_name, title, figsize, save
+
+    Returns
+    -------
+    (Figure, Axes)
+    """
+    _apply_style()
+    from scipy.interpolate import LinearNDInterpolator
+    from matplotlib.colors import LogNorm, Normalize
+
+    H = np.asarray(H, dtype=np.float64)
+    uv = np.asarray(unfolded_coords, dtype=np.float64)
+    V, T = H.shape
+
+    if t_values is None:
+        t_values = np.arange(T, dtype=np.float64)
+    t_values = np.asarray(t_values, dtype=np.float64)
+
+    # --- build interpolator (Delaunay computed once) ---
+    interp = LinearNDInterpolator(uv, H[:, 0])
+
+    # --- define the 1D line ---
+    u_range = uv[:, 0]
+    v_range = uv[:, 1]
+
+    if line_axis == "AP":
+        line_u = np.linspace(u_range.min(), u_range.max(), n_samples)
+        line_v = np.full_like(line_u, line_position)
+        spatial_coord = line_u
+        spatial_label = "AP coordinate"
+    else:
+        line_v = np.linspace(v_range.min(), v_range.max(), n_samples)
+        line_u = np.full_like(line_v, line_position)
+        spatial_coord = line_v
+        spatial_label = "PD coordinate"
+
+    line_pts = np.column_stack([line_u, line_v])
+
+    # --- interpolate each scale ---
+    kymo = np.empty((n_samples, T), dtype=np.float64)
+    for k in range(T):
+        # reuse the same Delaunay but update values
+        interp.values = H[:, k:k + 1]
+        kymo[:, k] = interp(line_pts).squeeze()
+
+    # fill NaN from outside convex hull with nearest valid
+    for k in range(T):
+        nans = np.isnan(kymo[:, k])
+        if nans.any() and not nans.all():
+            valid = ~nans
+            kymo[nans, k] = np.interp(
+                np.where(nans)[0], np.where(valid)[0], kymo[valid, k],
+            )
+
+    # --- plot ---
+    fig, ax = plt.subplots(figsize=figsize)
+
+    vmin_val = float(np.nanpercentile(kymo[kymo > 0], 2)) if log_norm else float(np.nanmin(kymo))
+    vmax_val = float(np.nanpercentile(kymo, 98))
+    if log_norm:
+        norm = LogNorm(vmin=max(vmin_val, 1e-12), vmax=max(vmax_val, vmin_val * 2))
+    else:
+        norm = Normalize(vmin=vmin_val, vmax=vmax_val)
+
+    mesh_plot = ax.pcolormesh(
+        t_values, spatial_coord, kymo,
+        shading="auto", cmap=cmap, norm=norm, rasterized=True,
+    )
+
+    if log_t:
+        ax.set_xscale("log")
+
+    ortho_name = "PD" if line_axis == "AP" else "AP"
+    ax.set_xlabel("Diffusion scale t")
+    ax.set_ylabel(spatial_label)
+    ax.set_title(
+        title or f"Kymograph — {descriptor_name} along {line_axis} "
+                 f"at {ortho_name}={line_position:.2f}"
+    )
+
+    cbar = fig.colorbar(mesh_plot, ax=ax, pad=0.02)
+    cbar.set_label(descriptor_name)
+
+    fig.tight_layout()
+    _savefig(fig, save)
+    return fig, ax
+
+
+# ======================================================================
+# §25  WARPED SURFACE — 3D with height = descriptor value (vedo)
+# ======================================================================
+
+def plot_warped_surface(
+    unfolded_coords: np.ndarray,
+    faces: np.ndarray,
+    scalars: np.ndarray,
+    *,
+    warp_factor: float = 0.5,
+    cmap: str = "magma",
+    vmin: Optional[float] = None,
+    vmax: Optional[float] = None,
+    descriptor_name: str = "HKS",
+    views: Optional[List[str]] = None,
+    lighting: str = "default",
+    bg: str = _DEFAULT_BG,
+    size: Optional[Tuple[int, int]] = None,
+    scale: int = _DEFAULT_SCALE,
+    save: Optional[PathLike] = None,
+) -> Tuple[Path, Dict[str, Any]]:
+    """3D warped surface: unfolded (u, v) + height from descriptor.
+
+    Creates a 3D surface where x = AP, y = PD, and z = warp_factor ×
+    descriptor_value. The surface is coloured by the same descriptor.
+    Useful as a "hero figure" showing the spatial distribution of
+    a spectral descriptor.
+
+    Parameters
+    ----------
+    unfolded_coords : (V, 2) array
+    faces : (F, 3) array
+    scalars : (V,) array
+        Descriptor values to warp by and colour with.
+    warp_factor : float
+        Height scaling factor.
+    cmap : str
+    vmin, vmax : float or None
+    descriptor_name : str
+    views : list of str or None
+        Camera presets. None → ``["oblique_left"]``.
+    lighting, bg, size, scale, save
+
+    Returns
+    -------
+    (Path, dict)
+    """
+    vedo = _get_vedo()
+
+    uv = np.asarray(unfolded_coords, dtype=np.float64)
+    fcs = np.asarray(faces, dtype=np.int64)
+    sc = np.asarray(scalars, dtype=np.float64)
+
+    # normalise scalars for z-displacement
+    sc_norm = sc - sc.min()
+    sc_max = sc_norm.max()
+    if sc_max > 0:
+        sc_norm /= sc_max
+
+    # build 3D vertices: (u, v, warp_factor * normalised_scalar)
+    verts_3d = np.column_stack([
+        uv[:, 0],
+        uv[:, 1],
+        warp_factor * sc_norm,
+    ])
+
+    if views is None:
+        views = ["oblique_left"]
+    n_views = len(views)
+    if size is None:
+        size = (600 * n_views, 600)
+
+    if vmin is None:
+        vmin = float(np.nanpercentile(sc, 1))
+    if vmax is None:
+        vmax = float(np.nanpercentile(sc, 99))
+
+    plt_obj = vedo.Plotter(
+        shape=(1, n_views), offscreen=True, size=size, bg=bg,
+    )
+
+    for vi, view_name in enumerate(views):
+        mesh = _build_vedo_mesh(verts_3d, fcs, vedo)
+        mesh.pointdata[descriptor_name] = sc
+        mesh.cmap(cmap, descriptor_name, vmin=vmin, vmax=vmax)
+        mesh.add_scalarbar(title=descriptor_name)
+        mesh.lighting(lighting)
+
+        preset = CAMERA_PRESETS.get(view_name, {"azimuth": -45, "elevation": 30})
+        plt_obj.at(vi).show(
+            mesh,
+            title=f"{descriptor_name} (warped)",
+            viewup="z", zoom=1.0,
+            **{k: v for k, v in preset.items() if k in ("azimuth", "elevation")},
+        )
+
+    meta = {
+        "warp_factor": warp_factor,
+        "scalar_range": (vmin, vmax),
+        "views": views,
+    }
+    out = _save_screenshot(plt_obj, save, scale=scale)
+    return out, meta
+
+
+# ======================================================================
+# §26  DESCRIPTOR EVOLUTION COMPARISON — HKS vs WKS on unfolded
+# ======================================================================
+
+def plot_descriptor_evolution_comparison(
+    unfolded_coords: np.ndarray,
+    faces: np.ndarray,
+    H_hks: np.ndarray,
+    H_wks: np.ndarray,
+    t_values_hks: Optional[np.ndarray] = None,
+    e_values_wks: Optional[np.ndarray] = None,
+    *,
+    n_scales: int = 4,
+    cmap_hks: str = "inferno",
+    cmap_wks: str = "cividis",
+    log_norm: bool = True,
+    subfield_labels: Optional[np.ndarray] = None,
+    figsize: Optional[Tuple[float, float]] = None,
+    save: Optional[PathLike] = None,
+) -> Tuple[Figure, np.ndarray]:
+    """Side-by-side HKS vs WKS evolution on the unfolded surface.
+
+    Two-row layout: top = HKS at selected t, bottom = WKS at matched
+    energies. Each with its own colourmap and independent colourbar.
+
+    Parameters
+    ----------
+    unfolded_coords : (V, 2) array
+    faces : (F, 3) array
+    H_hks : (V, T_h) array
+    H_wks : (V, T_w) array
+    t_values_hks : (T_h,) or None
+    e_values_wks : (T_w,) or None
+    n_scales : int
+        Number of scale panels per descriptor.
+    cmap_hks, cmap_wks : str
+    log_norm : bool
+    subfield_labels : (V,) or None
+    figsize, save
+
+    Returns
+    -------
+    (Figure, ndarray of Axes)
+    """
+    _apply_style()
+    import matplotlib.tri as mtri
+    from matplotlib.colors import LogNorm, Normalize
+
+    H_h = np.asarray(H_hks, dtype=np.float64)
+    H_w = np.asarray(H_wks, dtype=np.float64)
+    uv = np.asarray(unfolded_coords, dtype=np.float64)
+    fcs = np.asarray(faces, dtype=np.int64)
+
+    tri = mtri.Triangulation(uv[:, 0], uv[:, 1], fcs)
+
+    T_h = H_h.shape[1]
+    T_w = H_w.shape[1]
+
+    sel_h = np.unique(np.geomspace(1, T_h, n_scales, dtype=int).clip(0, T_h - 1))
+    sel_w = np.unique(np.geomspace(1, T_w, n_scales, dtype=int).clip(0, T_w - 1))
+    n_h = len(sel_h)
+    n_w = len(sel_w)
+    n_cols = max(n_h, n_w)
+
+    if t_values_hks is None:
+        t_values_hks = np.arange(T_h, dtype=np.float64)
+    if e_values_wks is None:
+        e_values_wks = np.arange(T_w, dtype=np.float64)
+    t_h = np.asarray(t_values_hks)
+    e_w = np.asarray(e_values_wks)
+
+    if figsize is None:
+        figsize = (4.0 * n_cols, 5.0)
+
+    fig, axes = plt.subplots(2, n_cols, figsize=figsize,
+                              sharex=True, sharey=True,
+                              constrained_layout=True)
+    if n_cols == 1:
+        axes = axes.reshape(2, 1)
+
+    # --- helper to get norm ---
+    def _make_norm(H_block, indices):
+        vals = H_block[:, indices]
+        vmin = float(np.nanpercentile(vals[vals > 0], 2)) if log_norm else float(vals.min())
+        vmax = float(np.nanpercentile(vals, 98))
+        if log_norm:
+            return LogNorm(vmin=max(vmin, 1e-12), vmax=max(vmax, vmin * 2))
+        return Normalize(vmin=vmin, vmax=vmax)
+
+    norm_h = _make_norm(H_h, sel_h)
+    norm_w = _make_norm(H_w, sel_w)
+
+    tpc_h = tpc_w = None
+
+    # --- top row: HKS ---
+    for pi, ti in enumerate(sel_h):
+        ax = axes[0, pi]
+        tpc_h = ax.tripcolor(tri, H_h[:, ti], shading="gouraud",
+                              cmap=cmap_hks, norm=norm_h, rasterized=True)
+        ax.set_title(f"t = {t_h[ti]:.2g}", fontsize=7)
+        ax.set_aspect("equal")
+        if subfield_labels is not None:
+            ax.tricontour(tri, subfield_labels.astype(float),
+                          levels=np.arange(subfield_labels.max()) + 0.5,
+                          colors="k", linewidths=0.4)
+
+    # --- bottom row: WKS ---
+    for pi, ei in enumerate(sel_w):
+        ax = axes[1, pi]
+        tpc_w = ax.tripcolor(tri, H_w[:, ei], shading="gouraud",
+                              cmap=cmap_wks, norm=norm_w, rasterized=True)
+        ax.set_title(f"E = {e_w[ei]:.2g}", fontsize=7)
+        ax.set_aspect("equal")
+        if subfield_labels is not None:
+            ax.tricontour(tri, subfield_labels.astype(float),
+                          levels=np.arange(subfield_labels.max()) + 0.5,
+                          colors="k", linewidths=0.4)
+
+    # hide unused panels
+    for pi in range(n_h, n_cols):
+        axes[0, pi].set_visible(False)
+    for pi in range(n_w, n_cols):
+        axes[1, pi].set_visible(False)
+
+    # row labels
+    axes[0, 0].set_ylabel("HKS\nPD", fontsize=8)
+    axes[1, 0].set_ylabel("WKS\nPD", fontsize=8)
+
+    # colourbars
+    if tpc_h is not None:
+        fig.colorbar(tpc_h, ax=axes[0, :].tolist(), location="right",
+                     shrink=0.7, pad=0.02, label="HKS")
+    if tpc_w is not None:
+        fig.colorbar(tpc_w, ax=axes[1, :].tolist(), location="right",
+                     shrink=0.7, pad=0.02, label="WKS")
+
+    _savefig(fig, save)
+    return fig, axes
