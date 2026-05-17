@@ -103,6 +103,7 @@ class BrainPointCloud:
         points: Points,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
+        """Initialise from a (N, 3) coordinate array."""
         self.points = np.asarray(points, dtype=np.float64)
         self.metadata = metadata or {}
 
@@ -121,10 +122,12 @@ class BrainPointCloud:
 
     @property
     def coordinates(self) -> Points:
+        """Return the point coordinates array."""
         return self.points
 
     @property
     def n_points(self) -> int:
+        """Return the number of points in the cloud."""
         return self.points.shape[0]
 
     def surface_area(self) -> float:
@@ -933,10 +936,12 @@ class BrainPointCloud:
     # ── repr ──────────────────────────────────────────────────────────
 
     def __repr__(self) -> str:
+        """Return a compact point cloud summary string."""
         src = self.metadata.get("source", "")
         struct = self.metadata.get("structure", "")
         parts = [f"BrainPointCloud(n_points={self.n_points}"]
         if src:
+            """Return a compact point cloud summary."""
             parts.append(f", source='{src}'")
         if struct:
             parts.append(f", structure='{struct}'")

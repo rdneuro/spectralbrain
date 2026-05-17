@@ -6,6 +6,21 @@ Combines two rendering engines:
 - **hippomaps** (BrainSpace/VTK backend) — for high-quality 3D
   folded renders via ``surfplot_sub_foldunfold()``.
 
+HippUnfold version compatibility
+---------------------------------
+All functions accept both **v1** (``"0p5mm"``, ``"1mm"``, ``"2mm"``)
+and **v2** (``"2k"``, ``"8k"``, ``"18k"``) density labels.  The
+default changed from ``"0p5mm"`` to **``"8k"``** to match HippUnfold
+v2's vertex-count-based naming convention.
+
+- v1 labels still work but emit a ``DeprecationWarning``.
+- ``"8k"`` ≈ v1 ``"0p5mm"`` (~8,000 combined hipp + dentate vertices).
+- v2 merges ``label-hipp`` + ``label-dentate`` → ``label-hippdentate``;
+  all label variants are accepted.
+
+See :data:`DENSITIES` for the full mapping and :data:`HIPP_LABELS`
+for recognised structure labels.
+
 Each panel row shows 3D views of the hippocampus in the main columns
 and an unfolded flatmap in the first or last column, enabling
 simultaneous inspection of spatial localisation (3D) and subfield
@@ -50,14 +65,76 @@ HIPP_VIEWS_FULL: List[str] = HIPP_VIEWS_3D + ["flatmap"]
 """3D views + unfolded flatmap."""
 
 # Density mapping for HippUnfold versions.
-DENSITIES = {
-    "0p5mm": "0p5mm",  # HippUnfold v1 (7262 vertices)
-    "1mm": "1mm",       # HippUnfold v1
-    "2mm": "2mm",       # HippUnfold v1
-    "2k": "2k",         # HippUnfold v2
-    "8k": "8k",         # HippUnfold v2
-    "18k": "18k",       # HippUnfold v2
+# v2 (vertex-count-based) is the new canonical naming.
+# v1 (millimetre-based) names are kept as backward-compatible aliases.
+DENSITIES: Dict[str, str] = {
+    # HippUnfold v2 canonical names (preferred)
+    "2k": "2k",         # ~2,000 combined vertices
+    "8k": "8k",         # ~8,000 combined vertices (default)
+    "18k": "18k",       # ~18,000 combined vertices
+    # HippUnfold v1 backward-compatible aliases
+    "0p5mm": "0p5mm",   # v1 default — 7,262 hipp + 1,788 dentate
+    "1mm": "1mm",       # v1 — 2,004 hipp + 449 dentate
+    "2mm": "2mm",       # v1 — 419 hipp + 64 dentate
 }
+"""Recognised HippUnfold density labels (v1 and v2)."""
+
+# v1 → v2 approximate equivalence (for docs/migration only).
+_DENSITY_V1_TO_V2: Dict[str, str] = {
+    "0p5mm": "8k",
+    "1mm": "2k",
+    "2mm": "2k",
+}
+
+# HippUnfold v2 merges hipp + dentate into a single surface.
+# v1 outputs: label-hipp, label-dentate  (separate surfaces)
+# v2 outputs: label-hippdentate           (combined surface)
+# SpectralBrain accepts all three.
+HIPP_LABELS: List[str] = ["hipp", "dentate", "hippdentate"]
+"""Recognised HippUnfold structure labels."""
+
+
+def _resolve_density(density: str) -> str:
+    """Validate and return the density string.
+
+    Accepts both HippUnfold v1 (``"8k"``, ``"1mm"``, ``"2mm"``) and
+    v2 (``"2k"``, ``"8k"``, ``"18k"``) density labels.  Emits a
+    deprecation warning for v1 labels and returns the string unchanged
+    so that downstream libraries (hippunfold_plot, hippomaps) can
+    handle it in their own way.
+
+    Parameters
+    ----------
+    density : str
+        Density label to validate.
+
+    Returns
+    -------
+    str
+        The validated density string (unchanged).
+
+    Raises
+    ------
+    ValueError
+        If *density* is not a recognised label.
+    """
+    import warnings
+
+    if density not in DENSITIES:
+        raise ValueError(
+            f"Unknown HippUnfold density: {density!r}. "
+            f"Use one of {list(DENSITIES.keys())}."
+        )
+    if density in _DENSITY_V1_TO_V2:
+        v2_equiv = _DENSITY_V1_TO_V2[density]
+        warnings.warn(
+            f"HippUnfold v1 density '{density}' is deprecated. "
+            f"Consider switching to v2 equivalent '{v2_equiv}'. "
+            f"See HippUnfold v2.0.0 release notes.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+    return density
 
 # Default descriptor visual specs (hippocampal-specific).
 HIPP_DESCRIPTOR_STYLES: Dict[str, Dict[str, Any]] = {
@@ -80,6 +157,7 @@ HIPP_DESCRIPTOR_STYLES: Dict[str, Dict[str, Any]] = {
 # ======================================================================
 
 def _require_hippunfold_plot():
+    """Lazy-import hippunfold_plot for hippocampal rendering."""
     try:
         from hippunfold_plot.plotting import plot_hipp_surf
         return plot_hipp_surf
@@ -91,6 +169,7 @@ def _require_hippunfold_plot():
 
 
 def _require_hippomaps():
+    """Lazy-import hippomaps for normative hippocampal context."""
     try:
         import hippomaps
         return hippomaps
@@ -112,6 +191,7 @@ def _apply_style():
 
 
 def _save_figure(fig, path, formats=None):
+    """Save the figure to disk if a path is provided."""
     from spectralbrain.viz.graphics import savefig
     return savefig(fig, path, formats=formats, dpi=DPI)
 
@@ -125,7 +205,7 @@ def _render_hipp_3d(
     *,
     view: str = "dorsal",
     hemi: str = "left",
-    density: str = "0p5mm",
+    density: str = "8k",
     cmap: str = "inferno",
     vmin: Optional[float] = None,
     vmax: Optional[float] = None,
@@ -154,6 +234,7 @@ def _render_hipp_3d(
     matplotlib.Figure
     """
     plot_hipp_surf = _require_hippunfold_plot()
+    density = _resolve_density(density)
 
     kwargs = dict(
         surf_map=surf_map,
@@ -179,7 +260,7 @@ def _render_hipp_flatmap(
     surf_map: Any,
     *,
     hemi: str = "left",
-    density: str = "0p5mm",
+    density: str = "8k",
     cmap: str = "inferno",
     vmin: Optional[float] = None,
     vmax: Optional[float] = None,
@@ -190,6 +271,7 @@ def _render_hipp_flatmap(
     Uses ``space='unfold'`` to get the 2D representation.
     """
     plot_hipp_surf = _require_hippunfold_plot()
+    density = _resolve_density(density)
 
     fig = plot_hipp_surf(
         surf_map=surf_map,
@@ -227,7 +309,7 @@ def plot_hippocampus(
     surf_map: Any,
     *,
     hemi: str = "left",
-    density: str = "0p5mm",
+    density: str = "8k",
     views: Optional[List[str]] = None,
     show_flatmap: bool = True,
     flatmap_position: Literal["first", "last"] = "last",
@@ -250,7 +332,7 @@ def plot_hippocampus(
     hemi : str
         ``"left"`` or ``"right"``.
     density : str
-        HippUnfold density (``"0p5mm"``, ``"2k"``, ``"8k"``, ``"18k"``).
+        HippUnfold density (``"8k"``, ``"2k"``, ``"8k"``, ``"18k"``).
     views : list of str, optional
         3D view names.  Default: lateral, medial, dorsal, ventral, anterior.
     show_flatmap : bool
@@ -271,7 +353,7 @@ def plot_hippocampus(
     --------
     >>> plot_hippocampus(
     ...     "sub-01_hemi-L_thickness.shape.gii",
-    ...     hemi="left", density="0p5mm",
+    ...     hemi="left", density="8k",
     ...     cmap="inferno", vmin=1.0, vmax=4.0,
     ...     save="hippo_thickness.png",
     ... )
@@ -344,7 +426,7 @@ def plot_hippocampus_bilateral(
     surf_map_left: Any,
     surf_map_right: Any,
     *,
-    density: str = "0p5mm",
+    density: str = "8k",
     views: Optional[List[str]] = None,
     show_flatmap: bool = True,
     cmap: str = "inferno",
@@ -432,7 +514,7 @@ def plot_hippocampus_comparison(
     diff_map: Optional[Any] = None,
     *,
     hemi: str = "left",
-    density: str = "0p5mm",
+    density: str = "8k",
     views: Optional[List[str]] = None,
     show_flatmap: bool = True,
     cmap_groups: str = "inferno",
@@ -536,7 +618,7 @@ def plot_hippocampus_gallery(
     descriptors: Dict[str, Any],
     *,
     hemi: str = "left",
-    density: str = "0p5mm",
+    density: str = "8k",
     views: Optional[List[str]] = None,
     show_flatmap: bool = True,
     nan_color: Any = (0.85, 0.85, 0.85),
@@ -569,7 +651,7 @@ def plot_hippocampus_gallery(
     >>> plot_hippocampus_gallery(
     ...     {"thickness": thick_gii, "hks": hks_array,
     ...      "wks": wks_array, "bks": bks_array},
-    ...     hemi="left", density="0p5mm",
+    ...     hemi="left", density="8k",
     ...     save="hippo_gallery.png",
     ... )
     """
@@ -659,7 +741,7 @@ def plot_hippocampus_normative(
     z_map: Any,
     *,
     hemi: str = "left",
-    density: str = "0p5mm",
+    density: str = "8k",
     views: Optional[List[str]] = None,
     show_flatmap: bool = True,
     threshold: float = 2.0,
@@ -717,7 +799,7 @@ def plot_hippocampus_spatiotemporal(
     H: np.ndarray,
     *,
     hemi: Literal["left", "right"] = "left",
-    density: str = "0p5mm",
+    density: str = "8k",
     t_values: Optional[np.ndarray] = None,
     n_panels: int = 8,
     t_indices: Optional[List[int]] = None,
@@ -753,7 +835,7 @@ def plot_hippocampus_spatiotemporal(
     hemi : str
         ``"left"`` or ``"right"``.
     density : str
-        HippUnfold density label (e.g. ``"0p5mm"``, ``"2mm"``).
+        HippUnfold density label (``"8k"``, ``"2k"``, ``"18k"``; v1: ``"0p5mm"``, ``"1mm"``, ``"2mm"``).
     t_values : (T,) array or None
         Scale parameter values.
     n_panels : int
@@ -794,6 +876,7 @@ def plot_hippocampus_spatiotemporal(
         raise ImportError("nibabel required: pip install nibabel")
 
     H = np.asarray(H, dtype=np.float64)
+    density = _resolve_density(density)
 
     # --- load unfolded surface ---
     if unfolded_surf_path is not None:
@@ -868,7 +951,7 @@ def plot_hippocampus_hovmoller(
     H: np.ndarray,
     *,
     hemi: Literal["left", "right"] = "left",
-    density: str = "0p5mm",
+    density: str = "8k",
     t_values: Optional[np.ndarray] = None,
     axis: Literal["AP", "PD"] = "AP",
     unfolded_surf_path: Optional[Union[str, Path]] = None,
@@ -902,6 +985,7 @@ def plot_hippocampus_hovmoller(
         raise ImportError("nibabel required: pip install nibabel")
 
     H = np.asarray(H, dtype=np.float64)
+    density = _resolve_density(density)
 
     if unfolded_surf_path is not None:
         surf_gii = nib.load(str(unfolded_surf_path))
@@ -940,6 +1024,7 @@ __all__ = [
     # Constants
     "HIPP_VIEWS_3D", "HIPP_VIEWS_FULL", "DENSITIES",
     "HIPP_DESCRIPTOR_STYLES",
+    "HIPP_LABELS",
     # Single hippocampus
     "plot_hippocampus",
     # Bilateral

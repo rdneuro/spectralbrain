@@ -147,6 +147,7 @@ class BrainPlotSpec:
 # ======================================================================
 
 def _require_yabplot():
+    """Lazy-import yabplot for 3D brain visualisation."""
     try:
         import yabplot as yab
         return yab
@@ -158,6 +159,7 @@ def _require_yabplot():
 
 
 def _require_scienceplots():
+    """Lazy-import scienceplots for publication styling."""
     try:
         import scienceplots  # noqa: F401
         return True

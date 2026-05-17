@@ -6,6 +6,8 @@ from spectralbrain.io.loaders import (  # noqa: F401
     load_gifti_surface, load_gifti_func, load_gifti_label,
     load_nifti, load_mesh,
     labels_to_pointcloud, extract_submesh, apply_parcellation,
+    remap_parcellation, aggregate_by_parcellation,
+    DESIKAN_LOBE_MAP, SCHAEFER_NETWORK_MAP,
 )
 from spectralbrain.io.export import (  # noqa: F401
     save_hdf5, load_hdf5, save_mesh, save_gifti_func,

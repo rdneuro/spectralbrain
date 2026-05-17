@@ -87,6 +87,7 @@ set_style("paper")
 # ======================================================================
 
 def _reg(name, colors, N=256):
+    """Register a plot function in the graphics registry."""
     cmap = mcolors.LinearSegmentedColormap.from_list(name, colors, N=N)
     try:
         mpl.colormaps.register(cmap, name=name, force=True)

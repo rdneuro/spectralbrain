@@ -73,10 +73,12 @@ CAMERA_PRESETS: Dict[str, Dict[str, Any]] = {
 # ======================================================================
 
 def _ensure_offscreen() -> None:
+    """Set vedo to offscreen rendering mode."""
     os.environ.setdefault("VTK_USE_OFFSCREEN", "1")
 
 
 def _get_vedo():
+    """Lazy-import vedo, raising ImportError if unavailable."""
     _ensure_offscreen()
     try:
         import vedo

@@ -411,6 +411,7 @@ def enhance_deepn4(
 
     # Monkey-patch for DIPY CUDA bug (missing .cpu() before .numpy())
     def _patched_predict(x_test):
+        """Patched predict method for GPU-accelerated surface extraction."""
         with torch.no_grad():
             out_tensor = model.model(x_test)[:, 0].detach()
         return out_tensor.cpu().numpy() if out_tensor.is_cuda else out_tensor.numpy()

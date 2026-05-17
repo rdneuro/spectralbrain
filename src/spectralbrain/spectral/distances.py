@@ -528,6 +528,7 @@ def _mmd_gaussian(
     gamma = 1.0 / (2.0 * sigma ** 2)
 
     def _k(X: np.ndarray, Y: np.ndarray) -> float:
+        """Kernel function for the shell distance computation."""
         D2 = (
             np.sum(X ** 2, axis=1, keepdims=True)
             + np.sum(Y ** 2, axis=1, keepdims=True).T

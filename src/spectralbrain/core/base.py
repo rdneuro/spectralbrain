@@ -124,6 +124,7 @@ class SpectralDecomposition:
         surface_area: Optional[float] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
+        """Initialise from eigenvalues, eigenvectors, and optional matrices."""
         eigenvalues = np.asarray(eigenvalues, dtype=np.float64)
         eigenvectors = np.asarray(eigenvectors, dtype=np.float64)
 
@@ -349,12 +350,14 @@ class SpectralDecomposition:
     # ── repr ──────────────────────────────────────────────────────────
 
     def __repr__(self) -> str:
+        """Return a compact summary of the decomposition."""
         parts = [
             f"SpectralDecomposition("
             f"n_vertices={self.n_vertices}, "
             f"k={self.n_eigenvalues}"
         ]
         if self.surface_area is not None:
+            """Return a compact representation of the decomposition."""
             parts.append(f", area={self.surface_area:.1f}")
         struct = self.metadata.get("structure")
         if struct:

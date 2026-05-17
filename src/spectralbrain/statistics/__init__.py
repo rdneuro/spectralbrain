@@ -24,6 +24,7 @@ from spectralbrain.statistics.bayesian import (  # noqa: F401
     BayesianConnectome,
 )
 from spectralbrain.statistics.normative import (  # noqa: F401
+    HarmonizationResult, harmonize_combat, harmonize_combat_gam, harmonize,
     NormativeModel, centile_curves, z_score_map, extreme_value_map,
     NonInferiorityResult, non_inferiority_test,
     equivalence_test_tost, auc_comparison_delong,

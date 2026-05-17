@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import struct
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Tuple, Union
 
 import numpy as np
 
@@ -271,6 +271,7 @@ def load(
 # ── FreeSurfer surface (.white, .pial, …) ────────────────────────────
 
 def _load_fs_surface(path: Path) -> Dict[str, Any]:
+    """Load a FreeSurfer binary surface file (.white, .pial, .inflated)."""
     nib = _require_nibabel()
     vertices, faces = nib.freesurfer.read_geometry(str(path))
     return {
@@ -308,6 +309,7 @@ def load_freesurfer_surface(path: PathLike) -> Tuple[Vertices, Faces]:
 # ── FreeSurfer annotation (.annot) ────────────────────────────────────
 
 def _load_fs_annot(path: Path) -> Dict[str, Any]:
+    """Load a FreeSurfer annotation file (.annot)."""
     nib = _require_nibabel()
     labels, ctab, names = nib.freesurfer.read_annot(str(path))
     # names come as bytes in some nibabel versions; decode.
@@ -354,6 +356,7 @@ def load_freesurfer_annot(
 # ── FreeSurfer morphometry (.thickness, .curv, .sulc, .area) ─────────
 
 def _load_fs_morph(path: Path) -> Dict[str, Any]:
+    """Load a FreeSurfer morphometry overlay (.thickness, .curv, .sulc)."""
     nib = _require_nibabel()
     scalars = nib.freesurfer.read_morph_data(str(path))
     return {
@@ -380,6 +383,7 @@ def load_freesurfer_morph(path: PathLike) -> ScalarMap:
 # ── FreeSurfer label (.label) ─────────────────────────────────────────
 
 def _load_fs_label(path: Path) -> Dict[str, Any]:
+    """Load a FreeSurfer label file (.label)."""
     nib = _require_nibabel()
     label_array, scalar_values = nib.freesurfer.read_label(
         str(path), read_scalars=True,
@@ -397,6 +401,7 @@ def _load_fs_label(path: Path) -> Dict[str, Any]:
 # ── GIfTI surface (.surf.gii) ────────────────────────────────────────
 
 def _load_gifti_surface(path: Path) -> Dict[str, Any]:
+    """Load a GIFTI surface file (.surf.gii)."""
     nib = _require_nibabel()
     img = nib.load(str(path))
     vertices = img.darrays[0].data
@@ -427,6 +432,7 @@ def load_gifti_surface(path: PathLike) -> Tuple[Vertices, Faces]:
 # ── GIfTI functional / shape (.func.gii, .shape.gii) ─────────────────
 
 def _load_gifti_func(path: Path) -> Dict[str, Any]:
+    """Load a GIFTI functional/metric file (.func.gii, .shape.gii)."""
     nib = _require_nibabel()
     img = nib.load(str(path))
     # May contain one or more data arrays (e.g. multi-frame).
@@ -458,6 +464,7 @@ def load_gifti_func(path: PathLike) -> Union[ScalarMap, DescriptorMatrix]:
 # ── GIfTI label (.label.gii) ─────────────────────────────────────────
 
 def _load_gifti_label(path: Path) -> Dict[str, Any]:
+    """Load a GIFTI label file (.label.gii)."""
     nib = _require_nibabel()
     img = nib.load(str(path))
     labels = np.asarray(img.darrays[0].data, dtype=np.int32)
@@ -492,6 +499,7 @@ def load_gifti_label(path: PathLike) -> Tuple[LabelArray, List[str]]:
 # ── NIfTI / MGZ volume ────────────────────────────────────────────────
 
 def _load_nifti(path: Path) -> Dict[str, Any]:
+    """Load a NIfTI volume file (.nii, .nii.gz)."""
     nib = _require_nibabel()
     img = nib.load(str(path))
     return {
@@ -523,6 +531,7 @@ def load_nifti(path: PathLike) -> Tuple[np.ndarray, np.ndarray]:
 # ── Generic mesh (.ply, .obj, .stl, .vtk) ────────────────────────────
 
 def _load_generic_mesh(path: Path) -> Dict[str, Any]:
+    """Load a generic mesh file via trimesh (.ply, .obj, .stl, .off)."""
     trimesh = _require_trimesh()
     mesh = trimesh.load(str(path), process=False)
     return {
@@ -551,6 +560,7 @@ def load_mesh(path: PathLike) -> Tuple[Vertices, Faces]:
 # ── HDF5 (.h5) ───────────────────────────────────────────────────────
 
 def _load_hdf5(path: Path) -> Dict[str, Any]:
+    """Load data from an HDF5 file (.h5, .hdf5)."""
     h5py = _require_h5py()
     result: Dict[str, Any] = {}
     with h5py.File(str(path), "r") as f:
@@ -569,6 +579,7 @@ def _load_hdf5(path: Path) -> Dict[str, Any]:
 # ── NumPy archive (.npz) ─────────────────────────────────────────────
 
 def _load_npz(path: Path) -> Dict[str, Any]:
+    """Load data from a NumPy compressed archive (.npz)."""
     data = np.load(str(path), allow_pickle=False)
     return dict(data)
 
@@ -798,6 +809,333 @@ def apply_parcellation(
 
 
 # ======================================================================
+# §5b  PARCELLATION REMAPPING AND AGGREGATION
+# ======================================================================
+
+# ── Predefined lobe/network groupings ────────────────────────────────
+
+DESIKAN_LOBE_MAP: Dict[str, str] = {
+    # Frontal
+    "superiorfrontal": "frontal",
+    "rostralmiddlefrontal": "frontal",
+    "caudalmiddlefrontal": "frontal",
+    "parsopercularis": "frontal",
+    "parstriangularis": "frontal",
+    "parsorbitalis": "frontal",
+    "lateralorbitofrontal": "frontal",
+    "medialorbitofrontal": "frontal",
+    "precentral": "frontal",
+    "paracentral": "frontal",
+    "frontalpole": "frontal",
+    "rostralanteriorcingulate": "frontal",
+    "caudalanteriorcingulate": "frontal",
+    # Parietal
+    "superiorparietal": "parietal",
+    "inferiorparietal": "parietal",
+    "supramarginal": "parietal",
+    "postcentral": "parietal",
+    "precuneus": "parietal",
+    "posteriorcingulate": "parietal",
+    "isthmuscingulate": "parietal",
+    # Temporal
+    "superiortemporal": "temporal",
+    "middletemporal": "temporal",
+    "inferiortemporal": "temporal",
+    "bankssts": "temporal",
+    "fusiform": "temporal",
+    "transversetemporal": "temporal",
+    "entorhinal": "temporal",
+    "temporalpole": "temporal",
+    "parahippocampal": "temporal",
+    # Occipital
+    "lateraloccipital": "occipital",
+    "lingual": "occipital",
+    "cuneus": "occipital",
+    "pericalcarine": "occipital",
+    # Insular
+    "insula": "insular",
+}
+"""Map from Desikan-Killiany (aparc) region names to lobe labels.
+
+Works with both ``aparc.annot`` and ``aparc.DKTatlas.annot``
+(Desikan-Killiany-Tourville).  The mapping follows standard
+neuroanatomical conventions.
+
+Examples
+--------
+>>> labels, ctab, names = sb.io.load_freesurfer_annot("lh.aparc.annot")
+>>> lobe_labels, lobe_names = sb.io.remap_parcellation(
+...     labels, names, DESIKAN_LOBE_MAP,
+... )
+"""
+
+SCHAEFER_NETWORK_MAP: Dict[str, str] = {
+    "Vis":     "Visual",
+    "SomMot":  "Somatomotor",
+    "DorsAttn": "DorsalAttention",
+    "SalVentAttn": "SalVentAttn",
+    "Limbic":  "Limbic",
+    "Cont":    "Control",
+    "Default": "Default",
+    "TempPar": "TempPar",
+}
+"""Map from Schaefer parcel network prefixes to Yeo 7/17 network names.
+
+Used with :func:`remap_parcellation` when ``match="contains"``
+to group Schaefer-200/400/600/800/1000 parcels by their parent
+network.
+
+Examples
+--------
+>>> labels, ctab, names = sb.io.load_freesurfer_annot(
+...     "lh.Schaefer2018_200Parcels_7Networks_order.annot"
+... )
+>>> net_labels, net_names = sb.io.remap_parcellation(
+...     labels, names, SCHAEFER_NETWORK_MAP, match="contains",
+... )
+"""
+
+
+def remap_parcellation(
+    labels: np.ndarray,
+    names: Sequence[Union[str, bytes]],
+    mapping: Dict[str, str],
+    *,
+    match: Literal["exact", "contains"] = "exact",
+    unmapped: str = "unmapped",
+) -> Tuple[np.ndarray, Dict[int, str]]:
+    """Remap per-vertex parcellation labels to a coarser grouping.
+
+    Takes the label array and region names from a FreeSurfer ``.annot``
+    (or any atlas) and remaps each region to a new group according to
+    *mapping*.
+
+    Parameters
+    ----------
+    labels : ndarray, shape (V,)
+        Per-vertex integer labels (as returned by
+        :func:`load_freesurfer_annot`).
+    names : sequence of str or bytes
+        Region names, one per unique label in the annotation colour
+        table.  Index *i* corresponds to label integer *i*.
+    mapping : dict of {str: str}
+        Source region name → target group name.
+    match : ``"exact"`` or ``"contains"``
+        How to match region names to mapping keys.
+
+        * ``"exact"`` — the region name (lowered, stripped) must equal
+          a mapping key.
+        * ``"contains"`` — the region name is assigned to the first
+          mapping key that appears as a substring.  Useful for
+          Schaefer parcels whose names embed the network prefix
+          (e.g. ``"7Networks_LH_Vis_1"`` matches key ``"Vis"``).
+    unmapped : str
+        Group name for regions that do not match any mapping key.
+
+    Returns
+    -------
+    new_labels : ndarray, shape (V,)
+        Remapped per-vertex labels (contiguous integers starting at 0
+        for *unmapped*, 1 for the first group, etc.).
+    new_names : dict of {int: str}
+        Mapping from new integer label to group name.
+
+    Examples
+    --------
+    Group Desikan parcels into lobes:
+
+    >>> labels, ctab, names = sb.io.load_freesurfer_annot("lh.aparc.annot")
+    >>> lobe_labels, lobe_names = sb.io.remap_parcellation(
+    ...     labels, names, sb.io.DESIKAN_LOBE_MAP,
+    ... )
+    >>> set(lobe_names.values())
+    {'frontal', 'parietal', 'temporal', 'occipital', 'insular', 'unmapped'}
+
+    Group Schaefer parcels into Yeo networks:
+
+    >>> labels, _, names = sb.io.load_freesurfer_annot(
+    ...     "lh.Schaefer2018_400Parcels_7Networks_order.annot"
+    ... )
+    >>> net_labels, net_names = sb.io.remap_parcellation(
+    ...     labels, names, sb.io.SCHAEFER_NETWORK_MAP, match="contains",
+    ... )
+    """
+    labels = np.asarray(labels, dtype=np.int64)
+
+    # Decode bytes names.
+    decoded: List[str] = []
+    for n in names:
+        decoded.append(n.decode("utf-8") if isinstance(n, bytes) else str(n))
+
+    # Build old-label → group-name map.
+    label_to_group: Dict[int, str] = {}
+    mapping_lower = {k.lower().strip(): v for k, v in mapping.items()}
+
+    for idx, name in enumerate(decoded):
+        name_clean = name.lower().strip()
+        if match == "exact":
+            label_to_group[idx] = mapping_lower.get(name_clean, unmapped)
+        else:
+            found = False
+            for key, group in mapping.items():
+                if key.lower() in name_clean or key in name:
+                    label_to_group[idx] = group
+                    found = True
+                    break
+            if not found:
+                label_to_group[idx] = unmapped
+
+    # Build contiguous integer labels for groups.
+    unique_groups = sorted(set(label_to_group.values()))
+    # Ensure "unmapped" is index 0.
+    if unmapped in unique_groups:
+        unique_groups.remove(unmapped)
+        unique_groups = [unmapped] + unique_groups
+    group_to_int: Dict[str, int] = {
+        g: i for i, g in enumerate(unique_groups)
+    }
+
+    new_labels = np.array(
+        [group_to_int[label_to_group.get(l, unmapped)] for l in labels],
+        dtype=np.int64,
+    )
+    new_names = {v: k for k, v in group_to_int.items()}
+
+    logger.info(
+        "Remapped %d labels → %d groups (%s)",
+        len(set(labels.tolist())),
+        len(unique_groups),
+        ", ".join(unique_groups),
+    )
+    return new_labels, new_names
+
+
+def aggregate_by_parcellation(
+    data: np.ndarray,
+    labels: np.ndarray,
+    *,
+    stat: Union[str, Callable] = "mean",
+    ignore_labels: Optional[List[int]] = None,
+    label_names: Optional[Dict[int, str]] = None,
+) -> "pd.DataFrame":
+    """Aggregate vertex-wise data per parcellation region.
+
+    Compute summary statistics of a vertex-wise array (e.g. thickness,
+    HKS, z-score) within each parcel defined by *labels*.
+
+    Parameters
+    ----------
+    data : ndarray, shape (V,) or (V, D)
+        Vertex-wise data.  If 2-D, each column is aggregated
+        independently.
+    labels : ndarray, shape (V,)
+        Per-vertex integer labels.
+    stat : str or callable
+        Aggregation function.  Built-in options: ``"mean"``,
+        ``"median"``, ``"std"``, ``"min"``, ``"max"``, ``"sum"``,
+        ``"count"``, ``"iqr"`` (interquartile range).  Or pass a
+        callable that accepts an array and returns a scalar.
+    ignore_labels : list of int, optional
+        Labels to exclude (e.g. ``[0]`` for medial wall).
+    label_names : dict of {int: str}, optional
+        Mapping from label integer to name.  If provided, the
+        returned DataFrame uses region names as the index.
+
+    Returns
+    -------
+    pandas.DataFrame
+        One row per parcel, columns are ``"label"`` (or region name)
+        plus one column per data dimension (``"d0"``, ``"d1"``, …
+        or ``"value"`` for 1-D input).
+
+    Examples
+    --------
+    Mean cortical thickness per Desikan region:
+
+    >>> thickness = sb.io.load_freesurfer_morph("lh.thickness")
+    >>> labels, _, names = sb.io.load_freesurfer_annot("lh.aparc.annot")
+    >>> df = sb.io.aggregate_by_parcellation(
+    ...     thickness, labels, stat="mean", ignore_labels=[0],
+    ... )
+    >>> df.head()
+
+    Mean HKS per Yeo network (after remapping):
+
+    >>> hks = sb.spectral.compute_hks(decomp, n_times=16)
+    >>> net_labels, net_names = sb.io.remap_parcellation(
+    ...     labels, names, sb.io.SCHAEFER_NETWORK_MAP, match="contains",
+    ... )
+    >>> df = sb.io.aggregate_by_parcellation(
+    ...     hks, net_labels, stat="mean",
+    ...     ignore_labels=[0], label_names=net_names,
+    ... )
+    """
+    try:
+        import pandas as pd
+    except ImportError as exc:
+        raise ImportError("pandas required: pip install pandas") from exc
+
+    data = np.asarray(data)
+    labels = np.asarray(labels, dtype=np.int64)
+
+    if data.ndim == 1:
+        data = data[:, np.newaxis]
+        col_names = ["value"]
+    else:
+        col_names = [f"d{i}" for i in range(data.shape[1])]
+
+    if data.shape[0] != labels.shape[0]:
+        raise ValueError(
+            f"data rows {data.shape[0]} != labels length {labels.shape[0]}"
+        )
+
+    ignore = set(ignore_labels or [])
+    unique_labels = sorted(set(np.unique(labels).tolist()) - ignore)
+
+    # Resolve aggregation function.
+    _stat_funcs: Dict[str, Callable] = {
+        "mean": np.nanmean,
+        "median": np.nanmedian,
+        "std": np.nanstd,
+        "min": np.nanmin,
+        "max": np.nanmax,
+        "sum": np.nansum,
+        "count": lambda x, axis=0: np.sum(~np.isnan(x), axis=axis),
+        "iqr": lambda x, axis=0: (
+            np.nanpercentile(x, 75, axis=axis)
+            - np.nanpercentile(x, 25, axis=axis)
+        ),
+    }
+    if isinstance(stat, str):
+        if stat not in _stat_funcs:
+            raise ValueError(
+                f"Unknown stat '{stat}'. Use one of {list(_stat_funcs.keys())} "
+                f"or pass a callable."
+            )
+        func = _stat_funcs[stat]
+    else:
+        func = stat
+
+    rows = []
+    for lab in unique_labels:
+        mask = labels == lab
+        region_data = data[mask]
+        agg = func(region_data, axis=0)
+        agg = np.atleast_1d(agg)
+        rows.append([lab] + agg.tolist())
+
+    df = pd.DataFrame(rows, columns=["label"] + col_names)
+
+    if label_names is not None:
+        df["region"] = df["label"].map(label_names).fillna("unknown")
+        df = df.set_index("region")
+    else:
+        df = df.set_index("label")
+
+    return df
+
+
+# ======================================================================
 # §6  __all__
 # ======================================================================
 
@@ -822,4 +1160,9 @@ __all__: List[str] = [
     # Parcellation
     "extract_submesh",
     "apply_parcellation",
+    # Remapping & aggregation
+    "remap_parcellation",
+    "aggregate_by_parcellation",
+    "DESIKAN_LOBE_MAP",
+    "SCHAEFER_NETWORK_MAP",
 ]

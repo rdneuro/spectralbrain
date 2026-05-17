@@ -56,6 +56,29 @@ def _sample_distribution(
     distribution: DistributionName, size: Tuple[int, ...], *,
     rng: np.random.Generator, params: Optional[Dict[str, Any]] = None,
 ) -> np.ndarray:
+    """Draw samples from one of 22 parametric distributions.
+
+    Parameters
+    ----------
+    distribution : str
+        Distribution name (see :data:`DistributionName`).
+    size : tuple of int
+        Output shape.
+    rng : numpy.random.Generator
+        Random number generator instance.
+    params : dict, optional
+        Distribution-specific parameters.
+
+    Returns
+    -------
+    ndarray
+        Samples with shape *size*.
+
+    Raises
+    ------
+    ValueError
+        If *distribution* is not recognised.
+    """
     p = params or {}
     if distribution == "normal":
         return rng.normal(p.get("loc", 0), p.get("scale", 1), size)
@@ -114,6 +137,26 @@ def _sample_distribution(
 
 
 def _match_distribution(reference: np.ndarray, size: Tuple[int, ...], rng: np.random.Generator) -> np.ndarray:
+    """Generate samples matching an empirical reference distribution.
+
+    Uses bootstrap resampling with added jitter (5% of reference std)
+    to produce new samples that follow the same marginal distribution
+    as *reference*.
+
+    Parameters
+    ----------
+    reference : ndarray
+        Empirical data to match.
+    size : tuple of int
+        Output shape.
+    rng : numpy.random.Generator
+        Random number generator.
+
+    Returns
+    -------
+    ndarray
+        Samples with shape *size*.
+    """
     flat = reference.ravel()
     idx = rng.choice(len(flat), size=int(np.prod(size)), replace=True)
     noise_scale = flat.std() * 0.05
@@ -127,8 +170,38 @@ def bootstrap_ci(
     n_bootstrap: int = 10000, ci: float = 0.95,
     method: Literal["percentile", "bca"] = "percentile",
     seed: Optional[int] = None,
+    n_jobs: int = 1,
 ) -> Tuple[float, float, float]:
-    """Bootstrap CI for a scalar statistic. Returns (estimate, lo, hi)."""
+    """Bootstrap confidence interval for a scalar statistic.
+
+    Parameters
+    ----------
+    data : ndarray
+        Input data array.
+    statistic : callable
+        Function that maps ``data`` to a scalar.
+    n_bootstrap : int
+        Number of bootstrap replicates.
+    ci : float
+        Confidence level (e.g. 0.95 for 95% CI).
+    method : ``"percentile"`` or ``"bca"``
+        CI method.  BCa (bias-corrected and accelerated) is more
+        accurate but slower.
+    seed : int, optional
+        RNG seed.
+    n_jobs : int
+        Parallel workers for bootstrap replicates (``1`` = sequential,
+        ``-1`` = all cores).  Requires ``joblib``.
+
+    Returns
+    -------
+    estimate : float
+        The statistic computed on the original data.
+    ci_low : float
+        Lower bound of the confidence interval.
+    ci_high : float
+        Upper bound of the confidence interval.
+    """
     rng = np.random.default_rng(seed)
     n = len(data)
     obs = statistic(data)
@@ -152,7 +225,29 @@ def bootstrap_paired_difference(
     a: np.ndarray, b: np.ndarray, *, n_bootstrap: int = 10000,
     ci: float = 0.95, seed: Optional[int] = None,
 ) -> Tuple[float, float, float]:
-    """Bootstrap CI for paired mean difference."""
+    """Bootstrap confidence interval for paired mean difference.
+
+    Computes the CI of ``mean(a - b)`` via bootstrap resampling
+    on the paired differences.
+
+    Parameters
+    ----------
+    a, b : ndarray
+        Paired observations (same length).
+    n_bootstrap : int
+        Number of bootstrap replicates.
+    ci : float
+        Confidence level.
+    seed : int, optional
+        RNG seed.
+
+    Returns
+    -------
+    estimate : float
+        Mean paired difference.
+    ci_low, ci_high : float
+        Confidence interval bounds.
+    """
     return bootstrap_ci(np.asarray(a) - np.asarray(b), np.mean, n_bootstrap=n_bootstrap, ci=ci, seed=seed)
 
 
@@ -253,6 +348,19 @@ class SyntheticDescriptors:
     >>> data = gen.generate(n_subjects=50, n_vertices=1000, n_scales=20)
     """
     def __init__(self, reference=None, distribution=None, dist_params=None, seed=None):
+        """Initialise the descriptor generator.
+
+        Parameters
+        ----------
+        reference : ndarray, optional
+            Real data to match via bootstrap resampling.
+        distribution : str, optional
+            Parametric distribution name (default ``"normal"``).
+        dist_params : dict, optional
+            Distribution-specific parameters.
+        seed : int, optional
+            RNG seed.
+        """
         self.reference = reference
         self.distribution = distribution or "normal"
         self.dist_params = dist_params or {}
@@ -282,27 +390,91 @@ class SyntheticMesh:
     distribution, dist_params, seed : as above.
     """
     def __init__(self, reference_vertices=None, distribution=None, dist_params=None, seed=None):
+        """Initialise the mesh generator.
+
+        Parameters
+        ----------
+        reference_vertices : ndarray, optional
+            Reference vertices for noise distribution matching.
+        distribution : str, optional
+            Noise distribution (default ``"normal"``).
+        dist_params : dict, optional
+            Distribution-specific parameters.
+        seed : int, optional
+            RNG seed.
+        """
         self.reference = reference_vertices
         self.distribution = distribution or "normal"
         self.dist_params = dist_params or {}
         self.rng = np.random.default_rng(seed)
 
     def _noise(self, verts, scale):
+        """Apply noise to vertices using the configured distribution."""
         if self.reference is not None:
             ref_std = self.reference.std(axis=0).mean()
             return verts + _match_distribution(self.reference - self.reference.mean(axis=0), verts.shape, self.rng) * (scale * ref_std)
         return verts + _sample_distribution(self.distribution, verts.shape, rng=self.rng, params={**self.dist_params, "scale": scale})
 
     def sphere(self, n_lat=30, n_lon=60, radius=50.0, noise=0.0):
+        """Generate a UV-sphere mesh.
+
+        Parameters
+        ----------
+        n_lat, n_lon : int
+            Latitude and longitude subdivisions.
+        radius : float
+            Sphere radius.
+        noise : float
+            Noise scale (0 = no noise).
+
+        Returns
+        -------
+        vertices : ndarray, shape (V, 3)
+        faces : ndarray, shape (F, 3)
+        """
         v, f = _uv_sphere(n_lat, n_lon, radius)
         return (self._noise(v, noise), f) if noise > 0 else (v, f)
 
     def ellipsoid(self, radii=(50, 30, 20), n_lat=30, n_lon=60, noise=0.0):
+        """Generate an ellipsoid mesh.
+
+        Parameters
+        ----------
+        radii : tuple of float
+            Semi-axis lengths (a, b, c).
+        n_lat, n_lon : int
+            Latitude and longitude subdivisions.
+        noise : float
+            Noise scale.
+
+        Returns
+        -------
+        vertices : ndarray, shape (V, 3)
+        faces : ndarray, shape (F, 3)
+        """
         v, f = _uv_sphere(n_lat, n_lon, 1.0)
         v *= np.array(radii)
         return (self._noise(v, noise), f) if noise > 0 else (v, f)
 
     def torus(self, R=40.0, r=15.0, n_major=40, n_minor=20, noise=0.0):
+        """Generate a torus mesh.
+
+        Parameters
+        ----------
+        R : float
+            Major radius (center of tube to center of torus).
+        r : float
+            Minor radius (tube radius).
+        n_major, n_minor : int
+            Subdivisions along major and minor circles.
+        noise : float
+            Noise scale.
+
+        Returns
+        -------
+        vertices : ndarray, shape (V, 3)
+        faces : ndarray, shape (F, 3)
+        """
         v, f = _torus(R, r, n_major, n_minor)
         return (self._noise(v, noise), f) if noise > 0 else (v, f)
 
@@ -316,36 +488,114 @@ class SyntheticPointCloud:
     distribution, dist_params, seed : as above.
     """
     def __init__(self, reference=None, distribution=None, dist_params=None, seed=None):
+        """Initialise the point cloud generator.
+
+        Parameters
+        ----------
+        reference : ndarray, optional
+            Reference point cloud for distribution matching.
+        distribution : str, optional
+            Noise distribution (default ``"normal"``).
+        dist_params : dict, optional
+            Distribution-specific parameters.
+        seed : int, optional
+            RNG seed.
+        """
         self.reference = reference
         self.distribution = distribution or "normal"
         self.dist_params = dist_params or {}
         self.rng = np.random.default_rng(seed)
 
     def sphere(self, n_points=1000, radius=50.0, noise=0.5):
+        """Generate random points on a sphere surface.
+
+        Parameters
+        ----------
+        n_points : int
+        radius : float
+        noise : float
+            Gaussian jitter magnitude.
+
+        Returns
+        -------
+        ndarray, shape (n_points, 3)
+        """
         pts = _random_sphere_points(n_points, radius, self.rng)
         if noise > 0:
             pts += self._noise_3d(n_points) * noise
         return pts
 
     def ellipsoid(self, n_points=1000, radii=(50, 30, 20), noise=0.5):
+        """Generate random points on an ellipsoid surface.
+
+        Parameters
+        ----------
+        n_points : int
+        radii : tuple of float
+            Semi-axis lengths (a, b, c).
+        noise : float
+
+        Returns
+        -------
+        ndarray, shape (n_points, 3)
+        """
         pts = _random_sphere_points(n_points, 1.0, self.rng) * np.array(radii)
         if noise > 0:
             pts += self._noise_3d(n_points) * noise
         return pts
 
     def blob(self, n_points=1000, center=(0,0,0), scale=(10,10,10)):
+        """Generate a Gaussian blob point cloud.
+
+        Parameters
+        ----------
+        n_points : int
+        center : tuple of float
+        scale : tuple of float
+
+        Returns
+        -------
+        ndarray, shape (n_points, 3)
+        """
         return self.rng.normal(center, scale, (n_points, 3))
 
     def multi_cluster(self, n_points=1000, n_clusters=5, spread=30.0, cluster_std=5.0):
+        """Generate a multi-cluster point cloud.
+
+        Parameters
+        ----------
+        n_points : int
+        n_clusters : int
+        spread : float
+            Spatial extent for cluster centres.
+        cluster_std : float
+            Standard deviation within each cluster.
+
+        Returns
+        -------
+        ndarray, shape (~n_points, 3)
+        """
         per = n_points // n_clusters
         centers = self.rng.uniform(-spread, spread, (n_clusters, 3))
         return np.vstack([self.rng.normal(c, cluster_std, (per, 3)) for c in centers])
 
     def from_reference(self, n_points=None):
+        """Generate points matching the reference distribution.
+
+        Parameters
+        ----------
+        n_points : int, optional
+            Number of points (default: same as reference).
+
+        Returns
+        -------
+        ndarray, shape (n_points, 3)
+        """
         if self.reference is None: raise ValueError("No reference data.")
         return _match_distribution(self.reference, (n_points or self.reference.shape[0], 3), self.rng)
 
     def _noise_3d(self, n):
+        """Generate 3D noise samples using the configured distribution."""
         if self.reference is not None:
             return _match_distribution(self.reference - self.reference.mean(axis=0), (n, 3), self.rng)
         return _sample_distribution(self.distribution, (n, 3), rng=self.rng, params={**self.dist_params, "scale": 1})
@@ -354,6 +604,20 @@ class SyntheticPointCloud:
 # ==== Geometry helpers ====
 
 def _uv_sphere(n_lat, n_lon, radius):
+    """Build a UV-sphere mesh.
+
+    Parameters
+    ----------
+    n_lat, n_lon : int
+        Number of latitude / longitude divisions.
+    radius : float
+        Sphere radius.
+
+    Returns
+    -------
+    vertices : ndarray, shape (V, 3)
+    faces : ndarray, shape (F, 3)
+    """
     verts = []
     for i in range(n_lat + 1):
         theta = np.pi * i / n_lat
@@ -370,6 +634,22 @@ def _uv_sphere(n_lat, n_lon, radius):
     return verts, np.array(faces, dtype=np.int64)
 
 def _torus(R, r, n_major, n_minor):
+    """Build a torus mesh.
+
+    Parameters
+    ----------
+    R : float
+        Major radius.
+    r : float
+        Minor (tube) radius.
+    n_major, n_minor : int
+        Subdivisions along the major and minor circles.
+
+    Returns
+    -------
+    vertices : ndarray, shape (V, 3)
+    faces : ndarray, shape (F, 3)
+    """
     verts = []
     for i in range(n_major):
         theta = 2*np.pi*i/n_major
@@ -386,6 +666,23 @@ def _torus(R, r, n_major, n_minor):
     return verts, np.array(faces, dtype=np.int64)
 
 def _random_sphere_points(n, radius, rng):
+    """Sample *n* uniformly distributed points on a sphere surface.
+
+    Uses the Marsaglia method (uniform z + uniform azimuth).
+
+    Parameters
+    ----------
+    n : int
+        Number of points.
+    radius : float
+        Sphere radius.
+    rng : numpy.random.Generator
+        Random number generator.
+
+    Returns
+    -------
+    ndarray, shape (n, 3)
+    """
     z = rng.uniform(-1, 1, n)
     phi = rng.uniform(0, 2*np.pi, n)
     r_xy = np.sqrt(1 - z**2)

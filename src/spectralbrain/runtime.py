@@ -427,6 +427,7 @@ def _fallback_update_factory(
     done = 0
 
     def _update(n: int = 1) -> None:
+        """Update the progress state."""
         nonlocal done
         done += n
         if total and done % max(1, total // 10) == 0:
@@ -480,6 +481,7 @@ def progress_simple(
         tid = prog.add_task(description, total=total)
 
         def _update(n: int = 1) -> None:
+            """Update the progress state."""
             prog.update(tid, advance=n)
 
         yield _update
@@ -529,6 +531,7 @@ def progress_parallel(
         tid = prog.add_task(description, total=total)
 
         def _update(n: int = 1) -> None:
+            """Update the progress state."""
             prog.update(tid, advance=n)
 
         yield _update
@@ -565,6 +568,7 @@ class NestedProgress:
         inner_description: str,
         inner_total: int,
     ) -> None:
+        """Initialise the nested progress tracker."""
         self.outer_description = outer_description
         self.outer_total = outer_total
         self.inner_description = inner_description
@@ -576,6 +580,7 @@ class NestedProgress:
     # -- context manager ------------------------------------------------
 
     def __enter__(self) -> NestedProgress:
+        """Enter the context manager and start the progress bar."""
         if not _HAS_RICH:
             return self
         cols = [
@@ -597,6 +602,7 @@ class NestedProgress:
         return self
 
     def __exit__(self, *exc: Any) -> None:
+        """Exit the context manager and stop the progress bar."""
         if self._progress is not None:
             self._progress.__exit__(*exc)
 
@@ -796,6 +802,7 @@ class ContainerManager:
         cache_dir: PathLike = _DEFAULT_CACHE_DIR,
         registry: Optional[Dict[str, ContainerSpec]] = None,
     ) -> None:
+        """Initialise the container runner configuration."""
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.registry = registry or CONTAINER_REGISTRY
@@ -816,6 +823,7 @@ class ContainerManager:
     # ── internal helpers ──────────────────────────────────────────────
 
     def _sif_path(self, tool: str) -> Path:
+        """Resolve the Singularity/Apptainer image path."""
         return self.cache_dir / self.registry[tool].sif_filename
 
     # ── public API ────────────────────────────────────────────────────

@@ -80,6 +80,7 @@ class BrainMesh:
         faces: Faces,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
+        """Initialise from vertices and faces arrays."""
         self.vertices = np.asarray(vertices, dtype=np.float64)
         self.faces = np.asarray(faces, dtype=np.int64)
         self.metadata = metadata or {}
@@ -99,18 +100,22 @@ class BrainMesh:
 
     @property
     def coordinates(self) -> Vertices:
+        """Return the vertex coordinates array."""
         return self.vertices
 
     @property
     def n_points(self) -> int:
+        """Return the number of vertices (alias for n_vertices)."""
         return self.vertices.shape[0]
 
     @property
     def n_vertices(self) -> int:
+        """Return the number of vertices in the mesh."""
         return self.vertices.shape[0]
 
     @property
     def n_faces(self) -> int:
+        """Return the number of triangular faces."""
         return self.faces.shape[0]
 
     def surface_area(self) -> float:
@@ -559,12 +564,14 @@ class BrainMesh:
     # ── repr ──────────────────────────────────────────────────────────
 
     def __repr__(self) -> str:
+        """Return a compact mesh summary string."""
         s = self.metadata.get("structure", "")
         label = f", structure='{s}'" if s else ""
         return (
             f"BrainMesh(n_vertices={self.n_vertices}, "
             f"n_faces={self.n_faces}, "
             f"area={self.surface_area():.1f}{label})"
+        """Return a compact mesh summary."""
         )
 
 
@@ -927,10 +934,12 @@ def _edge_list(faces: Faces) -> np.ndarray:
 
 
 def _count_edges(faces: Faces) -> int:
+    """Count the number of unique edges in the mesh."""
     return _edge_list(faces).shape[0]
 
 
 def _edge_lengths(vertices: Vertices, faces: Faces) -> np.ndarray:
+    """Compute lengths of all edges in the mesh."""
     edges = _edge_list(faces)
     return np.linalg.norm(
         vertices[edges[:, 0]] - vertices[edges[:, 1]], axis=1,

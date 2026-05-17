@@ -59,6 +59,7 @@ _ROPE_ABOVE = "#EE6677"
 
 
 def _apply_style():
+    """Apply the publication-quality matplotlib style preset."""
     try:
         import scienceplots  # noqa: F401
         plt.style.use(["science", "no-latex"])
@@ -69,6 +70,7 @@ def _apply_style():
 
 
 def _save(fig, path, formats=None):
+    """Save the current figure if a path is provided."""
     from spectralbrain.viz.graphics import savefig
     return savefig(fig, path, formats=formats, dpi=DPI)
 
@@ -167,7 +169,7 @@ def _hdi(samples: np.ndarray, prob: float) -> Tuple[float, float]:
 # ======================================================================
 
 def plot_forest(
-    param_names: List[str],
+    var_names: List[str],
     posteriors: List[np.ndarray],
     *,
     hdi_prob: float = 0.94,
@@ -182,7 +184,8 @@ def plot_forest(
 
     Parameters
     ----------
-    param_names : list of str
+    var_names : list of str
+        Names of the variables / parameters.
     posteriors : list of ndarray
         One posterior sample array per parameter.
     hdi_prob : float
@@ -190,7 +193,7 @@ def plot_forest(
         Reference line (typically 0).
     """
     _apply_style()
-    n = len(param_names)
+    n = len(var_names)
     if ax is None:
         fig, ax = plt.subplots(figsize=(5, 0.35 * n + 1), dpi=DPI)
     else:
@@ -199,7 +202,7 @@ def plot_forest(
     cols = colors or [_BLUE] * n
     positions = np.arange(n)
 
-    for i, (name, post) in enumerate(zip(param_names, posteriors)):
+    for i, (name, post) in enumerate(zip(var_names, posteriors)):
         s = post.ravel()
         lo, hi = _hdi(s, hdi_prob)
         lo50, hi50 = _hdi(s, 0.50)
@@ -216,7 +219,7 @@ def plot_forest(
 
     ax.axvline(ref_val, color=_DARK, ls="--", lw=0.8, alpha=0.5)
     ax.set_yticks(positions)
-    ax.set_yticklabels(param_names, fontsize=7)
+    ax.set_yticklabels(var_names, fontsize=7)
     ax.set_xlabel(xlabel)
     if title:
         ax.set_title(title, fontweight="bold")
@@ -479,7 +482,7 @@ def plot_ridgeline(
 def plot_horseshoe_coefficients(
     trace,
     *,
-    feature_names: Optional[List[str]] = None,
+    var_names: Optional[List[str]] = None,
     hdi_prob: float = 0.94,
     title: str = "Horseshoe Regression — Feature Selection",
     save: Optional[PathLike] = None,
@@ -493,7 +496,8 @@ def plot_horseshoe_coefficients(
     ----------
     trace : arviz.InferenceData
         From ``HorseshoeRegression.trace_``.
-    feature_names : list of str, optional
+    var_names : list of str, optional
+        Names for each feature / coefficient.
     """
     _apply_style()
 
@@ -505,8 +509,8 @@ def plot_horseshoe_coefficients(
     lam = lam.reshape(-1, lam.shape[-1])
     d = beta.shape[1]
 
-    if feature_names is None:
-        feature_names = [f"β_{i}" for i in range(d)]
+    if var_names is None:
+        var_names = [f"β_{i}" for i in range(d)]
 
     # Shrinkage factor: κ = 1/(1 + λ²)
     kappa = 1.0 / (1.0 + lam ** 2)
@@ -530,7 +534,7 @@ def plot_horseshoe_coefficients(
             colors.append(_BLUE)
 
     plot_forest(
-        feature_names, posteriors,
+        var_names, posteriors,
         hdi_prob=hdi_prob, ref_val=0.0,
         colors=colors, title="", xlabel="β",
         ax=ax_forest,

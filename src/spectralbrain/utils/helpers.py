@@ -70,10 +70,12 @@ class Timer:
     """
 
     def __init__(self) -> None:
+        """Initialise the timer with an optional label."""
         self._start: float = 0
         self._laps: List[tuple] = []
 
     def start(self) -> "Timer":
+        """Start the timer and return self."""
         self._start = time.perf_counter()
         self._laps = []
         return self

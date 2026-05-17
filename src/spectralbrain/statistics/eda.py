@@ -62,6 +62,7 @@ class SpectralQCReport:
     passed: bool = True
 
     def __repr__(self) -> str:
+        """Return a human-readable summary of the QC report."""
         status = "✓ PASSED" if self.passed else "✗ ISSUES FOUND"
         return (
             f"SpectralQC({status}, N={self.n_vertices}, "
@@ -193,6 +194,7 @@ class OptimalKResult:
     cumulative_energy: Optional[np.ndarray] = None
 
     def __repr__(self) -> str:
+        """Return a compact summary of the optimal-k recommendation."""
         return (
             f"OptimalK(recommended={self.k_recommended}, "
             f"elbow={self.k_elbow}, energy95={self.k_energy_95}, "
@@ -570,6 +572,7 @@ class DescriptorRecommendation:
     surrogate_details: Dict[str, Any]
 
     def __repr__(self) -> str:
+        """Return a summary showing the top-5 ranked descriptors."""
         top5 = ", ".join(
             f"{r['descriptor']}({r['score']:.3f})"
             for r in self.ranking[:5]
@@ -743,6 +746,7 @@ def recommend_descriptor(
     *,
     n_surrogates: int = 30,
     k_eigenpairs: int = 30,
+    n_jobs: int = 1,
     seed: Optional[int] = 42,
 ) -> DescriptorRecommendation:
     """Recommend the best spectral descriptor for an analysis objective.
@@ -766,6 +770,10 @@ def recommend_descriptor(
         Number of synthetic shapes to generate.
     k_eigenpairs : int
         Eigenpairs per surrogate decomposition.
+    n_jobs : int
+        Number of parallel workers for surrogate decomposition.
+        ``1`` = sequential (default), ``-1`` = all cores.  Requires
+        ``joblib`` when > 1.
     seed : int, optional
         RNG seed for reproducibility.
 
@@ -775,11 +783,19 @@ def recommend_descriptor(
         Contains ``.recommended``, ``.ranking`` (top descriptors
         with AUC, accuracy, effect size), and ``.surrogate_details``.
 
+    Notes
+    -----
+    This function is computationally heavy (30 surrogates × k
+    eigenpairs × all descriptors by default).  For large meshes,
+    consider using ``n_jobs=-1`` to parallelise the surrogate
+    decomposition across CPU cores.
+
     Examples
     --------
     >>> rec = sb.statistics.recommend_descriptor(
     ...     mesh.vertices,
     ...     objective="group_discrimination",
+    ...     n_jobs=-1,
     ... )
     >>> print(rec.recommended)
     'wks'
@@ -840,12 +856,25 @@ def recommend_descriptor(
     # Decompose all surrogates.
     from spectralbrain.core.pointclouds import BrainPointCloud
 
+    def _decompose_single(pts: np.ndarray) -> SpectralDecomposition:
+        """Decompose a single surrogate point cloud."""
+        pc = BrainPointCloud(pts)
+        return pc.decompose(k=k_eigenpairs, laplacian_method="knn")
+
     decomps: List[SpectralDecomposition] = []
-    with progress_simple("Decomposing surrogates", total=n_surrogates) as tick:
-        for pts in surrogates:
-            pc = BrainPointCloud(pts)
-            decomps.append(pc.decompose(k=k_eigenpairs, laplacian_method="knn"))
-            tick(1)
+    if n_jobs == 1:
+        with progress_simple("Decomposing surrogates", total=n_surrogates) as tick:
+            for pts in surrogates:
+                decomps.append(_decompose_single(pts))
+                tick(1)
+    else:
+        from spectralbrain.backends.cpu import parallel_map
+        decomps = parallel_map(
+            _decompose_single,
+            surrogates,
+            n_jobs=n_jobs,
+            description="Decomposing surrogates (parallel)",
+        )
 
     # Compute each descriptor on all surrogates and evaluate.
     scores: List[Dict[str, Any]] = []

@@ -60,9 +60,11 @@ class VertexWiseResult:
 
     @property
     def n_significant(self) -> int:
+        """Return the count of significant results after correction."""
         return int(self.significant.sum())
 
     def __repr__(self) -> str:
+        """Return a compact summary string."""
         return (
             f"VertexWiseResult({self.n_significant} significant / "
             f"{len(self.statistic)} vertices, "
@@ -540,6 +542,7 @@ class ClassificationResult:
     model_name: str
 
     def __repr__(self) -> str:
+        """Return a compact summary string."""
         return (
             f"Classification({self.model_name}: "
             f"AUC={self.auc:.3f}±{self.auc_std:.3f}, "

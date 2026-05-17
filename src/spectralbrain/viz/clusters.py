@@ -111,10 +111,12 @@ CAMERA_PRESETS: Dict[str, Dict[str, Any]] = {
 # ──────────────────────────────────────────────────────────────────────
 
 def _ensure_offscreen() -> None:
+    """Set vedo to offscreen rendering mode."""
     os.environ.setdefault("VTK_USE_OFFSCREEN", "1")
 
 
 def _get_vedo():
+    """Lazy-import vedo, raising ImportError if unavailable."""
     _ensure_offscreen()
     try:
         import vedo
@@ -1967,6 +1969,7 @@ def plot_spatiotemporal_animation(
 
     # --- animation update ---
     def _update(frame_idx):
+        """Update the interactive plot state."""
         # tripcolor stores face-averaged values for flat shading
         # and vertex values for gouraud — set_array on the collection
         tpc.set_array(H[:, frame_idx])
@@ -2425,6 +2428,7 @@ def plot_descriptor_evolution_comparison(
 
     # --- helper to get norm ---
     def _make_norm(H_block, indices):
+        """Create a matplotlib Normalize instance for the given range."""
         vals = H_block[:, indices]
         vmin = float(np.nanpercentile(vals[vals > 0], 2)) if log_norm else float(vals.min())
         vmax = float(np.nanpercentile(vals, 98))

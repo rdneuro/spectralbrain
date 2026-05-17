@@ -208,14 +208,17 @@ class NumpyBackend:
 
     @staticmethod
     def zeros(shape: Tuple[int, ...], dtype: np.dtype = np.float64) -> np.ndarray:
+        """Create a zero-filled array (mirrors numpy.zeros)."""
         return np.zeros(shape, dtype=dtype)
 
     @staticmethod
     def ones(shape: Tuple[int, ...], dtype: np.dtype = np.float64) -> np.ndarray:
+        """Create a ones-filled array (mirrors numpy.ones)."""
         return np.ones(shape, dtype=dtype)
 
     @staticmethod
     def eye(n: int, dtype: np.dtype = np.float64) -> np.ndarray:
+        """Create an identity matrix (mirrors numpy.eye)."""
         return np.eye(n, dtype=dtype)
 
     @staticmethod
@@ -227,26 +230,32 @@ class NumpyBackend:
 
     @staticmethod
     def exp(x: np.ndarray) -> np.ndarray:
+        """Element-wise exponential (mirrors numpy.exp)."""
         return np.exp(x)
 
     @staticmethod
     def log(x: np.ndarray) -> np.ndarray:
+        """Element-wise safe log with clamp at 1e-300."""
         return np.log(np.clip(x, 1e-300, None))
 
     @staticmethod
     def sqrt(x: np.ndarray) -> np.ndarray:
+        """Element-wise safe sqrt with clamp at 0."""
         return np.sqrt(np.clip(x, 0.0, None))
 
     @staticmethod
     def sum(x: np.ndarray, axis: Optional[int] = None) -> np.ndarray:
+        """Sum reduction (mirrors numpy.sum)."""
         return np.sum(x, axis=axis)
 
     @staticmethod
     def mean(x: np.ndarray, axis: Optional[int] = None) -> np.ndarray:
+        """Mean reduction (mirrors numpy.mean)."""
         return np.mean(x, axis=axis)
 
     @staticmethod
     def clip(x: np.ndarray, a_min: Optional[float], a_max: Optional[float]) -> np.ndarray:
+        """Element-wise clip (mirrors numpy.clip)."""
         return np.clip(x, a_min, a_max)
 
     @staticmethod
@@ -260,26 +269,32 @@ class NumpyBackend:
 
     @staticmethod
     def norm(x: np.ndarray, axis: Optional[int] = None, ord: Optional[int] = None) -> np.ndarray:
+        """Vector/matrix norm (mirrors numpy.linalg.norm)."""
         return np.linalg.norm(x, axis=axis, ord=ord)
 
     @staticmethod
     def argsort(x: np.ndarray, axis: int = -1) -> np.ndarray:
+        """Indirect sort indices (mirrors numpy.argsort)."""
         return np.argsort(x, axis=axis)
 
     @staticmethod
     def concatenate(arrays: Sequence[np.ndarray], axis: int = 0) -> np.ndarray:
+        """Concatenate arrays along an axis."""
         return np.concatenate(arrays, axis=axis)
 
     @staticmethod
     def stack(arrays: Sequence[np.ndarray], axis: int = 0) -> np.ndarray:
+        """Stack arrays along a new axis."""
         return np.stack(arrays, axis=axis)
 
     @staticmethod
     def linspace(start: float, stop: float, num: int) -> np.ndarray:
+        """Linearly spaced values (mirrors numpy.linspace)."""
         return np.linspace(start, stop, num, dtype=np.float64)
 
     @staticmethod
     def logspace(start: float, stop: float, num: int) -> np.ndarray:
+        """Log-spaced values (mirrors numpy.logspace)."""
         return np.logspace(start, stop, num, dtype=np.float64)
 
 
@@ -288,6 +303,7 @@ class NumpyBackend:
 # ======================================================================
 
 def _require_pymc():
+    """Lazy-import PyMC, raising ImportError if unavailable."""
     try:
         import pymc as pm
         return pm
@@ -299,6 +315,7 @@ def _require_pymc():
 
 
 def _require_nutpie():
+    """Lazy-import nutpie, raising ImportError if unavailable."""
     try:
         import nutpie
         return nutpie
@@ -310,6 +327,7 @@ def _require_nutpie():
 
 
 def _require_arviz():
+    """Lazy-import ArviZ, raising ImportError if unavailable."""
     try:
         import arviz as az
         return az
@@ -371,6 +389,7 @@ class PyMCSampler:
     name: str = "nuts"
 
     def __init__(self, config: Optional[SamplerConfig] = None) -> None:
+        """Initialise with optional SamplerConfig."""
         self.config = config or SamplerConfig()
 
     def sample(
@@ -439,6 +458,7 @@ class NutpieSampler:
     name: str = "nutpie"
 
     def __init__(self, config: Optional[SamplerConfig] = None) -> None:
+        """Initialise with optional SamplerConfig."""
         self.config = config or SamplerConfig()
 
     def sample(
@@ -510,6 +530,7 @@ def get_bayesian_sampler(
 # ======================================================================
 
 def _require_joblib():
+    """Lazy-import joblib, raising ImportError if unavailable."""
     try:
         import joblib
         return joblib
@@ -577,6 +598,7 @@ def parallel_map(
 
     with progress_parallel(description, total=total) as tick:
         def _worker(idx: int, item: T) -> Tuple[int, R]:
+            """Execute func on a single item and report progress."""
             result = func(item, **func_kwargs)
             tick(1)
             return idx, result
@@ -644,6 +666,7 @@ def parallel_batch(
     if progress:
         with progress_parallel(description, total=total) as tick:
             def _run(batch: np.ndarray) -> np.ndarray:
+                """Process one batch and report progress."""
                 r = func(batch)
                 tick(1)
                 return r
@@ -724,8 +747,10 @@ class MemoryInfo:
     percent_used: float
 
     def __repr__(self) -> str:
+        """Return a human-readable summary."""
         return (
             f"RAM: {self.used_gb:.1f} / {self.total_gb:.1f} GB "
+            """Return a human-readable RAM status summary."""
             f"({self.percent_used:.0f}% used, "
             f"{self.available_gb:.1f} GB free)"
         )

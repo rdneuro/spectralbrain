@@ -91,6 +91,7 @@ logger = get_logger(__name__)
 # ──────────────────────────────────────────────────────────────────────
 
 def _require_hdbscan():
+    """Lazy-import HDBSCAN."""
     try:
         import hdbscan
         return hdbscan
@@ -101,26 +102,31 @@ def _require_hdbscan():
 
 
 def _require_sklearn_cluster():
+    """Lazy-import sklearn.cluster."""
     from sklearn import cluster as skc
     return skc
 
 
 def _require_sklearn_metrics():
+    """Lazy-import sklearn.metrics."""
     from sklearn import metrics as skm
     return skm
 
 
 def _require_sklearn_decomposition():
+    """Lazy-import sklearn.decomposition."""
     from sklearn import decomposition as skd
     return skd
 
 
 def _require_sklearn_mixture():
+    """Lazy-import sklearn.mixture."""
     from sklearn import mixture as skmix
     return skmix
 
 
 def _require_umap():
+    """Lazy-import UMAP."""
     try:
         import umap
         return umap
@@ -129,6 +135,7 @@ def _require_umap():
 
 
 def _require_leidenalg():
+    """Lazy-import leidenalg."""
     try:
         import leidenalg
         import igraph
@@ -140,6 +147,7 @@ def _require_leidenalg():
 
 
 def _require_gudhi():
+    """Lazy-import GUDHI."""
     try:
         import gudhi
         return gudhi
@@ -148,6 +156,7 @@ def _require_gudhi():
 
 
 def _require_tslearn():
+    """Lazy-import tslearn."""
     try:
         import tslearn
         return tslearn
@@ -156,6 +165,7 @@ def _require_tslearn():
 
 
 def _require_skfda():
+    """Lazy-import scikit-fda."""
     try:
         import skfda
         return skfda
@@ -164,6 +174,7 @@ def _require_skfda():
 
 
 def _require_pymc():
+    """Lazy-import PyMC for Bayesian clustering."""
     try:
         import pymc as pm
         import arviz as az
@@ -175,6 +186,7 @@ def _require_pymc():
 
 
 def _require_torch():
+    """Lazy-import PyTorch."""
     try:
         import torch
         return torch
@@ -183,6 +195,7 @@ def _require_torch():
 
 
 def _require_joblib():
+    """Lazy-import joblib for parallelisation."""
     try:
         import joblib
         return joblib
@@ -191,6 +204,7 @@ def _require_joblib():
 
 
 def _require_dionysus():
+    """Lazy-import dionysus2 for persistent homology."""
     try:
         import dionysus
         return dionysus
@@ -199,6 +213,7 @@ def _require_dionysus():
 
 
 def _require_kepler_mapper():
+    """Lazy-import KeplerMapper for TDA."""
     try:
         import kmapper
         return kmapper
@@ -209,6 +224,7 @@ def _require_kepler_mapper():
 
 
 def _require_tensorly():
+    """Lazy-import TensorLy for tensor decomposition."""
     try:
         import tensorly
         import tensorly.decomposition
@@ -218,6 +234,7 @@ def _require_tensorly():
 
 
 def _require_pygsp():
+    """Lazy-import PyGSP for graph signal processing."""
     try:
         import pygsp
         return pygsp
@@ -261,16 +278,19 @@ class ClusterResult:
 
     @property
     def noise_count(self) -> int:
+        """Return the number of noise (unclustered) points."""
         return int((self.labels == -1).sum())
 
     @property
     def cluster_sizes(self) -> Dict[int, int]:
+        """Return a dict mapping cluster label to member count."""
         unique, counts = np.unique(
             self.labels[self.labels >= 0], return_counts=True
         )
         return dict(zip(unique.tolist(), counts.tolist()))
 
     def __repr__(self) -> str:
+        """Return a compact clustering result summary."""
         return (
             f"ClusterResult(method='{self.method}', "
             f"n_clusters={self.n_clusters}, "
@@ -1410,6 +1430,7 @@ def _persistence_sublevel_h0(density, graph, n, tau, k):
     birth = density.copy()
 
     def find(x):
+        """Find optimal parameters for the clustering algorithm."""
         while parent[x] != x:
             parent[x] = parent[parent[x]]
             x = parent[x]
@@ -2618,6 +2639,7 @@ def _sublevel_h0_pairs(f_vals, graph, n):
     pairs = []
 
     def _find(x):
+        """Internal parameter search implementation."""
         while parent[x] != x:
             parent[x] = parent[parent[x]]
             x = parent[x]
@@ -3304,6 +3326,7 @@ def cluster_scalespace_blobs(
     k_hops = max(1, int(linking_radius))
 
     def _k_hop_neighbours(v, k):
+        """Compute k-hop neighbourhood indices from an adjacency matrix."""
         visited = {v}
         frontier = {v}
         for _ in range(k):
@@ -3701,6 +3724,7 @@ def cluster_wavelet_coefficients(
     )
 
     def _wavelet_kernel(s, lam):
+        """Evaluate the spectral graph wavelet kernel at a given scale."""
         if wavelet_type == "mexican_hat":
             x = s * lam
             return x * np.exp(-x)

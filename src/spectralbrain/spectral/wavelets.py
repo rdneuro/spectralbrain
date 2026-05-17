@@ -242,6 +242,7 @@ def sgw_transform(
         for s_idx, t in enumerate(scales):
             # Scaled kernel: g_t(x) = g(t · x)
             def scaled_kernel(x: np.ndarray, _t=t) -> np.ndarray:
+                """Evaluate the wavelet kernel scaled to a given level."""
                 return kernel(_t * x)
 
             coeffs = _chebyshev_coefficients(

@@ -49,6 +49,7 @@ logger = get_logger(__name__)
 # ======================================================================
 
 def _require_pymc():
+    """Lazy-import PyMC, raising a clear error if unavailable."""
     try:
         import pymc as pm
         return pm
@@ -60,6 +61,7 @@ def _require_pymc():
 
 
 def _require_arviz():
+    """Lazy-import ArviZ, raising a clear error if unavailable."""
     try:
         import arviz as az
         return az
@@ -90,6 +92,7 @@ class BayesianModel(abc.ABC):
     """
 
     def __init__(self) -> None:
+        """Initialise the base Bayesian model with empty state."""
         self.trace_: Any = None
         self.model_: Any = None
         self._is_fitted: bool = False
@@ -287,6 +290,7 @@ class BayesianModel(abc.ABC):
         return az.from_netcdf(str(path))
 
     def _check_fitted(self) -> None:
+        """Raise RuntimeError if the model has not been fitted."""
         if not self._is_fitted:
             raise RuntimeError(
                 "Model not fitted yet. Call .fit(X, y) first."
@@ -321,10 +325,18 @@ class HorseshoeRegression(BayesianModel):
     """
 
     def __init__(self, tau_prior: float = 0.1) -> None:
+        """Initialise with global shrinkage prior scale.
+
+        Parameters
+        ----------
+        tau_prior : float
+            Global shrinkage scale (smaller = more sparse).
+        """
         super().__init__()
         self.tau_prior = tau_prior
 
     def _build_model(self, X: np.ndarray, y: np.ndarray, **kw: Any) -> Any:
+        """Build the horseshoe regression PyMC model."""
         pm = _require_pymc()
         n, d = X.shape
 
@@ -393,6 +405,13 @@ class BayesianGroupComparison(BayesianModel):
     """
 
     def __init__(self, rope: Tuple[float, float] = (-0.1, 0.1)) -> None:
+        """Initialise with ROPE bounds.
+
+        Parameters
+        ----------
+        rope : tuple of float
+            Region of practical equivalence bounds.
+        """
         super().__init__()
         self.rope = rope
 
@@ -414,6 +433,7 @@ class BayesianGroupComparison(BayesianModel):
         return super().fit(X, y, **kwargs)
 
     def _build_model(self, X: np.ndarray, y: np.ndarray, **kw: Any) -> Any:
+        """Build the BEST (Kruschke 2013) PyMC model."""
         pm = _require_pymc()
         a, b = self._a, self._b
         pooled = np.concatenate([a, b])
@@ -445,6 +465,7 @@ class BayesianGroupComparison(BayesianModel):
         return model
 
     def predict(self, X_new=None, **kwargs):
+        """Not applicable for group comparison; use effect_size_posterior()."""
         raise NotImplementedError(
             "BayesianGroupComparison does not support predict(). "
             "Use .effect_size_posterior() or .summary() instead."
@@ -507,6 +528,13 @@ class HierarchicalLinearModel(BayesianModel):
         self,
         random_effects: Literal["intercept", "slope"] = "intercept",
     ) -> None:
+        """Initialise with random-effects structure.
+
+        Parameters
+        ----------
+        random_effects : ``"intercept"`` or ``"slope"``
+            Type of random effects per site.
+        """
         super().__init__()
         self.random_effects = random_effects
 
@@ -520,6 +548,7 @@ class HierarchicalLinearModel(BayesianModel):
         return super().fit(X, y, **kwargs)
 
     def _build_model(self, X: np.ndarray, y: np.ndarray, **kw: Any) -> Any:
+        """Build the hierarchical linear PyMC model with site random effects."""
         pm = _require_pymc()
         n, d = X.shape
         n_sites = len(self._unique_sites)
@@ -596,6 +625,15 @@ class GaussianProcessNormative(BayesianModel):
         kernel: Literal["matern32", "matern52", "rbf"] = "matern52",
         lengthscale_prior: float = 10.0,
     ) -> None:
+        """Initialise with kernel type and lengthscale prior.
+
+        Parameters
+        ----------
+        kernel : str
+            GP kernel: ``"matern32"``, ``"matern52"``, or ``"rbf"``.
+        lengthscale_prior : float
+            Prior mean for the GP lengthscale.
+        """
         super().__init__()
         self.kernel = kernel
         self.lengthscale_prior = lengthscale_prior
@@ -603,6 +641,7 @@ class GaussianProcessNormative(BayesianModel):
         self._y_train: Optional[np.ndarray] = None
 
     def _build_model(self, X: np.ndarray, y: np.ndarray, **kw: Any) -> Any:
+        """Build the GP normative PyMC model."""
         pm = _require_pymc()
         import pymc.gp as gp
 
@@ -650,14 +689,17 @@ class GaussianProcessNormative(BayesianModel):
         self._check_fitted()
         pm = _require_pymc()
 
+        import uuid
+        pred_name = f"f_pred_{uuid.uuid4().hex[:8]}"
+
         with self.model_:
-            pred = self._gp.conditional("f_pred", X_new)
+            pred = self._gp.conditional(pred_name, X_new)
             ppc = pm.sample_posterior_predictive(
-                self.trace_, var_names=["f_pred"],
+                self.trace_, var_names=[pred_name],
                 random_seed=kwargs.get("seed"),
             )
 
-        samples = ppc.posterior_predictive["f_pred"].values
+        samples = ppc.posterior_predictive[pred_name].values
         samples = samples.reshape(-1, X_new.shape[0])
         return samples.mean(axis=0), samples.std(axis=0)
 
@@ -709,6 +751,13 @@ class BayesianSpatialModel(BayesianModel):
     """
 
     def __init__(self, spatial_strength: float = 10.0) -> None:
+        """Initialise with GMRF spatial precision.
+
+        Parameters
+        ----------
+        spatial_strength : float
+            Precision of the spatial prior (higher = more smoothing).
+        """
         super().__init__()
         self.spatial_strength = spatial_strength
 
@@ -734,6 +783,7 @@ class BayesianSpatialModel(BayesianModel):
         return super().fit(X, y, **kwargs)
 
     def _build_model(self, X: np.ndarray, y: np.ndarray, **kw: Any) -> Any:
+        """Build the GMRF spatial PyMC model."""
         pm = _require_pymc()
         import scipy.sparse as sp
 
@@ -817,6 +867,13 @@ class BayesianConnectome(BayesianModel):
     """
 
     def __init__(self, shrinkage: float = 1.0) -> None:
+        """Initialise with hierarchical shrinkage strength.
+
+        Parameters
+        ----------
+        shrinkage : float
+            Prior shrinkage for edge-level differences.
+        """
         super().__init__()
         self.shrinkage = shrinkage
 
@@ -855,6 +912,7 @@ class BayesianConnectome(BayesianModel):
         return super().fit(X, y, **kwargs)
 
     def _build_model(self, X: np.ndarray, y: np.ndarray, **kw: Any) -> Any:
+        """Build the hierarchical connectome comparison PyMC model."""
         pm = _require_pymc()
         n_edges = self._a_edges.shape[1]
         a_mean = self._a_edges.mean(axis=0)
@@ -893,6 +951,7 @@ class BayesianConnectome(BayesianModel):
         return model
 
     def predict(self, X_new=None, **kwargs):
+        """Not applicable for connectome comparison; use edge_difference_posterior()."""
         raise NotImplementedError(
             "BayesianConnectome does not support predict(). "
             "Use .edge_difference_posterior() instead."

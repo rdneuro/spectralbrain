@@ -54,6 +54,7 @@ logger = get_logger(__name__)
 # ======================================================================
 
 def _require_cupy():
+    """Lazy-import CuPy, raising ImportError if unavailable."""
     try:
         import cupy as cp
         import cupyx.scipy.sparse as cpsp
@@ -67,6 +68,7 @@ def _require_cupy():
 
 
 def _require_jax():
+    """Lazy-import JAX, raising ImportError if unavailable."""
     try:
         import jax
         import jax.numpy as jnp
@@ -80,6 +82,7 @@ def _require_jax():
 
 
 def _require_numpyro():
+    """Lazy-import NumPyro, raising ImportError if unavailable."""
     try:
         import numpyro
         import numpyro.infer as infer
@@ -116,6 +119,7 @@ class CupyBackend:
     name: str = "cupy"
 
     def __init__(self, device_id: int = 0) -> None:
+        """Initialise the CuPy GPU backend."""
         cp, cpsp, cpla = _require_cupy()
         self._cp = cp
         self._cpsp = cpsp
@@ -179,6 +183,7 @@ class CupyBackend:
         shape: Tuple[int, int],
         **kwargs: Any,
     ) -> Any:
+        """Build a sparse matrix from COO triplets on GPU."""
         cp = self._cp
         return self._cpsp.coo_matrix(
             (cp.asarray(data, dtype=cp.float64),
@@ -190,36 +195,47 @@ class CupyBackend:
     # ── Dense ops (GPU arrays) ────────────────────────────────────────
 
     def array(self, data: Any, dtype: Any = np.float64) -> Any:
+        """Create a CuPy array on GPU."""
         return self._cp.asarray(data, dtype=dtype)
 
     def zeros(self, shape: Tuple[int, ...], dtype: Any = np.float64) -> Any:
+        """Create a zero-filled CuPy array."""
         return self._cp.zeros(shape, dtype=dtype)
 
     def ones(self, shape: Tuple[int, ...], dtype: Any = np.float64) -> Any:
+        """Create a ones-filled CuPy array."""
         return self._cp.ones(shape, dtype=dtype)
 
     def eye(self, n: int, dtype: Any = np.float64) -> Any:
+        """Create a GPU identity matrix."""
         return self._cp.eye(n, dtype=dtype)
 
     def matmul(self, a: Any, b: Any) -> Any:
+        """GPU matrix multiply."""
         return a @ b
 
     def exp(self, x: Any) -> Any:
+        """Element-wise exponential on GPU."""
         return self._cp.exp(x)
 
     def log(self, x: Any) -> Any:
+        """Element-wise safe log on GPU."""
         return self._cp.log(self._cp.clip(x, 1e-300, None))
 
     def sqrt(self, x: Any) -> Any:
+        """Element-wise safe sqrt on GPU."""
         return self._cp.sqrt(self._cp.clip(x, 0.0, None))
 
     def sum(self, x: Any, axis: Optional[int] = None) -> Any:
+        """Sum reduction on GPU."""
         return self._cp.sum(x, axis=axis)
 
     def mean(self, x: Any, axis: Optional[int] = None) -> Any:
+        """Mean reduction on GPU."""
         return self._cp.mean(x, axis=axis)
 
     def clip(self, x: Any, a_min: Optional[float], a_max: Optional[float]) -> Any:
+        """Element-wise clip on GPU."""
         return self._cp.clip(x, a_min, a_max)
 
     def to_numpy(self, x: Any) -> np.ndarray:
@@ -229,21 +245,27 @@ class CupyBackend:
         return self._cp.asnumpy(x)
 
     def norm(self, x: Any, axis: Optional[int] = None, ord: Optional[int] = None) -> Any:
+        """Vector/matrix norm on GPU."""
         return self._cp.linalg.norm(x, axis=axis, ord=ord)
 
     def argsort(self, x: Any, axis: int = -1) -> Any:
+        """Indirect sort indices on GPU."""
         return self._cp.argsort(x, axis=axis)
 
     def concatenate(self, arrays: Sequence, axis: int = 0) -> Any:
+        """Concatenate CuPy arrays."""
         return self._cp.concatenate(arrays, axis=axis)
 
     def stack(self, arrays: Sequence, axis: int = 0) -> Any:
+        """Stack CuPy arrays along a new axis."""
         return self._cp.stack(arrays, axis=axis)
 
     def linspace(self, start: float, stop: float, num: int) -> Any:
+        """Linearly spaced values on GPU."""
         return self._cp.linspace(start, stop, num, dtype=np.float64)
 
     def logspace(self, start: float, stop: float, num: int) -> Any:
+        """Log-spaced values on GPU."""
         return self._cp.logspace(start, stop, num, dtype=np.float64)
 
 
@@ -274,6 +296,7 @@ class JaxBackend:
     name: str = "jax"
 
     def __init__(self, device: str = "gpu") -> None:
+        """Initialise the JaxBackend."""
         jax, jnp, jsla = _require_jax()
         self._jax = jax
         self._jnp = jnp
@@ -376,36 +399,47 @@ class JaxBackend:
     # ── Dense array ops ───────────────────────────────────────────────
 
     def array(self, data: Any, dtype: Any = np.float64) -> Any:
+        """Create a JAX array."""
         return self._jnp.asarray(data, dtype=dtype)
 
     def zeros(self, shape: Tuple[int, ...], dtype: Any = np.float64) -> Any:
+        """Create a zero-filled JAX array."""
         return self._jnp.zeros(shape, dtype=dtype)
 
     def ones(self, shape: Tuple[int, ...], dtype: Any = np.float64) -> Any:
+        """Create a ones-filled JAX array."""
         return self._jnp.ones(shape, dtype=dtype)
 
     def eye(self, n: int, dtype: Any = np.float64) -> Any:
+        """Create a JAX identity matrix."""
         return self._jnp.eye(n, dtype=dtype)
 
     def matmul(self, a: Any, b: Any) -> Any:
+        """JAX matrix multiply."""
         return self._jnp.matmul(a, b)
 
     def exp(self, x: Any) -> Any:
+        """Element-wise exponential via JAX."""
         return self._jnp.exp(x)
 
     def log(self, x: Any) -> Any:
+        """Element-wise safe log via JAX."""
         return self._jnp.log(self._jnp.clip(x, 1e-300, None))
 
     def sqrt(self, x: Any) -> Any:
+        """Element-wise safe sqrt via JAX."""
         return self._jnp.sqrt(self._jnp.clip(x, 0.0, None))
 
     def sum(self, x: Any, axis: Optional[int] = None) -> Any:
+        """Sum reduction via JAX."""
         return self._jnp.sum(x, axis=axis)
 
     def mean(self, x: Any, axis: Optional[int] = None) -> Any:
+        """Mean reduction via JAX."""
         return self._jnp.mean(x, axis=axis)
 
     def clip(self, x: Any, a_min: Optional[float], a_max: Optional[float]) -> Any:
+        """Element-wise clip via JAX."""
         return self._jnp.clip(x, a_min, a_max)
 
     def to_numpy(self, x: Any) -> np.ndarray:
@@ -415,21 +449,27 @@ class JaxBackend:
         return np.asarray(x)
 
     def norm(self, x: Any, axis: Optional[int] = None, ord: Optional[int] = None) -> Any:
+        """Vector/matrix norm via JAX."""
         return self._jnp.linalg.norm(x, axis=axis, ord=ord)
 
     def argsort(self, x: Any, axis: int = -1) -> Any:
+        """Indirect sort indices via JAX."""
         return self._jnp.argsort(x, axis=axis)
 
     def concatenate(self, arrays: Sequence, axis: int = 0) -> Any:
+        """Concatenate JAX arrays."""
         return self._jnp.concatenate(arrays, axis=axis)
 
     def stack(self, arrays: Sequence, axis: int = 0) -> Any:
+        """Stack JAX arrays along a new axis."""
         return self._jnp.stack(arrays, axis=axis)
 
     def linspace(self, start: float, stop: float, num: int) -> Any:
+        """Linearly spaced values via JAX."""
         return self._jnp.linspace(start, stop, num, dtype=np.float64)
 
     def logspace(self, start: float, stop: float, num: int) -> Any:
+        """Log-spaced values via JAX."""
         return self._jnp.logspace(start, stop, num, dtype=np.float64)
 
 
@@ -477,6 +517,7 @@ class NumPyroSampler:
         num_chains: int = 4,
         seed: int = 42,
     ) -> None:
+        """Initialise the NumPyro JAX sampler backend."""
         self.num_warmup = num_warmup
         self.num_samples = num_samples
         self.num_chains = num_chains
@@ -574,6 +615,7 @@ class VRAMInfo:
     percent_used: float
 
     def __repr__(self) -> str:
+        """Return a human-readable GPU status summary."""
         return (
             f"GPU {self.device_id} ({self.device_name}): "
             f"{self.used_gb:.2f} / {self.total_gb:.2f} GB "

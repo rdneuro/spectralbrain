@@ -1,4 +1,4 @@
-"""Normative modeling and non-inferiority testing for spectral morphometry.
+"""Normative modeling, harmonization, and non-inferiority testing.
 
 Build age-/sex-stratified normative distributions of spectral
 descriptors from healthy reference cohorts, score individual patients
@@ -7,11 +7,12 @@ are non-inferior to conventional morphometrics.
 
 Sections
 --------
-§1  NormativeModel — build, evaluate, persist
-§2  Centile curves — age-trajectory percentile charts
-§3  Individual deviation scoring
-§4  Non-inferiority & equivalence testing (TOST, AUC comparison)
-§5  Method comparison — spectral vs volumetric discrimination
+§1  ComBat / ComBat-GAM harmonization
+§2  NormativeModel — build, evaluate, persist
+§3  Centile curves — age-trajectory percentile charts
+§4  Individual deviation scoring
+§5  Non-inferiority & equivalence testing (TOST, AUC comparison)
+§6  Method comparison — spectral vs volumetric discrimination
 """
 
 from __future__ import annotations
@@ -36,7 +37,542 @@ logger = get_logger(__name__)
 
 
 # ======================================================================
-# §1  NORMATIVE MODEL
+# §1  COMBAT / COMBAT-GAM HARMONIZATION
+# ======================================================================
+
+@dataclass
+class HarmonizationResult:
+    """Result container for ComBat / ComBat-GAM harmonization.
+
+    Attributes
+    ----------
+    data_harmonized : np.ndarray
+        Harmonized data matrix, shape ``(n_samples, n_features)``.
+    method : str
+        Method used: ``"combat"`` or ``"combat_gam"``.
+    sites : np.ndarray
+        Original site labels.
+    n_sites : int
+        Number of unique sites.
+    site_counts : dict
+        Per-site sample counts.
+    estimates : dict
+        Estimated batch parameters (gamma, delta, etc.) for
+        reproducibility and inspection.
+    """
+
+    data_harmonized: np.ndarray
+    method: str
+    sites: np.ndarray
+    n_sites: int
+    site_counts: Dict[str, int]
+    estimates: Dict[str, Any] = field(default_factory=dict)
+
+    def __repr__(self) -> str:
+        """Return a compact summary string."""
+        return (
+            f"HarmonizationResult(method='{self.method}', "
+            f"n_sites={self.n_sites}, shape={self.data_harmonized.shape})"
+        )
+
+
+def harmonize_combat(
+    data: np.ndarray,
+    sites: np.ndarray,
+    *,
+    covariates: Optional[np.ndarray] = None,
+    covariate_names: Optional[List[str]] = None,
+    empirical_bayes: bool = True,
+    parametric: bool = True,
+    mean_only: bool = False,
+    reference_site: Optional[str] = None,
+) -> HarmonizationResult:
+    """Remove multi-site batch effects using ComBat (Johnson et al., 2007).
+
+    ComBat uses an empirical Bayesian framework to estimate and remove
+    additive and multiplicative batch (site) effects while preserving
+    biological variability associated with covariates of interest.
+
+    Parameters
+    ----------
+    data : np.ndarray, shape (n_samples, n_features)
+        Data matrix with samples as rows and features as columns.
+    sites : np.ndarray, shape (n_samples,)
+        Site/batch labels for each sample.
+    covariates : np.ndarray, shape (n_samples, n_covariates), optional
+        Biological covariates to preserve (e.g., age, sex, diagnosis).
+    covariate_names : list of str, optional
+        Names for each covariate column (for logging).
+    empirical_bayes : bool
+        If ``True`` (default), use empirical Bayes to shrink batch
+        estimates toward the grand mean.
+    parametric : bool
+        If ``True`` (default), assume parametric priors (inverse-gamma /
+        normal). If ``False``, use non-parametric EB.
+    mean_only : bool
+        If ``True``, adjust only the mean (no variance adjustment).
+    reference_site : str, optional
+        Harmonize all other sites to match this reference site.
+
+    Returns
+    -------
+    HarmonizationResult
+
+    References
+    ----------
+    Johnson WE, Li C, Rabinovic A. Adjusting batch effects in
+        microarray expression data using empirical Bayes methods.
+        *Biostatistics* 8(1):118-127, 2007.
+    Fortin J-P et al. Harmonization of multi-site diffusion tensor
+        imaging data. *NeuroImage* 161:149-170, 2018.
+
+    Examples
+    --------
+    >>> result = harmonize_combat(
+    ...     descriptors, sites=site_labels,
+    ...     covariates=np.column_stack([ages, sex]),
+    ... )
+    >>> harmonized = result.data_harmonized
+    """
+    data = np.asarray(data, dtype=np.float64)
+    sites = np.asarray(sites)
+
+    if data.ndim == 1:
+        data = data.reshape(-1, 1)
+
+    n_samples, n_features = data.shape
+
+    if len(sites) != n_samples:
+        raise ValueError(
+            f"sites length ({len(sites)}) != data rows ({n_samples})."
+        )
+
+    unique_sites = np.unique(sites)
+    n_sites = len(unique_sites)
+
+    if n_sites < 2:
+        logger.warning("Only 1 site found -- returning data unchanged.")
+        return HarmonizationResult(
+            data_harmonized=data.copy(), method="combat",
+            sites=sites, n_sites=1,
+            site_counts={str(unique_sites[0]): n_samples},
+        )
+
+    site_counts = {}
+    for s in unique_sites:
+        count = int((sites == s).sum())
+        if count < 2:
+            raise ValueError(
+                f"Site '{s}' has {count} sample(s); ComBat requires >= 2."
+            )
+        site_counts[str(s)] = count
+
+    logger.info(
+        "ComBat harmonization: %d samples x %d features, %d sites.",
+        n_samples, n_features, n_sites,
+    )
+
+    # --- Step 1: Design matrix ---
+    site_idx = np.searchsorted(unique_sites, sites)
+    site_design = np.zeros((n_samples, n_sites), dtype=np.float64)
+    site_design[np.arange(n_samples), site_idx] = 1.0
+
+    if covariates is not None:
+        covariates = np.asarray(covariates, dtype=np.float64)
+        if covariates.ndim == 1:
+            covariates = covariates.reshape(-1, 1)
+        design = np.column_stack([site_design, covariates])
+    else:
+        design = site_design
+
+    # --- Step 2: Standardize data ---
+    beta_hat = np.linalg.pinv(design.T @ design) @ (design.T @ data)
+    grand_mean = beta_hat[:n_sites].mean(axis=0)
+
+    if covariates is not None:
+        covar_effects = covariates @ beta_hat[n_sites:]
+    else:
+        covar_effects = np.zeros((n_samples, n_features))
+
+    stand_data = data - grand_mean - covar_effects
+
+    gamma_hat = np.zeros((n_sites, n_features))
+    delta_hat = np.zeros((n_sites, n_features))
+
+    for i, s in enumerate(unique_sites):
+        mask = sites == s
+        site_data = stand_data[mask]
+        gamma_hat[i] = site_data.mean(axis=0)
+        delta_hat[i] = site_data.var(axis=0, ddof=1)
+
+    pooled_var = np.zeros(n_features)
+    for i, s in enumerate(unique_sites):
+        mask = sites == s
+        ni = mask.sum()
+        pooled_var += (ni - 1) * delta_hat[i]
+    pooled_var /= (n_samples - n_sites)
+    pooled_std = np.sqrt(np.clip(pooled_var, 1e-10, None))
+
+    # --- Step 3: Empirical Bayes estimation ---
+    if empirical_bayes:
+        gamma_star, delta_star = _combat_eb_estimates(
+            gamma_hat, delta_hat, site_counts, unique_sites,
+            parametric=parametric,
+        )
+    else:
+        gamma_star = gamma_hat
+        delta_star = delta_hat
+
+    # --- Step 4: Adjust data ---
+    # Johnson et al. 2007: Y*_ij = pooled_std · (stand_data_ij - γ*_i) / √δ²*_i + grand_mean + X·β
+    harmonized = np.zeros_like(data)
+    for i, s in enumerate(unique_sites):
+        mask = sites == s
+        adjusted = (stand_data[mask] - gamma_star[i]) / np.sqrt(delta_star[i] + 1e-30)
+        harmonized[mask] = adjusted * pooled_std + grand_mean + covar_effects[mask]
+
+    if reference_site is not None:
+        ref_idx = np.where(unique_sites == reference_site)[0]
+        if len(ref_idx) == 0:
+            raise ValueError(
+                f"Reference site '{reference_site}' not found in: "
+                f"{list(unique_sites)}"
+            )
+        ref_mask = sites == reference_site
+        ref_mean = data[ref_mask].mean(axis=0)
+        harm_ref_mean = harmonized[ref_mask].mean(axis=0)
+        harmonized += (ref_mean - harm_ref_mean)
+
+    return HarmonizationResult(
+        data_harmonized=harmonized,
+        method="combat",
+        sites=sites,
+        n_sites=n_sites,
+        site_counts=site_counts,
+        estimates={
+            "gamma_hat": gamma_hat,
+            "delta_hat": delta_hat,
+            "gamma_star": gamma_star if empirical_bayes else gamma_hat,
+            "delta_star": delta_star if empirical_bayes else delta_hat,
+            "grand_mean": grand_mean,
+            "pooled_std": pooled_std,
+        },
+    )
+
+
+def _combat_eb_estimates(
+    gamma_hat: np.ndarray,
+    delta_hat: np.ndarray,
+    site_counts: Dict[str, int],
+    unique_sites: np.ndarray,
+    *,
+    parametric: bool = True,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Compute empirical Bayes shrunken estimates for ComBat.
+
+    Parameters
+    ----------
+    gamma_hat : np.ndarray, shape (n_sites, n_features)
+        Naive per-site location (mean shift) estimates.
+    delta_hat : np.ndarray, shape (n_sites, n_features)
+        Naive per-site scale (variance) estimates.
+    site_counts : dict
+        Sample counts per site.
+    unique_sites : np.ndarray
+        Ordered array of unique site labels.
+    parametric : bool
+        If ``True``, use inverse-gamma/normal conjugate priors.
+
+    Returns
+    -------
+    gamma_star : np.ndarray, shape (n_sites, n_features)
+        Shrunken location estimates.
+    delta_star : np.ndarray, shape (n_sites, n_features)
+        Shrunken scale estimates.
+    """
+    n_sites, n_features = gamma_hat.shape
+    gamma_star = np.zeros_like(gamma_hat)
+    delta_star = np.zeros_like(delta_hat)
+
+    gamma_bar = gamma_hat.mean(axis=0)
+    tau2 = np.clip(gamma_hat.var(axis=0, ddof=1), 1e-10, None)
+
+    delta_mean = delta_hat.mean(axis=0)
+    delta_var = np.clip(delta_hat.var(axis=0, ddof=1), 1e-10, None)
+
+    alpha_bar = (delta_mean ** 2) / delta_var + 2
+    beta_bar = delta_mean * (alpha_bar - 1)
+
+    ordered_counts = [site_counts[str(s)] for s in unique_sites]
+
+    for i in range(n_sites):
+        ni = ordered_counts[i]
+        if parametric:
+            precision_prior = 1.0 / tau2
+            precision_data = ni / (delta_hat[i] + 1e-10)
+            gamma_star[i] = (
+                (precision_prior * gamma_bar + precision_data * gamma_hat[i])
+                / (precision_prior + precision_data)
+            )
+            alpha_post = alpha_bar + ni / 2
+            beta_post = beta_bar + 0.5 * ni * delta_hat[i]
+            delta_star[i] = beta_post / (alpha_post + 1)
+        else:
+            gamma_star[i] = gamma_hat[i]
+            delta_star[i] = delta_hat[i]
+
+    return gamma_star, delta_star
+
+
+def harmonize_combat_gam(
+    data: np.ndarray,
+    sites: np.ndarray,
+    *,
+    continuous_covariates: Optional[np.ndarray] = None,
+    continuous_names: Optional[List[str]] = None,
+    categorical_covariates: Optional[np.ndarray] = None,
+    categorical_names: Optional[List[str]] = None,
+    smooth_terms: Optional[List[str]] = None,
+    n_splines: int = 10,
+    empirical_bayes: bool = True,
+) -> HarmonizationResult:
+    """Remove multi-site batch effects using ComBat-GAM (Pomponio et al., 2020).
+
+    Extends ComBat by modeling nonlinear covariate effects using
+    Generalized Additive Models (GAMs) with penalized B-splines.
+
+    Parameters
+    ----------
+    data : np.ndarray, shape (n_samples, n_features)
+        Data matrix (samples x features).
+    sites : np.ndarray, shape (n_samples,)
+        Site/batch labels.
+    continuous_covariates : np.ndarray, shape (n_samples, n_cont), optional
+        Continuous covariates (e.g., age).
+    continuous_names : list of str, optional
+        Names for continuous covariates.
+    categorical_covariates : np.ndarray, shape (n_samples, n_cat), optional
+        Categorical covariates (e.g., sex, diagnosis).
+    categorical_names : list of str, optional
+        Names for categorical covariates.
+    smooth_terms : list of str, optional
+        Which continuous covariates to model with splines.
+    n_splines : int
+        Number of B-spline basis functions.
+    empirical_bayes : bool
+        Use empirical Bayes shrinkage.
+
+    Returns
+    -------
+    HarmonizationResult
+
+    References
+    ----------
+    Pomponio R et al. Harmonization of large MRI datasets for the
+        analysis of brain imaging patterns throughout the lifespan.
+        *NeuroImage* 208:116450, 2020.
+    """
+    data = np.asarray(data, dtype=np.float64)
+    sites = np.asarray(sites)
+    n_samples, n_features = data.shape
+
+    unique_sites = np.unique(sites)
+    n_sites = len(unique_sites)
+
+    site_counts = {}
+    for s in unique_sites:
+        count = int((sites == s).sum())
+        if count < 2:
+            raise ValueError(
+                f"Site '{s}' has {count} sample(s); ComBat-GAM requires >= 2."
+            )
+        site_counts[str(s)] = count
+
+    logger.info(
+        "ComBat-GAM: %d samples x %d features, %d sites, %d splines.",
+        n_samples, n_features, n_sites, n_splines,
+    )
+
+    site_idx = np.searchsorted(unique_sites, sites)
+    site_design = np.zeros((n_samples, n_sites), dtype=np.float64)
+    site_design[np.arange(n_samples), site_idx] = 1.0
+
+    covariate_parts = []
+
+    if continuous_covariates is not None:
+        continuous_covariates = np.atleast_2d(
+            np.asarray(continuous_covariates, dtype=np.float64)
+        )
+        if continuous_covariates.shape[0] == 1 and n_samples > 1:
+            continuous_covariates = continuous_covariates.T
+        if continuous_names is None:
+            continuous_names = [
+                f"cont_{i}" for i in range(continuous_covariates.shape[1])
+            ]
+        if smooth_terms is None:
+            smooth_terms = continuous_names
+
+        for j, name in enumerate(continuous_names):
+            col = continuous_covariates[:, j]
+            if name in smooth_terms:
+                covariate_parts.append(_bspline_basis(col, n_splines))
+            else:
+                covariate_parts.append(col.reshape(-1, 1))
+
+    if categorical_covariates is not None:
+        categorical_covariates = np.atleast_2d(
+            np.asarray(categorical_covariates)
+        )
+        if categorical_covariates.shape[0] == 1 and n_samples > 1:
+            categorical_covariates = categorical_covariates.T
+        for j in range(categorical_covariates.shape[1]):
+            col = categorical_covariates[:, j]
+            uniq = np.unique(col)
+            for val in uniq[1:]:
+                covariate_parts.append(
+                    (col == val).astype(np.float64).reshape(-1, 1)
+                )
+
+    if covariate_parts:
+        covariate_design = np.column_stack(covariate_parts)
+        design = np.column_stack([site_design, covariate_design])
+    else:
+        covariate_design = None
+        design = site_design
+
+    beta_hat = np.linalg.pinv(design.T @ design) @ (design.T @ data)
+    grand_mean = beta_hat[:n_sites].mean(axis=0)
+
+    if covariate_design is not None:
+        covar_effects = covariate_design @ beta_hat[n_sites:]
+    else:
+        covar_effects = np.zeros((n_samples, n_features))
+
+    stand_data = data - grand_mean - covar_effects
+
+    gamma_hat = np.zeros((n_sites, n_features))
+    delta_hat = np.zeros((n_sites, n_features))
+    for i, s in enumerate(unique_sites):
+        mask = sites == s
+        site_data = stand_data[mask]
+        gamma_hat[i] = site_data.mean(axis=0)
+        delta_hat[i] = site_data.var(axis=0, ddof=1)
+
+    pooled_var = np.zeros(n_features)
+    for i, s in enumerate(unique_sites):
+        ni = (sites == s).sum()
+        pooled_var += (ni - 1) * delta_hat[i]
+    pooled_var /= (n_samples - n_sites)
+    pooled_std = np.sqrt(np.clip(pooled_var, 1e-10, None))
+
+    if empirical_bayes:
+        gamma_star, delta_star = _combat_eb_estimates(
+            gamma_hat, delta_hat, site_counts, unique_sites,
+        )
+    else:
+        gamma_star, delta_star = gamma_hat, delta_hat
+
+    harmonized = np.zeros_like(data)
+    for i, s in enumerate(unique_sites):
+        mask = sites == s
+        adjusted = (stand_data[mask] - gamma_star[i]) / np.sqrt(delta_star[i] + 1e-30)
+        harmonized[mask] = adjusted * pooled_std + grand_mean + covar_effects[mask]
+
+    return HarmonizationResult(
+        data_harmonized=harmonized,
+        method="combat_gam",
+        sites=sites,
+        n_sites=n_sites,
+        site_counts=site_counts,
+        estimates={
+            "gamma_hat": gamma_hat, "delta_hat": delta_hat,
+            "gamma_star": gamma_star if empirical_bayes else gamma_hat,
+            "delta_star": delta_star if empirical_bayes else delta_hat,
+            "grand_mean": grand_mean, "pooled_std": pooled_std,
+            "n_splines": n_splines,
+        },
+    )
+
+
+def _bspline_basis(x: np.ndarray, n_basis: int, degree: int = 3) -> np.ndarray:
+    """Construct a B-spline basis matrix.
+
+    Parameters
+    ----------
+    x : np.ndarray, shape (n,)
+        Input variable values.
+    n_basis : int
+        Number of basis functions.
+    degree : int
+        Spline degree (default 3 = cubic).
+
+    Returns
+    -------
+    np.ndarray, shape (n, n_actual_basis)
+        B-spline design matrix.
+    """
+    from scipy.interpolate import BSpline
+
+    n = len(x)
+    x_min, x_max = float(x.min()), float(x.max())
+    x_range = x_max - x_min
+    if x_range < 1e-10:
+        return np.ones((n, 1))
+
+    n_internal = max(n_basis - degree - 1, 1)
+    internal_knots = np.linspace(x_min, x_max, n_internal + 2)[1:-1]
+    knots = np.concatenate([
+        np.repeat(x_min - x_range * 0.01, degree + 1),
+        internal_knots,
+        np.repeat(x_max + x_range * 0.01, degree + 1),
+    ])
+
+    n_actual = len(knots) - degree - 1
+    basis = np.zeros((n, n_actual))
+    for i in range(n_actual):
+        coeffs = np.zeros(n_actual)
+        coeffs[i] = 1.0
+        spl = BSpline(knots, coeffs, degree, extrapolate=False)
+        vals = spl(x)
+        vals[np.isnan(vals)] = 0.0
+        basis[:, i] = vals
+
+    return basis
+
+
+def harmonize(
+    data: np.ndarray,
+    sites: np.ndarray,
+    *,
+    method: Literal["combat", "combat_gam"] = "combat",
+    **kwargs: Any,
+) -> HarmonizationResult:
+    """Unified harmonization interface dispatching to ComBat or ComBat-GAM.
+
+    Parameters
+    ----------
+    data : np.ndarray, shape (n_samples, n_features)
+        Data matrix.
+    sites : np.ndarray, shape (n_samples,)
+        Site labels.
+    method : str
+        ``"combat"`` or ``"combat_gam"``.
+    **kwargs
+        Forwarded to the selected harmonization function.
+
+    Returns
+    -------
+    HarmonizationResult
+    """
+    if method == "combat":
+        return harmonize_combat(data, sites, **kwargs)
+    elif method == "combat_gam":
+        return harmonize_combat_gam(data, sites, **kwargs)
+    raise ValueError(f"Unknown harmonization method: {method!r}")
+
+
+# ======================================================================
+# §2  NORMATIVE MODEL
 # ======================================================================
 
 class NormativeModel:
@@ -49,24 +585,20 @@ class NormativeModel:
     Parameters
     ----------
     method : str
-        ``"gaussian"`` — per-vertex Gaussian (mean, std) optionally
-        conditioned on age via linear regression.
-        ``"centile"`` — non-parametric centile estimation.
-        ``"gp"`` — Gaussian Process (delegates to
-        :class:`~spectralbrain.statistics.bayesian.GaussianProcessNormative`).
+        ``"gaussian"`` | ``"centile"`` | ``"gp"``.
 
     Examples
     --------
     >>> norm = NormativeModel(method="gaussian")
     >>> norm.fit(descriptors_controls, ages=ages, sex=sex)
     >>> z = norm.score(descriptor_patient, age=45, sex=1)
-    >>> z.shape  # (N,) z-scores per vertex
     """
 
     def __init__(
         self,
         method: Literal["gaussian", "centile", "gp"] = "gaussian",
     ) -> None:
+        """Initialise a normative model with the given parameters."""
         self.method = method
         self._is_fitted: bool = False
         self._mean: Optional[np.ndarray] = None
@@ -85,21 +617,26 @@ class NormativeModel:
         *,
         ages: Optional[np.ndarray] = None,
         sex: Optional[np.ndarray] = None,
-        site: Optional[np.ndarray] = None,
+        sites: Optional[np.ndarray] = None,
+        harmonize_method: Optional[Literal["combat", "combat_gam"]] = None,
+        harmonize_kwargs: Optional[Dict[str, Any]] = None,
     ) -> "NormativeModel":
         """Fit the normative model on a healthy reference cohort.
 
         Parameters
         ----------
         descriptors : ndarray, shape (S, N) or (S, d)
-            Per-subject descriptor values.  S subjects, N vertices
-            (or d global features).
+            Per-subject descriptor values.
         ages : ndarray, shape (S,), optional
-            Age in years.  If provided, normative is age-conditioned.
+            Ages in years (enables age conditioning).
         sex : ndarray, shape (S,), optional
-            Biological sex (0/1).  If provided, included as covariate.
-        site : ndarray, shape (S,), optional
-            Site labels (for ComBat-style residualisation — future).
+            Biological sex (0/1).
+        sites : ndarray, shape (S,), optional
+            Site labels. Used with ``harmonize_method``.
+        harmonize_method : str, optional
+            ``"combat"`` or ``"combat_gam"`` -- harmonize before fitting.
+        harmonize_kwargs : dict, optional
+            Extra kwargs forwarded to the harmonization function.
 
         Returns
         -------
@@ -107,6 +644,26 @@ class NormativeModel:
         """
         desc = np.asarray(descriptors, dtype=np.float64)
         S = desc.shape[0]
+
+        if harmonize_method is not None and sites is not None:
+            hkw = harmonize_kwargs or {}
+            if harmonize_method == "combat":
+                covs = None
+                if ages is not None or sex is not None:
+                    parts = []
+                    if ages is not None:
+                        parts.append(np.asarray(ages, dtype=np.float64).reshape(-1, 1))
+                    if sex is not None:
+                        parts.append(np.asarray(sex, dtype=np.float64).reshape(-1, 1))
+                    covs = np.column_stack(parts)
+                result = harmonize_combat(desc, sites, covariates=covs, **hkw)
+            elif harmonize_method == "combat_gam":
+                result = harmonize_combat_gam(desc, sites, **hkw)
+            else:
+                raise ValueError(f"Unknown harmonize_method: {harmonize_method!r}")
+            desc = result.data_harmonized
+            logger.info("Applied %s before normative fitting.", harmonize_method)
+
         self._reference_data = desc
 
         if self.method == "gaussian":
@@ -114,8 +671,7 @@ class NormativeModel:
                 self._fit_gaussian_regression(desc, ages, sex)
             else:
                 self._mean = desc.mean(axis=0)
-                self._std = desc.std(axis=0, ddof=1)
-                self._std = np.clip(self._std, 1e-10, None)
+                self._std = np.clip(desc.std(axis=0, ddof=1), 1e-10, None)
 
         elif self.method == "centile":
             self._reference_data = desc
@@ -125,52 +681,43 @@ class NormativeModel:
             if ages is None:
                 raise ValueError("GP normative requires ages.")
             from spectralbrain.statistics.bayesian import GaussianProcessNormative
-            # Fit GP on mean descriptor.
             self._gp_model = GaussianProcessNormative(kernel="matern52")
-            y_mean = desc.mean(axis=1)  # per-subject global mean
+            y_mean = desc.mean(axis=1)
             self._gp_model.fit(ages.reshape(-1, 1), y_mean)
 
         self._is_fitted = True
-        logger.info(
-            "Normative model fitted: method=%s, S=%d, features=%s",
-            self.method, S, desc.shape[1:],
-        )
+        logger.info("Normative fitted: method=%s, S=%d, features=%s", self.method, S, desc.shape[1:])
         return self
 
-    def _fit_gaussian_regression(
-        self,
-        desc: np.ndarray,
-        ages: np.ndarray,
-        sex: Optional[np.ndarray],
-    ) -> None:
-        """Fit vertex-wise linear regression: desc ~ age + sex."""
+    def _fit_gaussian_regression(self, desc: np.ndarray, ages: np.ndarray, sex: Optional[np.ndarray]) -> None:
+        """Fit vertex-wise linear regression: desc ~ age + sex.
+
+        Parameters
+        ----------
+        desc : np.ndarray, shape (S, D)
+            Descriptor matrix.
+        ages : np.ndarray, shape (S,)
+            Ages.
+        sex : np.ndarray or None
+            Sex coding.
+        """
         S, D = desc.shape
         ages = np.asarray(ages, dtype=np.float64)
-
-        # Design matrix.
         X = np.column_stack([np.ones(S), ages])
         if sex is not None:
             X = np.column_stack([X, np.asarray(sex, dtype=np.float64)])
 
-        # OLS per feature.
-        beta = np.linalg.lstsq(X, desc, rcond=None)[0]     # (p, D)
-        predicted = X @ beta                                 # (S, D)
-        residuals = desc - predicted                         # (S, D)
+        beta = np.linalg.lstsq(X, desc, rcond=None)[0]
+        predicted = X @ beta
+        residuals = desc - predicted
 
-        self._intercept = beta[0]                            # (D,)
-        self._age_coef = beta[1]                             # (D,)
+        self._intercept = beta[0]
+        self._age_coef = beta[1]
         self._sex_coef = beta[2] if sex is not None else None
-        self._residual_std = residuals.std(axis=0, ddof=X.shape[1])
-        self._residual_std = np.clip(self._residual_std, 1e-10, None)
+        self._residual_std = np.clip(residuals.std(axis=0, ddof=X.shape[1]), 1e-10, None)
         self._reference_ages = ages
 
-    def score(
-        self,
-        descriptor: np.ndarray,
-        *,
-        age: Optional[float] = None,
-        sex: Optional[int] = None,
-    ) -> np.ndarray:
+    def score(self, descriptor: np.ndarray, *, age: Optional[float] = None, sex: Optional[int] = None) -> np.ndarray:
         """Score an individual against the normative.
 
         Parameters
@@ -183,7 +730,7 @@ class NormativeModel:
         Returns
         -------
         ndarray
-            Z-scores (Gaussian method) or percentiles (centile method).
+            Z-scores (Gaussian) or percentiles (centile).
         """
         self._check_fitted()
         desc = np.asarray(descriptor, dtype=np.float64)
@@ -200,9 +747,7 @@ class NormativeModel:
         elif self.method == "centile":
             ref = self._reference_data
             D = desc.shape[0]
-            pctiles = np.zeros(D)
-            for v in range(D):
-                pctiles[v] = sp_stats.percentileofscore(ref[:, v], desc[v])
+            pctiles = np.array([sp_stats.percentileofscore(ref[:, v], desc[v]) for v in range(D)])
             return pctiles
 
         elif self.method == "gp":
@@ -214,13 +759,7 @@ class NormativeModel:
 
         raise ValueError(f"Unknown method: {self.method!r}")
 
-    def score_batch(
-        self,
-        descriptors: np.ndarray,
-        *,
-        ages: Optional[np.ndarray] = None,
-        sex: Optional[np.ndarray] = None,
-    ) -> np.ndarray:
+    def score_batch(self, descriptors: np.ndarray, *, ages: Optional[np.ndarray] = None, sex: Optional[np.ndarray] = None) -> np.ndarray:
         """Score multiple individuals.
 
         Parameters
@@ -243,11 +782,7 @@ class NormativeModel:
                 tick(1)
         return np.array(results)
 
-    def extreme_count(
-        self,
-        z_scores: np.ndarray,
-        threshold: float = 2.0,
-    ) -> Dict[str, Any]:
+    def extreme_count(self, z_scores: np.ndarray, threshold: float = 2.0) -> Dict[str, Any]:
         """Count extreme deviations in a z-score map.
 
         Parameters
@@ -258,8 +793,6 @@ class NormativeModel:
         Returns
         -------
         dict
-            ``n_extreme``, ``pct_extreme``, ``n_high``, ``n_low``,
-            ``max_z``, ``min_z``.
         """
         z = np.asarray(z_scores)
         high = (z > threshold).sum()
@@ -267,46 +800,42 @@ class NormativeModel:
         return {
             "n_extreme": int(high + low),
             "pct_extreme": float(100 * (high + low) / len(z)),
-            "n_high": int(high),
-            "n_low": int(low),
-            "max_z": float(z.max()),
-            "min_z": float(z.min()),
+            "n_high": int(high), "n_low": int(low),
+            "max_z": float(z.max()), "min_z": float(z.min()),
             "mean_abs_z": float(np.abs(z).mean()),
         }
 
     def save(self, path: PathLike) -> Path:
-        """Save normative model to HDF5."""
+        """Save normative model to HDF5.
+
+        Parameters
+        ----------
+        path : str or Path
+
+        Returns
+        -------
+        Path
+        """
         from spectralbrain.io.export import save_hdf5
         out = Path(path)
         arrays = {}
-        if self._mean is not None:
-            arrays["mean"] = self._mean
-        if self._std is not None:
-            arrays["std"] = self._std
-        if self._age_coef is not None:
-            arrays["age_coef"] = self._age_coef
-        if self._sex_coef is not None:
-            arrays["sex_coef"] = self._sex_coef
-        if self._intercept is not None:
-            arrays["intercept"] = self._intercept
-        if self._residual_std is not None:
-            arrays["residual_std"] = self._residual_std
-
-        save_hdf5(
-            out,
-            descriptors=arrays,
-            metadata={"method": self.method, "type": "normative"},
-        )
-        logger.info("Normative model saved → %s", out)
+        for key, val in [("mean", self._mean), ("std", self._std),
+                         ("age_coef", self._age_coef), ("sex_coef", self._sex_coef),
+                         ("intercept", self._intercept), ("residual_std", self._residual_std)]:
+            if val is not None:
+                arrays[key] = val
+        save_hdf5(out, descriptors=arrays, metadata={"method": self.method, "type": "normative"})
+        logger.info("Normative model saved -> %s", out)
         return out
 
     def _check_fitted(self) -> None:
+        """Raise if the model has not been fitted yet."""
         if not self._is_fitted:
             raise RuntimeError("NormativeModel not fitted. Call .fit() first.")
 
 
 # ======================================================================
-# §2  CENTILE CURVES
+# §3  CENTILE CURVES
 # ======================================================================
 
 def centile_curves(
@@ -323,33 +852,22 @@ def centile_curves(
     Parameters
     ----------
     descriptors : ndarray, shape (S,) or (S, N)
-        Per-subject descriptor (1D global or multi-vertex).
-        If multi-vertex, uses the mean per subject.
     ages : ndarray, shape (S,)
-        Ages in years.
     percentiles : sequence of float
-        Centile levels to compute.
     n_age_bins : int
-        Number of age bins.
     smooth : bool
-        Apply moving-average smoothing to centile curves.
     smooth_window : int
-        Smoothing window size.
 
     Returns
     -------
-    dict
-        ``"age_centers"`` : ndarray, shape (n_bins,)
-        ``"centiles"`` : dict of {percentile: ndarray, shape (n_bins,)}
+    dict with ``"age_centers"`` and ``"centiles"``.
     """
     desc = np.asarray(descriptors, dtype=np.float64)
     if desc.ndim > 1:
         desc = desc.mean(axis=1)
     ages = np.asarray(ages, dtype=np.float64)
 
-    # Bin ages.
-    age_min, age_max = ages.min(), ages.max()
-    bin_edges = np.linspace(age_min, age_max, n_age_bins + 1)
+    bin_edges = np.linspace(ages.min(), ages.max(), n_age_bins + 1)
     bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
 
     centile_dict: Dict[float, np.ndarray] = {}
@@ -357,26 +875,29 @@ def centile_curves(
         curve = np.zeros(n_age_bins)
         for b in range(n_age_bins):
             mask = (ages >= bin_edges[b]) & (ages < bin_edges[b + 1])
-            if mask.sum() > 0:
-                curve[b] = np.percentile(desc[mask], pct)
-            else:
-                curve[b] = np.nan
-
-        # Smooth.
+            curve[b] = np.percentile(desc[mask], pct) if mask.sum() > 0 else np.nan
         if smooth:
             curve = _moving_average(curve, smooth_window)
-
         centile_dict[pct] = curve
 
     return {"age_centers": bin_centers, "centiles": centile_dict}
 
 
 def _moving_average(x: np.ndarray, w: int) -> np.ndarray:
-    """Nan-aware moving average."""
+    """NaN-aware moving average.
+
+    Parameters
+    ----------
+    x : np.ndarray, shape (n,)
+    w : int
+
+    Returns
+    -------
+    np.ndarray, shape (n,)
+    """
     out = np.copy(x)
     for i in range(len(x)):
-        lo = max(0, i - w // 2)
-        hi = min(len(x), i + w // 2 + 1)
+        lo, hi = max(0, i - w // 2), min(len(x), i + w // 2 + 1)
         window = x[lo:hi]
         valid = window[~np.isnan(window)]
         out[i] = valid.mean() if len(valid) > 0 else np.nan
@@ -384,14 +905,10 @@ def _moving_average(x: np.ndarray, w: int) -> np.ndarray:
 
 
 # ======================================================================
-# §3  INDIVIDUAL DEVIATION SCORING (convenience wrappers)
+# §4  INDIVIDUAL DEVIATION SCORING
 # ======================================================================
 
-def z_score_map(
-    subject: np.ndarray,
-    normative_mean: np.ndarray,
-    normative_std: np.ndarray,
-) -> ScalarMap:
+def z_score_map(subject: np.ndarray, normative_mean: np.ndarray, normative_std: np.ndarray) -> ScalarMap:
     """Simple z-score map (no covariates).
 
     Parameters
@@ -406,12 +923,8 @@ def z_score_map(
     return (subject - normative_mean) / (normative_std + 1e-30)
 
 
-def extreme_value_map(
-    z_scores: np.ndarray,
-    *,
-    threshold: float = 2.0,
-) -> np.ndarray:
-    """Binary map of extreme deviations.
+def extreme_value_map(z_scores: np.ndarray, *, threshold: float = 2.0) -> np.ndarray:
+    """Binary map of extreme deviations: +1 above, -1 below, 0 within.
 
     Parameters
     ----------
@@ -420,8 +933,7 @@ def extreme_value_map(
 
     Returns
     -------
-    ndarray, shape (N,), int
-        +1 = above, -1 = below, 0 = within norm.
+    ndarray, shape (N,), int32
     """
     z = np.asarray(z_scores)
     result = np.zeros_like(z, dtype=np.int32)
@@ -431,7 +943,7 @@ def extreme_value_map(
 
 
 # ======================================================================
-# §4  NON-INFERIORITY & EQUIVALENCE TESTING
+# §5  NON-INFERIORITY & EQUIVALENCE TESTING
 # ======================================================================
 
 @dataclass
@@ -440,25 +952,9 @@ class NonInferiorityResult:
 
     Attributes
     ----------
-    test_type : str
-        ``"non_inferiority"`` or ``"equivalence"`` (TOST).
-    metric_new : float
-        Performance metric of the new method.
-    metric_reference : float
-        Performance metric of the reference method.
-    margin : float
-        Pre-specified non-inferiority margin Δ.
-    difference : float
-        new − reference.
-    ci_lower : float
-        Lower bound of CI for the difference.
-    ci_upper : float
-        Upper bound of CI for the difference.
-    p_value : float
-    is_non_inferior : bool
-    is_equivalent : bool
+    test_type, metric_new, metric_reference, margin, difference,
+    ci_lower, ci_upper, p_value, is_non_inferior, is_equivalent.
     """
-
     test_type: str
     metric_new: float
     metric_reference: float
@@ -471,227 +967,139 @@ class NonInferiorityResult:
     is_equivalent: bool = False
 
     def __repr__(self) -> str:
-        status = "NON-INFERIOR" if self.is_non_inferior else "INCONCLUSIVE"
-        if self.is_equivalent:
-            status = "EQUIVALENT"
+        """Return a compact summary string."""
+        status = "EQUIVALENT" if self.is_equivalent else ("NON-INFERIOR" if self.is_non_inferior else "INCONCLUSIVE")
         return (
             f"NonInferiority({status}: new={self.metric_new:.4f}, "
-            f"ref={self.metric_reference:.4f}, Δ={self.margin:.4f}, "
-            f"diff={self.difference:.4f}, "
-            f"CI=[{self.ci_lower:.4f}, {self.ci_upper:.4f}], "
+            f"ref={self.metric_reference:.4f}, d={self.margin:.4f}, "
+            f"diff={self.difference:.4f}, CI=[{self.ci_lower:.4f}, {self.ci_upper:.4f}], "
             f"p={self.p_value:.4f})"
         )
 
 
 def non_inferiority_test(
-    metric_new: np.ndarray,
-    metric_reference: np.ndarray,
-    *,
-    margin: float = 0.05,
-    alpha: float = 0.025,
-    paired: bool = True,
+    metric_new: np.ndarray, metric_reference: np.ndarray, *,
+    margin: float = 0.05, alpha: float = 0.025, paired: bool = True,
 ) -> NonInferiorityResult:
     """Non-inferiority test for method comparison.
-
-    Tests H₀: μ_new − μ_ref ≤ −Δ (new is inferior by ≥ margin)
-    against H₁: μ_new − μ_ref > −Δ (new is non-inferior).
-
-    Rejection of H₀ at α = 0.025 (one-sided) establishes
-    non-inferiority.
-
-    Parameters
-    ----------
-    metric_new : ndarray, shape (n_folds,) or (n_bootstrap,)
-        Performance metric (e.g. AUC) of the new method across
-        cross-validation folds or bootstrap samples.
-    metric_reference : ndarray, shape (n_folds,)
-        Same for the reference method.
-    margin : float
-        Non-inferiority margin Δ (in metric units).
-        E.g. Δ=0.05 means "new is non-inferior if AUC drops by
-        less than 0.05".
-    alpha : float
-        One-sided significance level (default 0.025 → 95% CI).
-    paired : bool
-        Paired test (same CV folds) vs unpaired.
-
-    Returns
-    -------
-    NonInferiorityResult
-    """
-    new = np.asarray(metric_new, dtype=np.float64)
-    ref = np.asarray(metric_reference, dtype=np.float64)
-    n = min(len(new), len(ref))
-    new, ref = new[:n], ref[:n]
-
-    diff = new - ref
-    mean_diff = float(diff.mean())
-    se = float(diff.std(ddof=1) / np.sqrt(n))
-
-    # One-sided t-test: H₀: μ_diff ≤ -margin
-    t_stat = (mean_diff + margin) / (se + 1e-30)
-    df = n - 1
-    p_value = 1 - sp_stats.t.cdf(t_stat, df)
-
-    # CI for the difference.
-    t_crit = sp_stats.t.ppf(1 - alpha, df)
-    ci_lower = mean_diff - t_crit * se
-    ci_upper = mean_diff + t_crit * se
-
-    is_ni = ci_lower > -margin
-
-    return NonInferiorityResult(
-        test_type="non_inferiority",
-        metric_new=float(new.mean()),
-        metric_reference=float(ref.mean()),
-        margin=margin,
-        difference=mean_diff,
-        ci_lower=ci_lower,
-        ci_upper=ci_upper,
-        p_value=float(p_value),
-        is_non_inferior=is_ni,
-    )
-
-
-def equivalence_test_tost(
-    metric_new: np.ndarray,
-    metric_reference: np.ndarray,
-    *,
-    margin: float = 0.05,
-    alpha: float = 0.05,
-) -> NonInferiorityResult:
-    """Two One-Sided Tests (TOST) for equivalence.
-
-    Tests both H₁: μ_diff > −Δ AND H₂: μ_diff < +Δ.
-    Rejection of both establishes equivalence within ±Δ.
 
     Parameters
     ----------
     metric_new, metric_reference : ndarray
     margin : float
-        Equivalence margin (symmetric: ±Δ).
     alpha : float
+    paired : bool
 
     Returns
     -------
     NonInferiorityResult
-        ``is_equivalent=True`` if both one-sided tests pass.
     """
     new = np.asarray(metric_new, dtype=np.float64)
     ref = np.asarray(metric_reference, dtype=np.float64)
     n = min(len(new), len(ref))
     new, ref = new[:n], ref[:n]
+    diff = new - ref
+    mean_diff = float(diff.mean())
+    se = float(diff.std(ddof=1) / np.sqrt(n))
+    t_stat = (mean_diff + margin) / (se + 1e-30)
+    df = n - 1
+    p_value = 1 - sp_stats.t.cdf(t_stat, df)
+    t_crit = sp_stats.t.ppf(1 - alpha, df)
+    ci_lower = mean_diff - t_crit * se
+    ci_upper = mean_diff + t_crit * se
+    return NonInferiorityResult(
+        test_type="non_inferiority", metric_new=float(new.mean()),
+        metric_reference=float(ref.mean()), margin=margin,
+        difference=mean_diff, ci_lower=ci_lower, ci_upper=ci_upper,
+        p_value=float(p_value), is_non_inferior=ci_lower > -margin,
+    )
 
+
+def equivalence_test_tost(
+    metric_new: np.ndarray, metric_reference: np.ndarray, *,
+    margin: float = 0.05, alpha: float = 0.05,
+) -> NonInferiorityResult:
+    """Two One-Sided Tests (TOST) for equivalence.
+
+    Parameters
+    ----------
+    metric_new, metric_reference : ndarray
+    margin : float
+    alpha : float
+
+    Returns
+    -------
+    NonInferiorityResult
+    """
+    new = np.asarray(metric_new, dtype=np.float64)
+    ref = np.asarray(metric_reference, dtype=np.float64)
+    n = min(len(new), len(ref))
+    new, ref = new[:n], ref[:n]
     diff = new - ref
     mean_diff = float(diff.mean())
     se = float(diff.std(ddof=1) / np.sqrt(n))
     df = n - 1
-
-    # Test 1: H₀: μ_diff ≤ -margin  (lower bound)
     t1 = (mean_diff + margin) / (se + 1e-30)
     p1 = 1 - sp_stats.t.cdf(t1, df)
-
-    # Test 2: H₀: μ_diff ≥ +margin  (upper bound)
     t2 = (mean_diff - margin) / (se + 1e-30)
     p2 = sp_stats.t.cdf(t2, df)
-
     p_tost = max(p1, p2)
-    is_equiv = p_tost < alpha
-
     t_crit = sp_stats.t.ppf(1 - alpha / 2, df)
     ci_lower = mean_diff - t_crit * se
     ci_upper = mean_diff + t_crit * se
-
     return NonInferiorityResult(
-        test_type="equivalence_tost",
-        metric_new=float(new.mean()),
-        metric_reference=float(ref.mean()),
-        margin=margin,
-        difference=mean_diff,
-        ci_lower=ci_lower,
-        ci_upper=ci_upper,
-        p_value=float(p_tost),
-        is_non_inferior=ci_lower > -margin,
-        is_equivalent=is_equiv,
+        test_type="equivalence_tost", metric_new=float(new.mean()),
+        metric_reference=float(ref.mean()), margin=margin,
+        difference=mean_diff, ci_lower=ci_lower, ci_upper=ci_upper,
+        p_value=float(p_tost), is_non_inferior=ci_lower > -margin,
+        is_equivalent=p_tost < alpha,
     )
 
 
 def auc_comparison_delong(
-    y_true: np.ndarray,
-    scores_new: np.ndarray,
-    scores_reference: np.ndarray,
+    y_true: np.ndarray, scores_new: np.ndarray, scores_reference: np.ndarray,
 ) -> Tuple[float, float, float]:
     """DeLong test for comparing two AUCs from paired samples.
-
-    Tests H₀: AUC_new = AUC_ref.
 
     Parameters
     ----------
     y_true : ndarray, shape (n,)
-        True binary labels.
-    scores_new : ndarray, shape (n,)
-        Predicted scores from the new method.
-    scores_reference : ndarray, shape (n,)
-        Predicted scores from the reference method.
+    scores_new, scores_reference : ndarray, shape (n,)
 
     Returns
     -------
-    auc_new : float
-    auc_ref : float
-    p_value : float
-        Two-sided p-value for the difference.
-
-    References
-    ----------
-    DeLong ER, DeLong DM, Clarke-Pearson DL. Comparing the areas
-    under two or more correlated receiver operating characteristic
-    curves. *Biometrics* 44(3):837–845, 1988.
+    auc_new, auc_ref, p_value : float
     """
     from sklearn.metrics import roc_auc_score
+    y, s_new, s_ref = np.asarray(y_true), np.asarray(scores_new), np.asarray(scores_reference)
+    auc_new, auc_ref = roc_auc_score(y, s_new), roc_auc_score(y, s_ref)
 
-    y = np.asarray(y_true)
-    s_new = np.asarray(scores_new)
-    s_ref = np.asarray(scores_reference)
-
-    auc_new = roc_auc_score(y, s_new)
-    auc_ref = roc_auc_score(y, s_ref)
-
-    # Simplified DeLong via bootstrap (exact DeLong is complex).
-    n_boot = 2000
     rng = np.random.default_rng(42)
     n = len(y)
     diffs = []
-    for _ in range(n_boot):
+    for _ in range(2000):
         idx = rng.choice(n, size=n, replace=True)
         try:
-            a_new = roc_auc_score(y[idx], s_new[idx])
-            a_ref = roc_auc_score(y[idx], s_ref[idx])
-            diffs.append(a_new - a_ref)
+            diffs.append(roc_auc_score(y[idx], s_new[idx]) - roc_auc_score(y[idx], s_ref[idx]))
         except ValueError:
             continue
-
     diffs = np.array(diffs)
     if len(diffs) == 0:
         return float(auc_new), float(auc_ref), 1.0
-
     se = diffs.std()
     if se < 1e-10:
         return float(auc_new), float(auc_ref), 1.0
-
     z = (auc_new - auc_ref) / se
-    p_value = 2 * (1 - sp_stats.norm.cdf(abs(z)))
-
-    return float(auc_new), float(auc_ref), float(p_value)
+    return float(auc_new), float(auc_ref), float(2 * (1 - sp_stats.norm.cdf(abs(z))))
 
 
 # ======================================================================
-# §5  METHOD COMPARISON — spectral vs volumetric
+# §6  METHOD COMPARISON
 # ======================================================================
 
 @dataclass
 class MethodComparisonResult:
     """Comprehensive comparison between two methods."""
-
     method_new: str
     method_reference: str
     auc_new: float
@@ -703,45 +1111,31 @@ class MethodComparisonResult:
     effect_size_reference: float
 
     def __repr__(self) -> str:
+        """Return a compact summary string."""
         ni = "NI" if self.non_inferiority.is_non_inferior else "?"
         eq = "EQ" if self.equivalence.is_equivalent else "?"
         return (
             f"MethodComparison({self.method_new} vs {self.method_reference}: "
             f"AUC {self.auc_new:.3f} vs {self.auc_reference:.3f} "
-            f"(p={self.auc_p_value:.4f}), "
-            f"[{ni}] [{eq}])"
+            f"(p={self.auc_p_value:.4f}), [{ni}] [{eq}])"
         )
 
 
 def compare_methods(
-    y_true: np.ndarray,
-    features_new: np.ndarray,
-    features_reference: np.ndarray,
-    *,
-    method_new_name: str = "spectral",
-    method_ref_name: str = "volumetric",
-    n_folds: int = 10,
-    margin: float = 0.05,
-    seed: Optional[int] = 42,
+    y_true: np.ndarray, features_new: np.ndarray, features_reference: np.ndarray, *,
+    method_new_name: str = "spectral", method_ref_name: str = "volumetric",
+    n_folds: int = 10, margin: float = 0.05, seed: Optional[int] = 42,
 ) -> MethodComparisonResult:
     """Full head-to-head comparison between two methods.
-
-    Runs cross-validated classification with both feature sets,
-    compares AUCs (DeLong), and performs non-inferiority + TOST
-    equivalence tests.
 
     Parameters
     ----------
     y_true : ndarray, shape (n,)
-        Binary labels.
     features_new : ndarray, shape (n, d_new)
-        Features from the new method (spectral descriptors).
     features_reference : ndarray, shape (n, d_ref)
-        Features from the reference method (e.g. volumes).
     method_new_name, method_ref_name : str
     n_folds : int
     margin : float
-        Non-inferiority margin for AUC comparison.
     seed : int
 
     Returns
@@ -749,111 +1143,64 @@ def compare_methods(
     MethodComparisonResult
     """
     from sklearn.linear_model import LogisticRegression
+    from sklearn.metrics import roc_auc_score
     from sklearn.model_selection import StratifiedKFold
-    from sklearn.preprocessing import StandardScaler
     from sklearn.pipeline import Pipeline
+    from sklearn.preprocessing import StandardScaler
 
-    y = np.asarray(y_true)
-    X_new = np.asarray(features_new)
-    X_ref = np.asarray(features_reference)
-
+    y, X_new, X_ref = np.asarray(y_true), np.asarray(features_new), np.asarray(features_reference)
     cv = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=seed)
-
-    aucs_new = []
-    aucs_ref = []
-    scores_new_all = np.zeros(len(y))
-    scores_ref_all = np.zeros(len(y))
+    aucs_new, aucs_ref = [], []
+    scores_new_all, scores_ref_all = np.zeros(len(y)), np.zeros(len(y))
 
     for train_idx, test_idx in cv.split(X_new, y):
-        # New method.
-        pipe_new = Pipeline([
-            ("scaler", StandardScaler()),
-            ("clf", LogisticRegression(max_iter=1000, random_state=seed)),
-        ])
-        pipe_new.fit(X_new[train_idx], y[train_idx])
-        prob_new = pipe_new.predict_proba(X_new[test_idx])[:, 1]
-        scores_new_all[test_idx] = prob_new
+        for X, scores_all, aucs_list in [(X_new, scores_new_all, aucs_new), (X_ref, scores_ref_all, aucs_ref)]:
+            pipe = Pipeline([("scaler", StandardScaler()), ("clf", LogisticRegression(max_iter=1000, random_state=seed))])
+            pipe.fit(X[train_idx], y[train_idx])
+            prob = pipe.predict_proba(X[test_idx])[:, 1]
+            scores_all[test_idx] = prob
+            try:
+                aucs_list.append(roc_auc_score(y[test_idx], prob))
+            except ValueError:
+                pass
 
-        # Reference method.
-        pipe_ref = Pipeline([
-            ("scaler", StandardScaler()),
-            ("clf", LogisticRegression(max_iter=1000, random_state=seed)),
-        ])
-        pipe_ref.fit(X_ref[train_idx], y[train_idx])
-        prob_ref = pipe_ref.predict_proba(X_ref[test_idx])[:, 1]
-        scores_ref_all[test_idx] = prob_ref
-
-        from sklearn.metrics import roc_auc_score
-        try:
-            aucs_new.append(roc_auc_score(y[test_idx], prob_new))
-            aucs_ref.append(roc_auc_score(y[test_idx], prob_ref))
-        except ValueError:
-            pass
-
-    aucs_new = np.array(aucs_new)
-    aucs_ref = np.array(aucs_ref)
-
-    # DeLong AUC comparison.
-    auc_new_full, auc_ref_full, p_delong = auc_comparison_delong(
-        y, scores_new_all, scores_ref_all,
-    )
-
-    # Non-inferiority.
+    aucs_new, aucs_ref = np.array(aucs_new), np.array(aucs_ref)
+    auc_new_full, auc_ref_full, p_delong = auc_comparison_delong(y, scores_new_all, scores_ref_all)
     ni = non_inferiority_test(aucs_new, aucs_ref, margin=margin)
-
-    # Equivalence (TOST).
     eq = equivalence_test_tost(aucs_new, aucs_ref, margin=margin)
-
-    # Effect sizes (Cohen's d of the scores).
-    d_new = _cohens_d(
-        scores_new_all[y == 0], scores_new_all[y == 1],
-    )
-    d_ref = _cohens_d(
-        scores_ref_all[y == 0], scores_ref_all[y == 1],
-    )
+    d_new = _cohens_d(scores_new_all[y == 0], scores_new_all[y == 1])
+    d_ref = _cohens_d(scores_ref_all[y == 0], scores_ref_all[y == 1])
 
     result = MethodComparisonResult(
-        method_new=method_new_name,
-        method_reference=method_ref_name,
-        auc_new=auc_new_full,
-        auc_reference=auc_ref_full,
-        auc_p_value=p_delong,
-        non_inferiority=ni,
-        equivalence=eq,
-        effect_size_new=d_new,
-        effect_size_reference=d_ref,
+        method_new=method_new_name, method_reference=method_ref_name,
+        auc_new=auc_new_full, auc_reference=auc_ref_full, auc_p_value=p_delong,
+        non_inferiority=ni, equivalence=eq,
+        effect_size_new=d_new, effect_size_reference=d_ref,
     )
-
     logger.info("%s", result)
     return result
 
 
 def _cohens_d(a: np.ndarray, b: np.ndarray) -> float:
-    """Cohen's d between two groups."""
+    """Compute Cohen's d between two groups.
+
+    Parameters
+    ----------
+    a, b : np.ndarray
+        Sample values.
+
+    Returns
+    -------
+    float
+    """
     na, nb = len(a), len(b)
-    pooled = np.sqrt(
-        ((na - 1) * a.var(ddof=1) + (nb - 1) * b.var(ddof=1))
-        / (na + nb - 2)
-    )
+    pooled = np.sqrt(((na - 1) * a.var(ddof=1) + (nb - 1) * b.var(ddof=1)) / (na + nb - 2))
     return float(abs(a.mean() - b.mean()) / (pooled + 1e-30))
 
 
-# ======================================================================
-
 __all__: List[str] = [
-    # Normative model
-    "NormativeModel",
-    # Centile curves
-    "centile_curves",
-    # Deviation scoring
-    "z_score_map",
-    "extreme_value_map",
-    # Non-inferiority & equivalence
-    "NonInferiorityResult",
-    "non_inferiority_test",
-    "equivalence_test_tost",
-    "auc_comparison_delong",
-    # Method comparison
-    "MethodComparisonResult",
-    "compare_methods",
+    "HarmonizationResult", "harmonize_combat", "harmonize_combat_gam", "harmonize",
+    "NormativeModel", "centile_curves", "z_score_map", "extreme_value_map",
+    "NonInferiorityResult", "non_inferiority_test", "equivalence_test_tost",
+    "auc_comparison_delong", "MethodComparisonResult", "compare_methods",
 ]

@@ -31,6 +31,7 @@ logger = get_logger(__name__)
 
 
 def _require_h5py():
+    """Lazy-import h5py for HDF5 I/O."""
     try:
         import h5py
         return h5py
@@ -41,6 +42,7 @@ def _require_h5py():
 
 
 def _require_nibabel():
+    """Lazy-import nibabel for neuroimaging I/O."""
     try:
         import nibabel as nib
         return nib
