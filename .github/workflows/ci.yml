@@ -42,10 +42,10 @@ jobs:
         run: uv sync --group lint --no-install-workspace
 
       - name: Ruff check
-        run: uv run ruff check src/spectralbrain
-
+        run: uv run ruff check src/
+        
       - name: Ruff format check
-        run: uv run ruff format --check src/spectralbrain
+        run: uv run ruff format --check src/
 
   # ── Test matrix ───────────────────────────────────────────────────
   test:
