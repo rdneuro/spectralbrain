@@ -55,23 +55,24 @@ import subprocess
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, Tuple, Union
+from typing import Literal
 
 import numpy as np
 
-from spectralbrain.runtime import AtlasScheme, PathLike, get_logger
+from spectralbrain.runtime import PathLike, get_logger
 
 logger = get_logger(__name__)
 
 # Type aliases reused from loaders.py
-Vertices = np.ndarray   # (N, 3)
-Faces = np.ndarray       # (F, 3)
+Vertices = np.ndarray  # (N, 3)
+Faces = np.ndarray  # (F, 3)
 LabelArray = np.ndarray  # (N,)
 
 
 # ======================================================================
 # §0  Atlas registry — maps atlas names to resolution strategies
 # ======================================================================
+
 
 @dataclass(frozen=True)
 class AtlasSpec:
@@ -95,17 +96,18 @@ class AtlasSpec:
     ignore_labels : list of int
         Label IDs to skip (typically [0] for the medial wall).
     """
+
     name: str
     strategy: Literal["native_annot", "fsaverage_annot", "mni_volume"]
-    annot_pattern: Optional[str] = None
-    volume_fetcher: Optional[str] = None
-    n_parcels: Optional[int] = None
-    ignore_labels: List[int] = field(default_factory=lambda: [0])
+    annot_pattern: str | None = None
+    volume_fetcher: str | None = None
+    n_parcels: int | None = None
+    ignore_labels: list[int] = field(default_factory=lambda: [0])
 
 
 # Registry of supported atlases.
 # Key: canonical short name (lowercased, used in the public API).
-ATLAS_REGISTRY: Dict[str, AtlasSpec] = {
+ATLAS_REGISTRY: dict[str, AtlasSpec] = {
     # ── Native FreeSurfer parcellations ──
     "dkt": AtlasSpec(
         name="Desikan-Killiany-Tourville (DKT)",
@@ -125,7 +127,6 @@ ATLAS_REGISTRY: Dict[str, AtlasSpec] = {
         annot_pattern="{hemi}.aparc.a2009s.annot",
         n_parcels=74,
     ),
-
     # ── fsaverage-based (need surf2surf projection) ──
     "schaefer_100": AtlasSpec(
         name="Schaefer 100 (7 networks)",
@@ -169,7 +170,6 @@ ATLAS_REGISTRY: Dict[str, AtlasSpec] = {
         annot_pattern="{hemi}.HCPMMP1.annot",
         n_parcels=180,
     ),
-
     # ── MNI volume-based (need vol2surf projection) ──
     "brainnetome": AtlasSpec(
         name="Brainnetome Atlas",
@@ -204,7 +204,7 @@ ATLAS_REGISTRY["mmp"] = ATLAS_REGISTRY["glasser"]
 ATLAS_REGISTRY["hcp"] = ATLAS_REGISTRY["glasser"]
 
 
-def list_atlases() -> List[str]:
+def list_atlases() -> list[str]:
     """Return the names of all supported atlases."""
     return sorted(ATLAS_REGISTRY.keys())
 
@@ -214,15 +214,14 @@ def _resolve_atlas(name: str) -> AtlasSpec:
     key = name.lower().replace("-", "_").replace(" ", "_")
     if key not in ATLAS_REGISTRY:
         available = ", ".join(sorted(ATLAS_REGISTRY.keys()))
-        raise ValueError(
-            f"Unknown atlas '{name}'.  Available: {available}"
-        )
+        raise ValueError(f"Unknown atlas '{name}'.  Available: {available}")
     return ATLAS_REGISTRY[key]
 
 
 # ======================================================================
 # §1  ParcellationResult — output container
 # ======================================================================
+
 
 @dataclass
 class ParcellationResult:
@@ -249,14 +248,15 @@ class ParcellationResult:
     strategy_used : str
         Which projection strategy was actually used.
     """
+
     atlas: AtlasSpec
     hemi: str
     surface: str
     vertices: np.ndarray
     faces: np.ndarray
     labels: np.ndarray
-    label_names: List[str]
-    parcels: Dict[int, Tuple[Vertices, Faces]]
+    label_names: list[str]
+    parcels: dict[int, tuple[Vertices, Faces]]
     strategy_used: str
 
     @property
@@ -265,17 +265,14 @@ class ParcellationResult:
         return len(self.parcels)
 
     @property
-    def parcel_ids(self) -> List[int]:
+    def parcel_ids(self) -> list[int]:
         """Sorted list of parcel IDs."""
         return sorted(self.parcels.keys())
 
-    def get_parcel(self, label_id: int) -> Tuple[Vertices, Faces]:
+    def get_parcel(self, label_id: int) -> tuple[Vertices, Faces]:
         """Return (vertices, faces) for a specific parcel."""
         if label_id not in self.parcels:
-            raise KeyError(
-                f"Parcel {label_id} not found.  "
-                f"Available: {self.parcel_ids}"
-            )
+            raise KeyError(f"Parcel {label_id} not found.  Available: {self.parcel_ids}")
         return self.parcels[label_id]
 
     def summary(self) -> str:
@@ -294,21 +291,22 @@ class ParcellationResult:
 # §2  FreeSurfer environment helpers
 # ======================================================================
 
-def _get_subjects_dir(subjects_dir: Optional[PathLike] = None) -> Path:
+
+def _get_subjects_dir(subjects_dir: PathLike | None = None) -> Path:
     """Resolve SUBJECTS_DIR from arg or environment."""
     if subjects_dir is not None:
         return Path(subjects_dir)
     env = os.environ.get("SUBJECTS_DIR")
     if env:
         return Path(env)
-    raise EnvironmentError(
+    raise OSError(
         "SUBJECTS_DIR not set and no subjects_dir argument provided.  "
         "Either pass subjects_dir= or set the SUBJECTS_DIR environment "
         "variable."
     )
 
 
-def _find_freesurfer_home() -> Optional[Path]:
+def _find_freesurfer_home() -> Path | None:
     """Locate FREESURFER_HOME if available."""
     home = os.environ.get("FREESURFER_HOME")
     if home and Path(home).exists():
@@ -321,7 +319,8 @@ def _has_freesurfer_cmd(cmd: str) -> bool:
     try:
         subprocess.run(
             [cmd, "--version"],
-            capture_output=True, timeout=10,
+            capture_output=True,
+            timeout=10,
         )
         return True
     except (FileNotFoundError, subprocess.TimeoutExpired):
@@ -331,6 +330,7 @@ def _has_freesurfer_cmd(cmd: str) -> bool:
 # ======================================================================
 # §3  Strategy A — native annot (DKT, Destrieux)
 # ======================================================================
+
 
 def _parcellate_native_annot(
     subjects_dir: Path,
@@ -360,23 +360,31 @@ def _parcellate_native_annot(
             f"Annotation not found: {annot_path}.  "
             f"Run 'recon-all' or ensure this atlas is generated."
         )
-    labels, ctab, names = load_freesurfer_annot(annot_path)
+    labels, _ctab, names = load_freesurfer_annot(annot_path)
 
     # Parcellate
     parcels = apply_parcellation(
-        vertices, faces, labels,
+        vertices,
+        faces,
+        labels,
         ignore_labels=atlas.ignore_labels,
     )
 
     logger.info(
         "Strategy A (native_annot): %s → %d parcels",
-        atlas.name, len(parcels),
+        atlas.name,
+        len(parcels),
     )
     return ParcellationResult(
-        atlas=atlas, hemi=hemi, surface=surface,
-        vertices=vertices, faces=faces,
-        labels=labels, label_names=names,
-        parcels=parcels, strategy_used="native_annot",
+        atlas=atlas,
+        hemi=hemi,
+        surface=surface,
+        vertices=vertices,
+        faces=faces,
+        labels=labels,
+        label_names=names,
+        parcels=parcels,
+        strategy_used="native_annot",
     )
 
 
@@ -384,11 +392,12 @@ def _parcellate_native_annot(
 # §4  Strategy B — fsaverage annot → individual via surf2surf
 # ======================================================================
 
+
 def _find_fsaverage_annot(
     atlas: AtlasSpec,
     hemi: str,
     subjects_dir: Path,
-) -> Optional[Path]:
+) -> Path | None:
     """Search for the atlas .annot on fsaverage in several locations."""
     annot_file = atlas.annot_pattern.format(hemi=hemi)
 
@@ -399,9 +408,7 @@ def _find_fsaverage_annot(
     ]
     fs_home = _find_freesurfer_home()
     if fs_home:
-        search_paths.append(
-            fs_home / "subjects" / "fsaverage" / "label" / annot_file
-        )
+        search_paths.append(fs_home / "subjects" / "fsaverage" / "label" / annot_file)
 
     for p in search_paths:
         if p.exists():
@@ -421,12 +428,18 @@ def _surf2surf_freesurfer(
     """Project an annot from fsaverage to individual using mri_surf2surf."""
     cmd = [
         "mri_surf2surf",
-        "--srcsubject", "fsaverage",
-        "--trgsubject", subject_id,
-        "--hemi", hemi,
-        "--sval-annot", str(source_annot),
-        "--tval", str(target_annot),
-        "--sd", str(subjects_dir),
+        "--srcsubject",
+        "fsaverage",
+        "--trgsubject",
+        subject_id,
+        "--hemi",
+        hemi,
+        "--sval-annot",
+        str(source_annot),
+        "--tval",
+        str(target_annot),
+        "--sd",
+        str(subjects_dir),
     ]
     logger.info("Running: %s", " ".join(cmd))
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
@@ -465,10 +478,7 @@ def _surf2surf_python_fallback(
     if not fsa_sphere.exists():
         fs_home = _find_freesurfer_home()
         if fs_home:
-            fsa_sphere = (
-                fs_home / "subjects" / "fsaverage" / "surf"
-                / f"{hemi}.sphere.reg"
-            )
+            fsa_sphere = fs_home / "subjects" / "fsaverage" / "surf" / f"{hemi}.sphere.reg"
     if not fsa_sphere.exists():
         raise FileNotFoundError(
             f"fsaverage sphere.reg not found.  Looked in {fsa_sphere}.  "
@@ -476,13 +486,10 @@ def _surf2surf_python_fallback(
         )
 
     # Load individual sphere
-    ind_sphere = (
-        subjects_dir / subject_id / "surf" / f"{hemi}.sphere.reg"
-    )
+    ind_sphere = subjects_dir / subject_id / "surf" / f"{hemi}.sphere.reg"
     if not ind_sphere.exists():
         raise FileNotFoundError(
-            f"Individual sphere.reg not found: {ind_sphere}.  "
-            f"Run 'recon-all' first."
+            f"Individual sphere.reg not found: {ind_sphere}.  Run 'recon-all' first."
         )
 
     # Load coordinates
@@ -536,28 +543,37 @@ def _parcellate_fsaverage_annot(
 
     if ind_annot.exists():
         logger.info("Atlas already on individual: %s", ind_annot)
-        labels, ctab, names = load_freesurfer_annot(ind_annot)
+        labels, _ctab, names = load_freesurfer_annot(ind_annot)
     else:
         # 3. Project: prefer mri_surf2surf, fallback to Python
         if _has_freesurfer_cmd("mri_surf2surf"):
             ind_annot.parent.mkdir(parents=True, exist_ok=True)
             _surf2surf_freesurfer(
-                subjects_dir, subject_id, hemi, fsa_annot, ind_annot,
+                subjects_dir,
+                subject_id,
+                hemi,
+                fsa_annot,
+                ind_annot,
             )
-            labels, ctab, names = load_freesurfer_annot(ind_annot)
+            labels, _ctab, names = load_freesurfer_annot(ind_annot)
         else:
             labels = _surf2surf_python_fallback(
-                subjects_dir, subject_id, hemi, fsa_annot,
+                subjects_dir,
+                subject_id,
+                hemi,
+                fsa_annot,
             )
             # Recover names from fsaverage annot
-            _, ctab, names = load_freesurfer_annot(fsa_annot)
+            _, _ctab, names = load_freesurfer_annot(fsa_annot)
 
     # 4. Load surface and parcellate
     surf_path = subjects_dir / subject_id / "surf" / f"{hemi}.{surface}"
     vertices, faces = load_freesurfer_surface(surf_path)
 
     parcels = apply_parcellation(
-        vertices, faces, labels,
+        vertices,
+        faces,
+        labels,
         ignore_labels=atlas.ignore_labels,
     )
 
@@ -567,13 +583,21 @@ def _parcellate_fsaverage_annot(
         else "fsaverage_annot (python_nearest_vertex)"
     )
     logger.info(
-        "Strategy B (%s): %s → %d parcels", strategy, atlas.name, len(parcels),
+        "Strategy B (%s): %s → %d parcels",
+        strategy,
+        atlas.name,
+        len(parcels),
     )
     return ParcellationResult(
-        atlas=atlas, hemi=hemi, surface=surface,
-        vertices=vertices, faces=faces,
-        labels=labels, label_names=names,
-        parcels=parcels, strategy_used=strategy,
+        atlas=atlas,
+        hemi=hemi,
+        surface=surface,
+        vertices=vertices,
+        faces=faces,
+        labels=labels,
+        label_names=names,
+        parcels=parcels,
+        strategy_used=strategy,
     )
 
 
@@ -581,21 +605,19 @@ def _parcellate_fsaverage_annot(
 # §5  Strategy C — MNI volume → surface via vol2surf
 # ======================================================================
 
+
 def _fetch_atlas_volume(atlas: AtlasSpec) -> Path:
     """Download a volumetric atlas using nilearn and return its path."""
     try:
         import nilearn.datasets as datasets
     except ImportError:
         raise ImportError(
-            "nilearn is required for volumetric atlas fetching.  "
-            "Install with: pip install nilearn"
+            "nilearn is required for volumetric atlas fetching.  Install with: pip install nilearn"
         )
 
     fetcher_name = atlas.volume_fetcher
     if fetcher_name is None:
-        raise ValueError(
-            f"Atlas '{atlas.name}' has no volume_fetcher configured."
-        )
+        raise ValueError(f"Atlas '{atlas.name}' has no volume_fetcher configured.")
 
     # Map fetcher names to nilearn calls
     fetcher_map = {
@@ -621,9 +643,7 @@ def _fetch_atlas_volume(atlas: AtlasSpec) -> Path:
             elif isinstance(atlas_data, dict) and "maps" in atlas_data:
                 return Path(atlas_data["maps"])
             else:
-                raise ValueError(
-                    f"Unexpected atlas data structure from {fetcher_name}"
-                )
+                raise ValueError(f"Unexpected atlas data structure from {fetcher_name}")
         except Exception as exc:
             raise RuntimeError(
                 f"Failed to fetch atlas '{atlas.name}' via nilearn: {exc}.  "
@@ -631,10 +651,7 @@ def _fetch_atlas_volume(atlas: AtlasSpec) -> Path:
                 f"parcellate(..., atlas_volume_path=...)"
             ) from exc
     else:
-        raise ValueError(
-            f"Unknown fetcher '{fetcher_name}'.  "
-            f"Provide atlas_volume_path= manually."
-        )
+        raise ValueError(f"Unknown fetcher '{fetcher_name}'.  Provide atlas_volume_path= manually.")
 
 
 def _vol2surf_project(
@@ -652,7 +669,7 @@ def _vol2surf_project(
     from spectralbrain.io.loaders import load_freesurfer_surface
 
     surf_path = subjects_dir / subject_id / "surf" / f"{hemi}.{surface}"
-    vertices, _ = load_freesurfer_surface(surf_path)
+    _vertices, _ = load_freesurfer_surface(surf_path)
 
     # Try FreeSurfer mri_vol2surf
     if _has_freesurfer_cmd("mri_vol2surf"):
@@ -661,20 +678,29 @@ def _vol2surf_project(
 
         cmd = [
             "mri_vol2surf",
-            "--mov", str(volume_path),
-            "--regheader", subject_id,
-            "--hemi", hemi,
-            "--interp", "nearest",     # label map → nearest-neighbour
-            "--projfrac", "0.5",
-            "--surf", surface,
-            "--sd", str(subjects_dir),
-            "--o", tmp_out,
+            "--mov",
+            str(volume_path),
+            "--regheader",
+            subject_id,
+            "--hemi",
+            hemi,
+            "--interp",
+            "nearest",  # label map → nearest-neighbour
+            "--projfrac",
+            "0.5",
+            "--surf",
+            surface,
+            "--sd",
+            str(subjects_dir),
+            "--o",
+            tmp_out,
         ]
         logger.info("Running: %s", " ".join(cmd))
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
 
         if result.returncode == 0:
             import nibabel as nib
+
             img = nib.load(tmp_out)
             labels = np.asarray(img.get_fdata()).squeeze().astype(int)
             os.unlink(tmp_out)
@@ -692,8 +718,7 @@ def _vol2surf_project(
         from nilearn.surface import vol_to_surf
     except ImportError:
         raise ImportError(
-            "nilearn is required for Python vol2surf fallback.  "
-            "Install with: pip install nilearn"
+            "nilearn is required for Python vol2surf fallback.  Install with: pip install nilearn"
         )
 
     logger.info("Using nilearn vol_to_surf for volume → surface projection.")
@@ -701,7 +726,7 @@ def _vol2surf_project(
         str(volume_path),
         surf_mesh=str(surf_path),
         interpolation="nearest",
-        radius=3.0,           # search radius in mm
+        radius=3.0,  # search radius in mm
     )
     labels = np.round(projected).astype(int)
     return labels
@@ -713,7 +738,7 @@ def _parcellate_mni_volume(
     atlas: AtlasSpec,
     hemi: str,
     surface: str,
-    atlas_volume_path: Optional[Path] = None,
+    atlas_volume_path: Path | None = None,
 ) -> ParcellationResult:
     """Project a volumetric atlas onto a surface and parcellate."""
     from spectralbrain.io.loaders import (
@@ -731,7 +756,11 @@ def _parcellate_mni_volume(
 
     # 2. Project volume → surface labels
     labels = _vol2surf_project(
-        vol_path, subjects_dir, subject_id, hemi, surface,
+        vol_path,
+        subjects_dir,
+        subject_id,
+        hemi,
+        surface,
     )
 
     # 3. Load surface and parcellate
@@ -747,7 +776,9 @@ def _parcellate_mni_volume(
         )
 
     parcels = apply_parcellation(
-        vertices, faces, labels,
+        vertices,
+        faces,
+        labels,
         ignore_labels=atlas.ignore_labels,
     )
 
@@ -762,13 +793,21 @@ def _parcellate_mni_volume(
         else "mni_volume (nilearn_vol_to_surf)"
     )
     logger.info(
-        "Strategy C (%s): %s → %d parcels", strategy, atlas.name, len(parcels),
+        "Strategy C (%s): %s → %d parcels",
+        strategy,
+        atlas.name,
+        len(parcels),
     )
     return ParcellationResult(
-        atlas=atlas, hemi=hemi, surface=surface,
-        vertices=vertices, faces=faces,
-        labels=labels, label_names=label_names,
-        parcels=parcels, strategy_used=strategy,
+        atlas=atlas,
+        hemi=hemi,
+        surface=surface,
+        vertices=vertices,
+        faces=faces,
+        labels=labels,
+        label_names=label_names,
+        parcels=parcels,
+        strategy_used=strategy,
     )
 
 
@@ -776,16 +815,17 @@ def _parcellate_mni_volume(
 # §6  Main entry point — parcellate()
 # ======================================================================
 
+
 def parcellate(
     *,
-    subjects_dir: Optional[PathLike] = None,
-    subject_id: Optional[str] = None,
-    t1_path: Optional[PathLike] = None,
+    subjects_dir: PathLike | None = None,
+    subject_id: str | None = None,
+    t1_path: PathLike | None = None,
     atlas: str = "schaefer_200",
     hemi: str = "lh",
     surface: str = "white",
-    atlas_volume_path: Optional[PathLike] = None,
-    gpu: Optional[bool] = None,
+    atlas_volume_path: PathLike | None = None,
+    gpu: bool | None = None,
 ) -> ParcellationResult:
     """Parcellate a cortical hemisphere into atlas-defined regions.
 
@@ -886,15 +926,11 @@ def parcellate(
         # FreeSurfer path
         sd = _get_subjects_dir(subjects_dir)
         if subject_id is None:
-            raise ValueError(
-                "subject_id is required when using subjects_dir."
-            )
+            raise ValueError("subject_id is required when using subjects_dir.")
         # Verify subject exists
         subj_dir = sd / subject_id
         if not subj_dir.exists():
-            raise FileNotFoundError(
-                f"Subject directory not found: {subj_dir}"
-            )
+            raise FileNotFoundError(f"Subject directory not found: {subj_dir}")
 
     elif t1_path is not None:
         # Raw T1 path — run preprocessing to generate FS outputs
@@ -902,9 +938,7 @@ def parcellate(
         if not t1.exists():
             raise FileNotFoundError(f"T1w file not found: {t1}")
 
-        logger.info(
-            "T1w source provided — running preprocessing pipeline."
-        )
+        logger.info("T1w source provided — running preprocessing pipeline.")
         from spectralbrain.io.preprocess import run_fastsurfer
 
         # Run FastSurfer to generate FS-compatible outputs
@@ -917,7 +951,8 @@ def parcellate(
 
         logger.info(
             "Preprocessing complete.  subjects_dir=%s, subject_id=%s",
-            sd, subject_id,
+            sd,
+            subject_id,
         )
     else:
         raise ValueError(
@@ -928,18 +963,28 @@ def parcellate(
     # ── Dispatch to the appropriate strategy ──
     if atlas_spec.strategy == "native_annot":
         return _parcellate_native_annot(
-            sd, subject_id, atlas_spec, hemi, surface,
+            sd,
+            subject_id,
+            atlas_spec,
+            hemi,
+            surface,
         )
     elif atlas_spec.strategy == "fsaverage_annot":
         return _parcellate_fsaverage_annot(
-            sd, subject_id, atlas_spec, hemi, surface,
+            sd,
+            subject_id,
+            atlas_spec,
+            hemi,
+            surface,
         )
     elif atlas_spec.strategy == "mni_volume":
         return _parcellate_mni_volume(
-            sd, subject_id, atlas_spec, hemi, surface,
-            atlas_volume_path=(
-                Path(atlas_volume_path) if atlas_volume_path else None
-            ),
+            sd,
+            subject_id,
+            atlas_spec,
+            hemi,
+            surface,
+            atlas_volume_path=(Path(atlas_volume_path) if atlas_volume_path else None),
         )
     else:
         raise ValueError(
@@ -952,16 +997,17 @@ def parcellate(
 # §7  Batch parcellation
 # ======================================================================
 
+
 def parcellate_batch(
     subjects_dir: PathLike,
-    subject_ids: List[str],
+    subject_ids: list[str],
     atlas: str = "schaefer_200",
     hemi: str = "lh",
     surface: str = "white",
     *,
-    atlas_volume_path: Optional[PathLike] = None,
+    atlas_volume_path: PathLike | None = None,
     n_jobs: int = 1,
-) -> Dict[str, ParcellationResult]:
+) -> dict[str, ParcellationResult]:
     """Parcellate multiple subjects in batch.
 
     Parameters
@@ -984,9 +1030,8 @@ def parcellate_batch(
         and excluded (not raised).
     """
     sd = Path(subjects_dir)
-    results: Dict[str, ParcellationResult] = {}
 
-    for sid in subject_ids:
+    def _one(sid: str) -> tuple[str, ParcellationResult | None]:
         try:
             result = parcellate(
                 subjects_dir=sd,
@@ -996,15 +1041,25 @@ def parcellate_batch(
                 surface=surface,
                 atlas_volume_path=atlas_volume_path,
             )
-            results[sid] = result
             logger.info("✓ %s: %d parcels", sid, result.n_parcels)
+            return sid, result
         except Exception as exc:
             logger.error("✗ %s: %s", sid, exc)
-            continue
+            return sid, None
+
+    if n_jobs == 1:
+        pairs = [_one(sid) for sid in subject_ids]
+    else:
+        from spectralbrain.backends.cpu import parallel_map
+
+        pairs = parallel_map(_one, subject_ids, n_jobs=n_jobs, description="Parcellating")
+
+    results: dict[str, ParcellationResult] = {sid: res for sid, res in pairs if res is not None}
 
     logger.info(
         "Batch parcellation: %d/%d subjects succeeded.",
-        len(results), len(subject_ids),
+        len(results),
+        len(subject_ids),
     )
     return results
 
@@ -1014,12 +1069,12 @@ def parcellate_batch(
 # ======================================================================
 
 __all__ = [
+    "ATLAS_REGISTRY",
     # Atlas registry
     "AtlasSpec",
-    "ATLAS_REGISTRY",
-    "list_atlases",
     # Result container
     "ParcellationResult",
+    "list_atlases",
     # Main entry points
     "parcellate",
     "parcellate_batch",

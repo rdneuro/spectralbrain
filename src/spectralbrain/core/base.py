@@ -23,19 +23,11 @@ analysis.
 
 from __future__ import annotations
 
-import abc
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import (
     Any,
-    Dict,
-    List,
     Literal,
-    Optional,
     Protocol,
-    Sequence,
-    Tuple,
-    Union,
     runtime_checkable,
 )
 
@@ -44,8 +36,6 @@ from scipy.spatial import ConvexHull, cKDTree
 from scipy.spatial.distance import directed_hausdorff
 
 from spectralbrain.runtime import (
-    DescriptorMatrix,
-    DistanceMatrix,
     Eigenvalues,
     Eigenvectors,
     Faces,
@@ -66,6 +56,7 @@ logger = get_logger(__name__)
 # ======================================================================
 # §1  SPECTRAL DECOMPOSITION — the central object
 # ======================================================================
+
 
 class SpectralDecomposition:
     """Eigenvalues and eigenvectors of a Laplace–Beltrami operator.
@@ -119,23 +110,19 @@ class SpectralDecomposition:
         eigenvalues: Eigenvalues,
         eigenvectors: Eigenvectors,
         *,
-        stiffness: Optional[SparseMatrix] = None,
-        mass: Optional[MassMatrix] = None,
-        surface_area: Optional[float] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        stiffness: SparseMatrix | None = None,
+        mass: MassMatrix | None = None,
+        surface_area: float | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         """Initialise from eigenvalues, eigenvectors, and optional matrices."""
         eigenvalues = np.asarray(eigenvalues, dtype=np.float64)
         eigenvectors = np.asarray(eigenvectors, dtype=np.float64)
 
         if eigenvalues.ndim != 1:
-            raise ValueError(
-                f"eigenvalues must be 1-D, got shape {eigenvalues.shape}"
-            )
+            raise ValueError(f"eigenvalues must be 1-D, got shape {eigenvalues.shape}")
         if eigenvectors.ndim != 2:
-            raise ValueError(
-                f"eigenvectors must be 2-D, got shape {eigenvectors.shape}"
-            )
+            raise ValueError(f"eigenvectors must be 2-D, got shape {eigenvectors.shape}")
         if eigenvectors.shape[1] != eigenvalues.shape[0]:
             raise ValueError(
                 f"eigenvectors columns ({eigenvectors.shape[1]}) != "
@@ -234,8 +221,7 @@ class SpectralDecomposition:
         """
         if k > self.n_eigenvalues:
             raise ValueError(
-                f"Cannot truncate to k={k}, only have "
-                f"{self.n_eigenvalues} eigenpairs."
+                f"Cannot truncate to k={k}, only have {self.n_eigenvalues} eigenpairs."
             )
         return SpectralDecomposition(
             eigenvalues=self.eigenvalues[:k].copy(),
@@ -249,8 +235,8 @@ class SpectralDecomposition:
     def normalize_eigenvalues(
         self,
         method: Literal["area", "volume", "fiedler"] = "area",
-        area: Optional[float] = None,
-        volume: Optional[float] = None,
+        area: float | None = None,
+        volume: float | None = None,
     ) -> SpectralDecomposition:
         """Return a copy with normalised eigenvalues.
 
@@ -311,6 +297,7 @@ class SpectralDecomposition:
         Path
         """
         from spectralbrain.io.export import save_hdf5
+
         return save_hdf5(
             path,
             eigenvalues=self.eigenvalues,
@@ -335,6 +322,7 @@ class SpectralDecomposition:
         SpectralDecomposition
         """
         from spectralbrain.io.export import load_hdf5
+
         data = load_hdf5(path)
         meta = data.get("metadata", {})
         sa = meta.pop("surface_area", None)
@@ -351,11 +339,7 @@ class SpectralDecomposition:
 
     def __repr__(self) -> str:
         """Return a compact summary of the decomposition."""
-        parts = [
-            f"SpectralDecomposition("
-            f"n_vertices={self.n_vertices}, "
-            f"k={self.n_eigenvalues}"
-        ]
+        parts = [f"SpectralDecomposition(n_vertices={self.n_vertices}, k={self.n_eigenvalues}"]
         if self.surface_area is not None:
             """Return a compact representation of the decomposition."""
             parts.append(f", area={self.surface_area:.1f}")
@@ -369,6 +353,7 @@ class SpectralDecomposition:
 # ======================================================================
 # §2  GEOMETRIC OBJECT PROTOCOL
 # ======================================================================
+
 
 @runtime_checkable
 class GeometricObject(Protocol):
@@ -411,6 +396,7 @@ class GeometricObject(Protocol):
 
 # ── Basic geometry ────────────────────────────────────────────────────
 
+
 def compute_centroid(points: Points) -> np.ndarray:
     """Compute the centroid (center of mass) of a point set.
 
@@ -427,7 +413,7 @@ def compute_centroid(points: Points) -> np.ndarray:
 
 def compute_bounding_box(
     points: Points,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Axis-aligned bounding box.
 
     Parameters
@@ -448,7 +434,7 @@ def compute_bounding_box(
 
 def compute_pca_axes(
     points: Points,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """PCA of a point set — principal axes and explained variance.
 
     Parameters
@@ -466,14 +452,15 @@ def compute_pca_axes(
     centroid : ndarray, shape (3,)
     """
     centroid = compute_centroid(points)
-    centered = points - centroid                          # (N, 3)
+    centered = points - centroid  # (N, 3)
     cov = (centered.T @ centered) / (centered.shape[0] - 1)  # (3, 3)
-    eigvals, eigvecs = np.linalg.eigh(cov)               # ascending
-    order = np.argsort(eigvals)[::-1]                     # descending
+    eigvals, eigvecs = np.linalg.eigh(cov)  # ascending
+    order = np.argsort(eigvals)[::-1]  # descending
     return eigvecs[:, order].T, eigvals[order], centroid
 
 
 # ── Normalisation / alignment ─────────────────────────────────────────
+
 
 def center_points(points: Points) -> Points:
     """Translate points so the centroid is at the origin.
@@ -493,8 +480,8 @@ def normalize_scale(
     points: Points,
     method: Literal["bbox", "rms", "area"] = "bbox",
     *,
-    area: Optional[float] = None,
-) -> Tuple[Points, float]:
+    area: float | None = None,
+) -> tuple[Points, float]:
     """Scale points to unit bounding-box diagonal, unit RMS, or unit area.
 
     Parameters
@@ -519,7 +506,7 @@ def normalize_scale(
         _, _, extent = compute_bounding_box(centered)
         sf = np.linalg.norm(extent)
     elif method == "rms":
-        sf = np.sqrt(np.mean(np.sum(centered ** 2, axis=1)))
+        sf = np.sqrt(np.mean(np.sum(centered**2, axis=1)))
     elif method == "area":
         if area is None or area <= 0:
             raise ValueError("Surface area required for area normalisation.")
@@ -534,7 +521,7 @@ def normalize_scale(
     return centered / sf, float(sf)
 
 
-def align_to_pca(points: Points) -> Tuple[Points, np.ndarray]:
+def align_to_pca(points: Points) -> tuple[Points, np.ndarray]:
     """Align points so principal axes coincide with coordinate axes.
 
     Parameters
@@ -549,14 +536,14 @@ def align_to_pca(points: Points) -> Tuple[Points, np.ndarray]:
     """
     components, _, centroid = compute_pca_axes(points)
     centered = points - centroid
-    aligned = centered @ components.T                     # (N, 3)
+    aligned = centered @ components.T  # (N, 3)
     return aligned, components
 
 
 def procrustes_align(
     source: Points,
     target: Points,
-) -> Tuple[Points, np.ndarray, float]:
+) -> tuple[Points, np.ndarray, float]:
     """Rigid + uniform scale alignment (Procrustes).
 
     Finds the rotation R, translation t, and scale s that minimise
@@ -584,9 +571,7 @@ def procrustes_align(
         If source and target have different shapes.
     """
     if source.shape != target.shape:
-        raise ValueError(
-            f"Shape mismatch: source {source.shape} vs target {target.shape}"
-        )
+        raise ValueError(f"Shape mismatch: source {source.shape} vs target {target.shape}")
 
     mu_s = source.mean(axis=0)
     mu_t = target.mean(axis=0)
@@ -594,16 +579,14 @@ def procrustes_align(
     tgt = target - mu_t
 
     # Optimal rotation via SVD of cross-covariance.
-    H = src.T @ tgt                                       # (3, 3)
-    U, S, Vt = np.linalg.svd(H)
+    H = src.T @ tgt  # (3, 3)
+    U, _S, Vt = np.linalg.svd(H)
     d = np.linalg.det(Vt.T @ U.T)
-    D = np.diag([1, 1, np.sign(d)])                       # fix reflection
-    R = Vt.T @ D @ U.T                                    # (3, 3)
+    D = np.diag([1, 1, np.sign(d)])  # fix reflection
+    R = Vt.T @ D @ U.T  # (3, 3)
 
     # Optimal scale.
-    scale = float(
-        np.trace(R @ H) / np.trace(src.T @ src)
-    )
+    scale = float(np.trace(R @ H) / np.trace(src.T @ src))
 
     aligned = scale * (src @ R.T) + mu_t
     return aligned, R, scale
@@ -611,12 +594,13 @@ def procrustes_align(
 
 # ── Subsampling ───────────────────────────────────────────────────────
 
+
 def farthest_point_sampling(
     points: Points,
     n_samples: int,
     *,
-    seed: Optional[int] = None,
-) -> Tuple[Points, np.ndarray]:
+    seed: int | None = None,
+) -> tuple[Points, np.ndarray]:
     """Farthest-point sampling (FPS) for uniform subsampling.
 
     Iteratively selects the point farthest from the current set,
@@ -655,8 +639,8 @@ def farthest_point_sampling(
     min_dist = np.full(N, np.inf, dtype=np.float64)
 
     for j in range(1, n_samples):
-        last = points[indices[j - 1]]                     # (3,)
-        dist = np.sum((points - last) ** 2, axis=1)       # (N,)
+        last = points[indices[j - 1]]  # (3,)
+        dist = np.sum((points - last) ** 2, axis=1)  # (N,)
         min_dist = np.minimum(min_dist, dist)
         indices[j] = np.argmax(min_dist)
 
@@ -665,12 +649,13 @@ def farthest_point_sampling(
 
 # ── Neighbourhood queries ─────────────────────────────────────────────
 
+
 def knn_search(
     points: Points,
     k: int = 20,
     *,
-    query_points: Optional[Points] = None,
-) -> Tuple[np.ndarray, np.ndarray]:
+    query_points: Points | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
     """k-nearest-neighbour search using a KD-tree.
 
     Parameters
@@ -697,8 +682,8 @@ def radius_search(
     points: Points,
     radius: float,
     *,
-    query_points: Optional[Points] = None,
-) -> List[np.ndarray]:
+    query_points: Points | None = None,
+) -> list[np.ndarray]:
     """Fixed-radius neighbour search.
 
     Parameters
@@ -740,7 +725,8 @@ def compute_adjacency_from_knn(
         Binary adjacency.
     """
     import scipy.sparse as sp
-    distances, indices = knn_search(points, k=k)
+
+    _distances, indices = knn_search(points, k=k)
     N = points.shape[0]
 
     rows = np.repeat(np.arange(N), k)
@@ -754,6 +740,7 @@ def compute_adjacency_from_knn(
 
 
 # ── Shape distances ───────────────────────────────────────────────────
+
 
 def hausdorff_distance(
     A: Points,
@@ -798,18 +785,19 @@ def chamfer_distance(A: Points, B: Points) -> float:
     tree_a = cKDTree(A)
     d_ab, _ = tree_b.query(A, k=1)
     d_ba, _ = tree_a.query(B, k=1)
-    return float(np.mean(d_ab ** 2) + np.mean(d_ba ** 2))
+    return float(np.mean(d_ab**2) + np.mean(d_ba**2))
 
 
 # ── Volume/surface conversion ─────────────────────────────────────────
+
 
 def marching_cubes(
     volume: np.ndarray,
     affine: np.ndarray,
     *,
-    level: Optional[float] = None,
+    level: float | None = None,
     step_size: int = 1,
-) -> Tuple[Vertices, Faces]:
+) -> tuple[Vertices, Faces]:
     """Extract a mesh from a volumetric label/mask via marching cubes.
 
     Parameters
@@ -834,22 +822,23 @@ def marching_cubes(
         from skimage.measure import marching_cubes as _mc
     except ImportError as exc:
         raise ImportError(
-            "scikit-image is required for marching cubes.\n"
-            "  pip install scikit-image"
+            "scikit-image is required for marching cubes.\n  pip install scikit-image"
         ) from exc
 
     if level is None:
         level = 0.5
 
     vol = volume.astype(np.float64)
-    verts_vox, faces, normals, values = _mc(
-        vol, level=level, step_size=step_size,
+    verts_vox, faces, _normals, _values = _mc(
+        vol,
+        level=level,
+        step_size=step_size,
     )
 
     # Transform to world coordinates.
     ones = np.ones((verts_vox.shape[0], 1))
-    verts_h = np.hstack([verts_vox, ones])                # (N, 4)
-    verts_world = (affine @ verts_h.T).T[:, :3]           # (N, 3)
+    verts_h = np.hstack([verts_vox, ones])  # (N, 4)
+    verts_world = (affine @ verts_h.T).T[:, :3]  # (N, 3)
 
     return (
         np.asarray(verts_world, dtype=np.float64),
@@ -858,6 +847,7 @@ def marching_cubes(
 
 
 # ── Convex hull ───────────────────────────────────────────────────────
+
 
 def convex_hull_volume(points: Points) -> float:
     """Convex hull volume of a point set.
@@ -893,6 +883,7 @@ def convex_hull_area(points: Points) -> float:
 
 # ── Point density ─────────────────────────────────────────────────────
 
+
 def estimate_point_density(
     points: Points,
     k: int = 6,
@@ -915,9 +906,9 @@ def estimate_point_density(
         Points per mm³ (approximate).
     """
     distances, _ = knn_search(points, k=k)
-    r_k = distances[:, -1]                                # (N,) distance to k-th NN
-    r_k = np.clip(r_k, 1e-10, None)                      # avoid div by zero
-    volume_k = (4 / 3) * np.pi * r_k ** 3
+    r_k = distances[:, -1]  # (N,) distance to k-th NN
+    r_k = np.clip(r_k, 1e-10, None)  # avoid div by zero
+    volume_k = (4 / 3) * np.pi * r_k**3
     return k / volume_k
 
 
@@ -950,6 +941,7 @@ def detect_density_outliers(
 
 # ── Triangle area helper (used by meshes.py and here) ─────────────────
 
+
 def triangle_areas(
     vertices: Vertices,
     faces: Faces,
@@ -969,8 +961,8 @@ def triangle_areas(
     v0 = vertices[faces[:, 0]]
     v1 = vertices[faces[:, 1]]
     v2 = vertices[faces[:, 2]]
-    cross = np.cross(v1 - v0, v2 - v0)                   # (F, 3)
-    return 0.5 * np.linalg.norm(cross, axis=1)            # (F,)
+    cross = np.cross(v1 - v0, v2 - v0)  # (F, 3)
+    return 0.5 * np.linalg.norm(cross, axis=1)  # (F,)
 
 
 def mesh_surface_area(vertices: Vertices, faces: Faces) -> float:
@@ -993,37 +985,37 @@ def mesh_surface_area(vertices: Vertices, faces: Faces) -> float:
 # §4  __all__
 # ======================================================================
 
-__all__: List[str] = [
+__all__: list[str] = [
+    "GeometricObject",
     # Central object
     "SpectralDecomposition",
-    "GeometricObject",
-    # Basic geometry
-    "compute_centroid",
-    "compute_bounding_box",
-    "compute_pca_axes",
+    "align_to_pca",
     # Normalisation
     "center_points",
-    "normalize_scale",
-    "align_to_pca",
-    "procrustes_align",
-    # Subsampling
-    "farthest_point_sampling",
-    # Neighbourhood
-    "knn_search",
-    "radius_search",
-    "compute_adjacency_from_knn",
-    # Shape distances
-    "hausdorff_distance",
     "chamfer_distance",
-    # Volume/surface conversion
-    "marching_cubes",
+    "compute_adjacency_from_knn",
+    "compute_bounding_box",
+    # Basic geometry
+    "compute_centroid",
+    "compute_pca_axes",
+    "convex_hull_area",
     # Convex hull
     "convex_hull_volume",
-    "convex_hull_area",
+    "detect_density_outliers",
     # Point density
     "estimate_point_density",
-    "detect_density_outliers",
+    # Subsampling
+    "farthest_point_sampling",
+    # Shape distances
+    "hausdorff_distance",
+    # Neighbourhood
+    "knn_search",
+    # Volume/surface conversion
+    "marching_cubes",
+    "mesh_surface_area",
+    "normalize_scale",
+    "procrustes_align",
+    "radius_search",
     # Triangle helpers
     "triangle_areas",
-    "mesh_surface_area",
 ]

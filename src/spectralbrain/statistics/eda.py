@@ -12,8 +12,9 @@ Five diagnostic blocks plus the descriptor recommendation engine:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Tuple, Union
+from typing import Any, Literal
 
 import numpy as np
 
@@ -21,10 +22,6 @@ from spectralbrain.core.base import SpectralDecomposition
 from spectralbrain.runtime import (
     DESCRIPTOR_ELIGIBILITY,
     AnalysisObjective,
-    DescriptorMatrix,
-    DescriptorType,
-    GlobalDescriptor,
-    ScalarMap,
     get_logger,
     progress_simple,
 )
@@ -35,6 +32,7 @@ logger = get_logger(__name__)
 # ======================================================================
 # §1  SPECTRAL QC
 # ======================================================================
+
 
 @dataclass
 class SpectralQCReport:
@@ -57,8 +55,8 @@ class SpectralQCReport:
     laplacian_row_sum_max: float = 0.0
     laplacian_row_sum_ok: bool = True
     near_degenerate_pairs: int = 0
-    recommended_k: Optional[int] = None
-    warnings: List[str] = field(default_factory=list)
+    recommended_k: int | None = None
+    warnings: list[str] = field(default_factory=list)
     passed: bool = True
 
     def __repr__(self) -> str:
@@ -111,9 +109,7 @@ def spectral_qc(
     # Check λ₀ ≈ 0.
     if abs(evals[0]) > lambda_0_tol:
         rpt.lambda_0_ok = False
-        rpt.warnings.append(
-            f"λ₀ = {evals[0]:.2e} (expected ≈ 0, tol={lambda_0_tol:.0e})"
-        )
+        rpt.warnings.append(f"λ₀ = {evals[0]:.2e} (expected ≈ 0, tol={lambda_0_tol:.0e})")
 
     # Check non-negativity.
     neg_mask = evals < -1e-10
@@ -138,21 +134,17 @@ def spectral_qc(
         if rpt.orthonormality_error > ortho_tol:
             rpt.orthonormality_ok = False
             rpt.warnings.append(
-                f"Eigenvectors not M-orthonormal "
-                f"(max error={rpt.orthonormality_error:.2e})"
+                f"Eigenvectors not M-orthonormal (max error={rpt.orthonormality_error:.2e})"
             )
 
     # Check Laplacian row sum.
     if decomp.stiffness is not None:
-        row_sums = np.abs(
-            np.asarray(decomp.stiffness.sum(axis=1)).ravel()
-        )
+        row_sums = np.abs(np.asarray(decomp.stiffness.sum(axis=1)).ravel())
         rpt.laplacian_row_sum_max = float(row_sums.max())
         if rpt.laplacian_row_sum_max > row_sum_tol:
             rpt.laplacian_row_sum_ok = False
             rpt.warnings.append(
-                f"Laplacian row-sum max={rpt.laplacian_row_sum_max:.2e} "
-                f"(should be ≈ 0)"
+                f"Laplacian row-sum max={rpt.laplacian_row_sum_max:.2e} (should be ≈ 0)"
             )
 
     # Near-degenerate eigenvalue pairs.
@@ -168,11 +160,7 @@ def spectral_qc(
             f"(GPS sign ambiguity risk)"
         )
 
-    rpt.passed = (
-        rpt.lambda_0_ok
-        and rpt.eigenvalues_nonneg
-        and rpt.orthonormality_ok
-    )
+    rpt.passed = rpt.lambda_0_ok and rpt.eigenvalues_nonneg and rpt.orthonormality_ok
 
     return rpt
 
@@ -180,6 +168,7 @@ def spectral_qc(
 # ======================================================================
 # §2  OPTIMAL k SELECTION
 # ======================================================================
+
 
 @dataclass
 class OptimalKResult:
@@ -190,8 +179,8 @@ class OptimalKResult:
     k_energy_99: int = 0
     k_gap: int = 0
     k_recommended: int = 0
-    eigenvalues: Optional[np.ndarray] = None
-    cumulative_energy: Optional[np.ndarray] = None
+    eigenvalues: np.ndarray | None = None
+    cumulative_energy: np.ndarray | None = None
 
     def __repr__(self) -> str:
         """Return a compact summary of the optimal-k recommendation."""
@@ -205,7 +194,7 @@ class OptimalKResult:
 def optimal_k(
     eigenvalues: np.ndarray,
     *,
-    energy_thresholds: Tuple[float, float] = (0.95, 0.99),
+    energy_thresholds: tuple[float, float] = (0.95, 0.99),
 ) -> OptimalKResult:
     """Determine optimal number of eigenpairs.
 
@@ -263,12 +252,13 @@ def optimal_k(
 # §3  DESCRIPTOR PROFILING
 # ======================================================================
 
+
 def descriptor_profile(
-    descriptors: Dict[str, np.ndarray],
+    descriptors: dict[str, np.ndarray],
     *,
     normality_samples: int = 500,
-    seed: Optional[int] = None,
-) -> Dict[str, Dict[str, Any]]:
+    seed: int | None = None,
+) -> dict[str, dict[str, Any]]:
     """Summary statistics for each descriptor.
 
     Parameters
@@ -286,10 +276,10 @@ def descriptor_profile(
         Keys per descriptor: mean, std, min, max, skew, kurtosis,
         q25, q50, q75, shapiro_p, n_outliers_3sigma, shape.
     """
-    from scipy.stats import shapiro, skew, kurtosis
+    from scipy.stats import kurtosis, shapiro, skew
 
     rng = np.random.default_rng(seed)
-    profiles: Dict[str, Dict[str, Any]] = {}
+    profiles: dict[str, dict[str, Any]] = {}
 
     for name, arr in descriptors.items():
         arr = np.asarray(arr, dtype=np.float64)
@@ -330,10 +320,10 @@ def descriptor_profile(
 
 
 def descriptor_correlation(
-    descriptors: Dict[str, np.ndarray],
+    descriptors: dict[str, np.ndarray],
     *,
     method: Literal["pearson", "spearman"] = "pearson",
-) -> Tuple[np.ndarray, List[str]]:
+) -> tuple[np.ndarray, list[str]]:
     """Correlation matrix between descriptors (redundancy check).
 
     For multi-column descriptors, uses the mean across columns.
@@ -377,6 +367,7 @@ def descriptor_correlation(
 # §4  TEST-RETEST RELIABILITY
 # ======================================================================
 
+
 def compute_icc(
     test: np.ndarray,
     retest: np.ndarray,
@@ -416,9 +407,7 @@ def compute_icc(
     SS_between = k * np.sum((subject_means - grand_mean) ** 2)
 
     # Within-subjects SS.
-    SS_within = np.sum((test - subject_means) ** 2) + np.sum(
-        (retest - subject_means) ** 2
-    )
+    SS_within = np.sum((test - subject_means) ** 2) + np.sum((retest - subject_means) ** 2)
 
     # Between-measures SS.
     measure_means = np.array([test.mean(), retest.mean()])
@@ -429,7 +418,6 @@ def compute_icc(
 
     # Mean squares.
     MS_between = SS_between / (n - 1)
-    MS_within = SS_within / (n * (k - 1))
     MS_measures = SS_measures / (k - 1) if k > 1 else 0
     MS_error = SS_error / ((n - 1) * (k - 1)) if (n - 1) * (k - 1) > 0 else 1e-10
 
@@ -447,11 +435,11 @@ def compute_icc(
 
 
 def batch_effect_scan(
-    descriptors: Dict[str, np.ndarray],
+    descriptors: dict[str, np.ndarray],
     site_labels: np.ndarray,
     *,
     alpha: float = 0.05,
-) -> Dict[str, Dict[str, Any]]:
+) -> dict[str, dict[str, Any]]:
     """Scan for batch/site effects in spectral descriptors.
 
     For each descriptor, tests whether distributions differ
@@ -474,7 +462,7 @@ def batch_effect_scan(
 
     site_labels = np.asarray(site_labels)
     unique_sites = np.unique(site_labels)
-    results: Dict[str, Dict[str, Any]] = {}
+    results: dict[str, dict[str, Any]] = {}
 
     for name, arr in descriptors.items():
         arr = np.asarray(arr, dtype=np.float64)
@@ -486,8 +474,10 @@ def batch_effect_scan(
 
         if len(groups) < 2:
             results[name] = {
-                "statistic": 0.0, "p_value": 1.0,
-                "has_batch_effect": False, "effect_size": 0.0,
+                "statistic": 0.0,
+                "p_value": 1.0,
+                "has_batch_effect": False,
+                "effect_size": 0.0,
             }
             continue
 
@@ -504,18 +494,20 @@ def batch_effect_scan(
             }
         except Exception:
             results[name] = {
-                "statistic": 0.0, "p_value": 1.0,
-                "has_batch_effect": False, "effect_size_eta2": 0.0,
+                "statistic": 0.0,
+                "p_value": 1.0,
+                "has_batch_effect": False,
+                "effect_size_eta2": 0.0,
             }
 
     return results
 
 
 def eigenvalue_stability(
-    decomps: List[SpectralDecomposition],
+    decomps: list[SpectralDecomposition],
     *,
-    n_eigenvalues: Optional[int] = None,
-) -> Dict[str, np.ndarray]:
+    n_eigenvalues: int | None = None,
+) -> dict[str, np.ndarray]:
     """Cross-subject eigenvalue stability analysis.
 
     Parameters
@@ -550,6 +542,7 @@ def eigenvalue_stability(
 # §5  RECOMMEND_DESCRIPTOR — surrogate-based selection
 # ======================================================================
 
+
 @dataclass
 class DescriptorRecommendation:
     """Output of :func:`recommend_descriptor`.
@@ -568,19 +561,13 @@ class DescriptorRecommendation:
 
     recommended: str
     objective: str
-    ranking: List[Dict[str, Any]]
-    surrogate_details: Dict[str, Any]
+    ranking: list[dict[str, Any]]
+    surrogate_details: dict[str, Any]
 
     def __repr__(self) -> str:
         """Return a summary showing the top-5 ranked descriptors."""
-        top5 = ", ".join(
-            f"{r['descriptor']}({r['score']:.3f})"
-            for r in self.ranking[:5]
-        )
-        return (
-            f"Recommendation('{self.recommended}' for "
-            f"{self.objective}) — top 5: [{top5}]"
-        )
+        top5 = ", ".join(f"{r['descriptor']}({r['score']:.3f})" for r in self.ranking[:5])
+        return f"Recommendation('{self.recommended}' for {self.objective}) — top 5: [{top5}]"
 
 
 def _generate_surrogates(
@@ -588,8 +575,8 @@ def _generate_surrogates(
     objective: str,
     *,
     n_surrogates: int = 30,
-    seed: Optional[int] = None,
-) -> Tuple[List[np.ndarray], np.ndarray]:
+    seed: int | None = None,
+) -> tuple[list[np.ndarray], np.ndarray]:
     """Generate synthetic deformations for descriptor evaluation.
 
     Parameters
@@ -609,7 +596,7 @@ def _generate_surrogates(
     """
     rng = np.random.default_rng(seed)
     n_half = n_surrogates // 2
-    surrogates: List[np.ndarray] = []
+    surrogates: list[np.ndarray] = []
     labels = np.zeros(n_surrogates, dtype=np.int32)
 
     N = points.shape[0]
@@ -668,11 +655,11 @@ def _generate_surrogates(
 
 
 def _evaluate_descriptor(
-    descriptor_values: List[np.ndarray],
+    descriptor_values: list[np.ndarray],
     labels: np.ndarray,
     *,
     n_splits: int = 5,
-) -> Dict[str, float]:
+) -> dict[str, float]:
     """Evaluate a descriptor's discriminative power on surrogates.
 
     Returns AUC, balanced accuracy, and Cohen's d.
@@ -692,7 +679,7 @@ def _evaluate_descriptor(
             feat = np.array([arr.mean(), arr.std(), np.median(arr)])
         features.append(feat)
 
-    X = np.array(features)                                  # (n_surr, d)
+    X = np.array(features)  # (n_surr, d)
     y = labels
 
     # Handle constant features.
@@ -710,10 +697,18 @@ def _evaluate_descriptor(
     try:
         clf = LogisticRegression(max_iter=1000, solver="lbfgs")
         auc_scores = cross_val_score(
-            clf, X_scaled, y, cv=n_splits_actual, scoring="roc_auc",
+            clf,
+            X_scaled,
+            y,
+            cv=n_splits_actual,
+            scoring="roc_auc",
         )
         acc_scores = cross_val_score(
-            clf, X_scaled, y, cv=n_splits_actual, scoring="balanced_accuracy",
+            clf,
+            X_scaled,
+            y,
+            cv=n_splits_actual,
+            scoring="balanced_accuracy",
         )
     except Exception:
         auc_scores = np.array([0.5])
@@ -723,13 +718,10 @@ def _evaluate_descriptor(
     X0 = X_scaled[y == 0]
     X1 = X_scaled[y == 1]
     pooled_std = np.sqrt(
-        ((len(X0) - 1) * X0.var(axis=0).mean() +
-         (len(X1) - 1) * X1.var(axis=0).mean())
+        ((len(X0) - 1) * X0.var(axis=0).mean() + (len(X1) - 1) * X1.var(axis=0).mean())
         / (len(X0) + len(X1) - 2)
     )
-    cohens_d = float(
-        np.abs(X0.mean() - X1.mean()) / (pooled_std + 1e-10)
-    )
+    cohens_d = float(np.abs(X0.mean() - X1.mean()) / (pooled_std + 1e-10))
 
     return {
         "auc": float(np.mean(auc_scores)),
@@ -741,13 +733,13 @@ def _evaluate_descriptor(
 
 def recommend_descriptor(
     points: np.ndarray,
-    labels: Optional[np.ndarray] = None,
-    objective: Union[str, AnalysisObjective] = "group_discrimination",
+    labels: np.ndarray | None = None,
+    objective: str | AnalysisObjective = "group_discrimination",
     *,
     n_surrogates: int = 30,
     k_eigenpairs: int = 30,
     n_jobs: int = 1,
-    seed: Optional[int] = 42,
+    seed: int | None = 42,
 ) -> DescriptorRecommendation:
     """Recommend the best spectral descriptor for an analysis objective.
 
@@ -801,15 +793,14 @@ def recommend_descriptor(
     'wks'
     >>> print(rec.ranking[:3])
     """
-    from spectralbrain.core.base import knn_search
     from spectralbrain.spectral.descriptors import (
+        compute_bates_signatures,
         compute_bks,
         compute_gps,
         compute_hks,
         compute_shapedna,
         compute_si_hks,
         compute_wks,
-        compute_bates_signatures,
     )
 
     if isinstance(objective, AnalysisObjective):
@@ -820,12 +811,11 @@ def recommend_descriptor(
     eligible = DESCRIPTOR_ELIGIBILITY.get(obj_str, [])
     if not eligible:
         raise ValueError(
-            f"Unknown objective: {obj_str!r}. "
-            f"Available: {list(DESCRIPTOR_ELIGIBILITY.keys())}"
+            f"Unknown objective: {obj_str!r}. Available: {list(DESCRIPTOR_ELIGIBILITY.keys())}"
         )
 
     # Map descriptor names to compute functions.
-    compute_fns: Dict[str, Callable] = {
+    compute_fns: dict[str, Callable] = {
         "shapedna": lambda d: compute_shapedna(d, normalize="area"),
         "hks": lambda d: compute_hks(d, n_times=20),
         "si_hks": lambda d: compute_si_hks(d, n_frequencies=6),
@@ -836,21 +826,22 @@ def recommend_descriptor(
     }
 
     # Filter to eligible + available.
-    active_descs = {
-        name: fn
-        for name, fn in compute_fns.items()
-        if name in eligible
-    }
+    active_descs = {name: fn for name, fn in compute_fns.items() if name in eligible}
 
     logger.info(
-        "recommend_descriptor: objective='%s', %d eligible, "
-        "%d surrogates, k=%d",
-        obj_str, len(active_descs), n_surrogates, k_eigenpairs,
+        "recommend_descriptor: objective='%s', %d eligible, %d surrogates, k=%d",
+        obj_str,
+        len(active_descs),
+        n_surrogates,
+        k_eigenpairs,
     )
 
     # Generate surrogates.
     surrogates, surr_labels = _generate_surrogates(
-        points, obj_str, n_surrogates=n_surrogates, seed=seed,
+        points,
+        obj_str,
+        n_surrogates=n_surrogates,
+        seed=seed,
     )
 
     # Decompose all surrogates.
@@ -861,7 +852,7 @@ def recommend_descriptor(
         pc = BrainPointCloud(pts)
         return pc.decompose(k=k_eigenpairs, laplacian_method="knn")
 
-    decomps: List[SpectralDecomposition] = []
+    decomps: list[SpectralDecomposition] = []
     if n_jobs == 1:
         with progress_simple("Decomposing surrogates", total=n_surrogates) as tick:
             for pts in surrogates:
@@ -869,6 +860,7 @@ def recommend_descriptor(
                 tick(1)
     else:
         from spectralbrain.backends.cpu import parallel_map
+
         decomps = parallel_map(
             _decompose_single,
             surrogates,
@@ -877,7 +869,7 @@ def recommend_descriptor(
         )
 
     # Compute each descriptor on all surrogates and evaluate.
-    scores: List[Dict[str, Any]] = []
+    scores: list[dict[str, Any]] = []
 
     with progress_simple("Evaluating descriptors", total=len(active_descs)) as tick:
         for desc_name, compute_fn in active_descs.items():
@@ -890,23 +882,29 @@ def recommend_descriptor(
                     + 0.3 * metrics["accuracy"]
                     + 0.2 * min(metrics["cohens_d"] / 2.0, 1.0)
                 )
-                scores.append({
-                    "descriptor": desc_name,
-                    "score": score,
-                    **metrics,
-                })
+                scores.append(
+                    {
+                        "descriptor": desc_name,
+                        "score": score,
+                        **metrics,
+                    }
+                )
             except Exception as exc:
                 logger.warning(
-                    "Descriptor '%s' failed: %s", desc_name, exc,
+                    "Descriptor '%s' failed: %s",
+                    desc_name,
+                    exc,
                 )
-                scores.append({
-                    "descriptor": desc_name,
-                    "score": 0.0,
-                    "auc": 0.0,
-                    "accuracy": 0.0,
-                    "cohens_d": 0.0,
-                    "error": str(exc),
-                })
+                scores.append(
+                    {
+                        "descriptor": desc_name,
+                        "score": 0.0,
+                        "auc": 0.0,
+                        "accuracy": 0.0,
+                        "cohens_d": 0.0,
+                        "error": str(exc),
+                    }
+                )
             tick(1)
 
     # Rank by composite score.
@@ -930,21 +928,21 @@ def recommend_descriptor(
 # §6  __all__
 # ======================================================================
 
-__all__: List[str] = [
-    # QC
-    "SpectralQCReport",
-    "spectral_qc",
-    # Optimal k
-    "OptimalKResult",
-    "optimal_k",
-    # Descriptor profiling
-    "descriptor_profile",
-    "descriptor_correlation",
-    # Reliability
-    "compute_icc",
-    "batch_effect_scan",
-    "eigenvalue_stability",
+__all__: list[str] = [
     # Recommendation
     "DescriptorRecommendation",
+    # Optimal k
+    "OptimalKResult",
+    # QC
+    "SpectralQCReport",
+    "batch_effect_scan",
+    # Reliability
+    "compute_icc",
+    "descriptor_correlation",
+    # Descriptor profiling
+    "descriptor_profile",
+    "eigenvalue_stability",
+    "optimal_k",
     "recommend_descriptor",
+    "spectral_qc",
 ]

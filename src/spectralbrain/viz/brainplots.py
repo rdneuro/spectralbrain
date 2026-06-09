@@ -30,17 +30,16 @@ from __future__ import annotations
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Tuple, Union
+from typing import Any
 
-import numpy as np
-import matplotlib
-import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
-from matplotlib.gridspec import GridSpec
-from matplotlib.figure import Figure
+import matplotlib.pyplot as plt
+import numpy as np
 from matplotlib.axes import Axes
+from matplotlib.figure import Figure
+from matplotlib.gridspec import GridSpec
 
-from spectralbrain.runtime import PathLike, ScalarMap, get_logger
+from spectralbrain.runtime import PathLike, get_logger
 
 logger = get_logger(__name__)
 
@@ -48,41 +47,48 @@ logger = get_logger(__name__)
 
 DPI: int = 600
 
-VIEWS_CORTEX: List[str] = [
-    "right_lateral", "anterior", "left_lateral",
-    "posterior", "superior", "inferior",
+VIEWS_CORTEX: list[str] = [
+    "right_lateral",
+    "anterior",
+    "left_lateral",
+    "posterior",
+    "superior",
+    "inferior",
 ]
 """Standard 6-view cortical row."""
 
-VIEWS_FULL: List[str] = VIEWS_CORTEX + ["subcortex"]
+VIEWS_FULL: list[str] = [*VIEWS_CORTEX, "subcortex"]
 """7-view cortical + subcortical row."""
 
-VIEWS_MEDIAL: List[str] = [
-    "left_lateral", "left_medial", "right_medial", "right_lateral",
+VIEWS_MEDIAL: list[str] = [
+    "left_lateral",
+    "left_medial",
+    "right_medial",
+    "right_lateral",
 ]
 """Classic 4-view medial/lateral row."""
 
 # ── Default descriptor visual specs ───────────────────────────────────
 
-DESCRIPTOR_STYLES: Dict[str, Dict[str, Any]] = {
-    "hks":        {"cmap": "inferno",  "vminmax": [None, None], "label": "HKS"},
-    "wks":        {"cmap": "cividis",  "vminmax": [None, None], "label": "WKS"},
-    "si_hks":     {"cmap": "viridis",  "vminmax": [None, None], "label": "SI-HKS"},
-    "bks":        {"cmap": "magma",    "vminmax": [None, None], "label": "BKS"},
-    "ibks":       {"cmap": "magma",    "vminmax": [None, None], "label": "IBKS"},
-    "gps":        {"cmap": "coolwarm", "vminmax": [None, None], "label": "GPS"},
-    "shapedna":   {"cmap": "plasma",   "vminmax": [None, None], "label": "ShapeDNA"},
-    "bates_sp":   {"cmap": "inferno",  "vminmax": [None, None], "label": "Bates SP"},
-    "gaussian_k": {"cmap": "RdBu_r",  "vminmax": [None, None], "label": "Gaussian K"},
-    "mean_k":     {"cmap": "RdBu_r",  "vminmax": [None, None], "label": "Mean H"},
-    "shape_idx":  {"cmap": "RdBu_r",  "vminmax": [-1, 1],      "label": "Shape Index"},
-    "casorati":   {"cmap": "magma",    "vminmax": [None, None], "label": "Casorati"},
-    "curvedness": {"cmap": "magma",    "vminmax": [None, None], "label": "Curvedness"},
-    "willmore":   {"cmap": "inferno",  "vminmax": [None, None], "label": "Willmore H²"},
-    "z_score":    {"cmap": "RdBu_r",  "vminmax": [-3, 3],      "label": "Z-score"},
-    "effect_d":   {"cmap": "RdBu_r",  "vminmax": [-1.5, 1.5],  "label": "Cohen's d"},
-    "clusters":   {"cmap": "tab10",    "vminmax": [None, None], "label": "Clusters"},
-    "normative":  {"cmap": "coolwarm", "vminmax": [-3, 3],      "label": "Normative Z"},
+DESCRIPTOR_STYLES: dict[str, dict[str, Any]] = {
+    "hks": {"cmap": "inferno", "vminmax": [None, None], "label": "HKS"},
+    "wks": {"cmap": "cividis", "vminmax": [None, None], "label": "WKS"},
+    "si_hks": {"cmap": "viridis", "vminmax": [None, None], "label": "SI-HKS"},
+    "bks": {"cmap": "magma", "vminmax": [None, None], "label": "BKS"},
+    "ibks": {"cmap": "magma", "vminmax": [None, None], "label": "IBKS"},
+    "gps": {"cmap": "coolwarm", "vminmax": [None, None], "label": "GPS"},
+    "shapedna": {"cmap": "plasma", "vminmax": [None, None], "label": "ShapeDNA"},
+    "bates_sp": {"cmap": "inferno", "vminmax": [None, None], "label": "Bates SP"},
+    "gaussian_k": {"cmap": "RdBu_r", "vminmax": [None, None], "label": "Gaussian K"},
+    "mean_k": {"cmap": "RdBu_r", "vminmax": [None, None], "label": "Mean H"},
+    "shape_idx": {"cmap": "RdBu_r", "vminmax": [-1, 1], "label": "Shape Index"},
+    "casorati": {"cmap": "magma", "vminmax": [None, None], "label": "Casorati"},
+    "curvedness": {"cmap": "magma", "vminmax": [None, None], "label": "Curvedness"},
+    "willmore": {"cmap": "inferno", "vminmax": [None, None], "label": "Willmore H²"},
+    "z_score": {"cmap": "RdBu_r", "vminmax": [-3, 3], "label": "Z-score"},
+    "effect_d": {"cmap": "RdBu_r", "vminmax": [-1.5, 1.5], "label": "Cohen's d"},
+    "clusters": {"cmap": "tab10", "vminmax": [None, None], "label": "Clusters"},
+    "normative": {"cmap": "coolwarm", "vminmax": [-3, 3], "label": "Normative Z"},
 }
 
 
@@ -115,11 +121,11 @@ class BrainPlotSpec:
     label: str = ""
     data: Any = None
     cmap: str = "coolwarm"
-    vminmax: List[Optional[float]] = field(default_factory=lambda: [None, None])
+    vminmax: list[float | None] = field(default_factory=lambda: [None, None])
     nan_color: Any = (1.0, 1.0, 1.0)
     plot_kind: str = "cortical"
-    atlas: Optional[str] = None
-    extra_kwargs: Dict[str, Any] = field(default_factory=dict)
+    atlas: str | None = None
+    extra_kwargs: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_descriptor(
@@ -127,7 +133,7 @@ class BrainPlotSpec:
         descriptor_name: str,
         data: Any = None,
         **overrides: Any,
-    ) -> "BrainPlotSpec":
+    ) -> BrainPlotSpec:
         """Build a spec from a known descriptor name."""
         style = DESCRIPTOR_STYLES.get(descriptor_name, {})
         return cls(
@@ -146,15 +152,16 @@ class BrainPlotSpec:
 # §1  INTERNAL RENDERING ENGINE
 # ======================================================================
 
+
 def _require_yabplot():
     """Lazy-import yabplot for 3D brain visualisation."""
     try:
         import yabplot as yab
+
         return yab
     except ImportError as exc:
         raise ImportError(
-            "yabplot is required for brain surface plots.\n"
-            "  pip install yabplot"
+            "yabplot is required for brain surface plots.\n  pip install yabplot"
         ) from exc
 
 
@@ -162,6 +169,7 @@ def _require_scienceplots():
     """Lazy-import scienceplots for publication styling."""
     try:
         import scienceplots  # noqa: F401
+
         return True
     except ImportError:
         logger.debug("scienceplots not installed — using SpectralBrain style.")
@@ -197,10 +205,10 @@ def _render_row(
     spec: BrainPlotSpec,
     out_png: Path,
     *,
-    views: List[str],
+    views: list[str],
     style: str = "matte",
     display_type: str = "none",
-    figsize_px: Tuple[int, int] = (3600, 600),
+    figsize_px: tuple[int, int] = (3600, 600),
 ) -> Path:
     """Render one brain row to PNG via yabplot.
 
@@ -247,9 +255,7 @@ def _render_row(
             fn(spec.data[0], spec.data[1], **kwargs)
             return out_png
         else:
-            raise ValueError(
-                "vertexwise plot_kind requires data=(lh_mesh, rh_mesh)"
-            )
+            raise ValueError("vertexwise plot_kind requires data=(lh_mesh, rh_mesh)")
 
     kwargs.update(spec.extra_kwargs)
     fn(**kwargs)
@@ -257,8 +263,8 @@ def _render_row(
 
 
 def _compose_panel(
-    row_images: List[np.ndarray],
-    row_labels: List[str],
+    row_images: list[np.ndarray],
+    row_labels: list[str],
     *,
     panel_width_in: float = 12.0,
     row_height_in: float = 1.6,
@@ -269,7 +275,7 @@ def _compose_panel(
     border: bool = True,
     border_color: str = "#888888",
     border_width: float = 0.5,
-) -> Tuple[Figure, List[Axes]]:
+) -> tuple[Figure, list[Axes]]:
     """Compose rendered PNG rows into a matplotlib figure.
 
     Parameters
@@ -296,9 +302,14 @@ def _compose_panel(
 
     fig = plt.figure(figsize=(panel_width_in, fig_height), dpi=dpi)
     gs = GridSpec(
-        n_rows, 1, figure=fig,
-        hspace=0.03, top=0.95 if title else 0.98,
-        bottom=0.02, left=0.08, right=0.98,
+        n_rows,
+        1,
+        figure=fig,
+        hspace=0.03,
+        top=0.95 if title else 0.98,
+        bottom=0.02,
+        left=0.08,
+        right=0.98,
     )
 
     axes = []
@@ -318,8 +329,12 @@ def _compose_panel(
 
         if label:
             ax.set_ylabel(
-                label, rotation=0, ha="right", va="center",
-                fontsize=label_fontsize, labelpad=12,
+                label,
+                rotation=0,
+                ha="right",
+                va="center",
+                fontsize=label_fontsize,
+                labelpad=12,
                 fontweight="bold",
             )
 
@@ -335,11 +350,12 @@ def _save_figure(
     fig: Figure,
     path: PathLike,
     *,
-    formats: Optional[Union[str, List[str]]] = None,
+    formats: str | list[str] | None = None,
     dpi: int = DPI,
-) -> List[Path]:
+) -> list[Path]:
     """Save figure — always PNG + optional extras."""
     from spectralbrain.viz.graphics import savefig
+
     return savefig(fig, path, formats=formats, dpi=dpi)
 
 
@@ -347,22 +363,23 @@ def _save_figure(
 # §2  PUBLIC API — individual & single-row plots
 # ======================================================================
 
+
 def plot_brain(
     data: Any = None,
     *,
-    atlas: Optional[str] = None,
+    atlas: str | None = None,
     plot_kind: str = "cortical",
     cmap: str = "coolwarm",
-    vminmax: Optional[List[float]] = None,
+    vminmax: list[float] | None = None,
     nan_color: Any = (1.0, 1.0, 1.0),
     style: str = "matte",
     display_type: str = "none",
-    views: Optional[List[str]] = None,
+    views: list[str] | None = None,
     title: str = "",
-    save: Optional[PathLike] = None,
-    formats: Optional[Union[str, List[str]]] = None,
+    save: PathLike | None = None,
+    formats: str | list[str] | None = None,
     **kwargs: Any,
-) -> Tuple[Figure, Axes]:
+) -> tuple[Figure, Axes]:
     """Single-row brain surface plot.
 
     The basic building block — renders one metric across 6–7 views.
@@ -401,10 +418,14 @@ def plot_brain(
         views = VIEWS_CORTEX
 
     spec = BrainPlotSpec(
-        label="", data=data, cmap=cmap,
+        label="",
+        data=data,
+        cmap=cmap,
         vminmax=vminmax or [None, None],
-        nan_color=nan_color, plot_kind=plot_kind,
-        atlas=atlas, extra_kwargs=kwargs,
+        nan_color=nan_color,
+        plot_kind=plot_kind,
+        atlas=atlas,
+        extra_kwargs=kwargs,
     )
 
     tmp = Path(tempfile.mkdtemp())
@@ -412,8 +433,9 @@ def plot_brain(
     px_w = int(12.0 * DPI)
     px_h = int(1.8 * DPI)
 
-    _render_row(spec, png, views=views, style=style,
-                display_type=display_type, figsize_px=(px_w, px_h))
+    _render_row(
+        spec, png, views=views, style=style, display_type=display_type, figsize_px=(px_w, px_h)
+    )
 
     img = mpimg.imread(str(png))
     fig, axes = _compose_panel([img], [""], title=title, border=False)
@@ -430,17 +452,17 @@ def plot_brain_subcortical(
     *,
     atlas: str = "aseg",
     cmap: str = "RdBu_r",
-    vminmax: Optional[List[float]] = None,
+    vminmax: list[float] | None = None,
     nan_color: str = "#cccccc",
     nan_alpha: float = 0.3,
     style: str = "sculpted",
     bmesh_alpha: float = 0.08,
-    views: Optional[List[str]] = None,
+    views: list[str] | None = None,
     title: str = "",
-    save: Optional[PathLike] = None,
+    save: PathLike | None = None,
     display_type: str = "none",
     **kwargs: Any,
-) -> Tuple[Figure, Axes]:
+) -> tuple[Figure, Axes]:
     """Single-row subcortical structure plot.
 
     Parameters
@@ -456,9 +478,11 @@ def plot_brain_subcortical(
         views = ["left_lateral", "superior", "right_lateral"]
 
     spec = BrainPlotSpec(
-        data=data, cmap=cmap,
+        data=data,
+        cmap=cmap,
         vminmax=vminmax or [None, None],
-        nan_color=nan_color, plot_kind="subcortical",
+        nan_color=nan_color,
+        plot_kind="subcortical",
         atlas=atlas,
         extra_kwargs={
             "nan_alpha": nan_alpha,
@@ -469,9 +493,14 @@ def plot_brain_subcortical(
 
     tmp = Path(tempfile.mkdtemp())
     png = tmp / "subcort_row.png"
-    _render_row(spec, png, views=views, style=style,
-                display_type=display_type,
-                figsize_px=(int(10 * DPI), int(2.0 * DPI)))
+    _render_row(
+        spec,
+        png,
+        views=views,
+        style=style,
+        display_type=display_type,
+        figsize_px=(int(10 * DPI), int(2.0 * DPI)),
+    )
 
     img = mpimg.imread(str(png))
     fig, axes = _compose_panel([img], [""], title=title, border=False)
@@ -485,18 +514,19 @@ def plot_brain_subcortical(
 # §3  GROUP COMPARISON
 # ======================================================================
 
+
 def plot_group_comparison(
     group_a: BrainPlotSpec,
     group_b: BrainPlotSpec,
-    difference: Optional[BrainPlotSpec] = None,
+    difference: BrainPlotSpec | None = None,
     *,
-    views: Optional[List[str]] = None,
+    views: list[str] | None = None,
     style: str = "matte",
     display_type: str = "none",
     title: str = "Group Comparison",
-    save: Optional[PathLike] = None,
-    formats: Optional[Union[str, List[str]]] = None,
-) -> Tuple[Figure, List[Axes]]:
+    save: PathLike | None = None,
+    formats: str | list[str] | None = None,
+) -> tuple[Figure, list[Axes]]:
     """Two- or three-row group comparison panel.
 
     Parameters
@@ -530,8 +560,9 @@ def plot_group_comparison(
 
     for i, spec in enumerate(specs):
         png = tmp / f"row_{i}.png"
-        _render_row(spec, png, views=views, style=style,
-                    display_type=display_type, figsize_px=(px_w, px_h))
+        _render_row(
+            spec, png, views=views, style=style, display_type=display_type, figsize_px=(px_w, px_h)
+        )
         images.append(mpimg.imread(str(png)))
         labels.append(spec.label)
 
@@ -546,23 +577,24 @@ def plot_group_comparison(
 # §4  NORMATIVE MAP
 # ======================================================================
 
+
 def plot_normative_map(
     z_data: Any,
     *,
-    atlas: Optional[str] = None,
+    atlas: str | None = None,
     plot_kind: str = "cortical",
     threshold: float = 2.0,
     cmap: str = "coolwarm",
-    vminmax: Optional[List[float]] = None,
+    vminmax: list[float] | None = None,
     nan_color: Any = (0.85, 0.85, 0.85),
     style: str = "matte",
     display_type: str = "none",
-    views: Optional[List[str]] = None,
+    views: list[str] | None = None,
     title: str = "Normative Deviation",
     show_thresholded: bool = True,
-    save: Optional[PathLike] = None,
-    formats: Optional[Union[str, List[str]]] = None,
-) -> Tuple[Figure, List[Axes]]:
+    save: PathLike | None = None,
+    formats: str | list[str] | None = None,
+) -> tuple[Figure, list[Axes]]:
     """Normative z-score map with optional thresholded view.
 
     Parameters
@@ -584,9 +616,13 @@ def plot_normative_map(
     vm = vminmax or [-3, 3]
 
     spec_full = BrainPlotSpec(
-        label="Z-score", data=z_data, cmap=cmap,
-        vminmax=vm, nan_color=nan_color,
-        plot_kind=plot_kind, atlas=atlas,
+        label="Z-score",
+        data=z_data,
+        cmap=cmap,
+        vminmax=vm,
+        nan_color=nan_color,
+        plot_kind=plot_kind,
+        atlas=atlas,
     )
 
     specs = [spec_full]
@@ -594,17 +630,18 @@ def plot_normative_map(
     if show_thresholded:
         # Threshold: set values within [-thr, thr] to NaN.
         if isinstance(z_data, dict):
-            thr_data = {
-                k: (v if abs(v) > threshold else float("nan"))
-                for k, v in z_data.items()
-            }
+            thr_data = {k: (v if abs(v) > threshold else float("nan")) for k, v in z_data.items()}
         else:
             thr_data = z_data  # user handles thresholding for vertex-wise
 
         spec_thr = BrainPlotSpec(
             label=f"|Z| > {threshold}",
-            data=thr_data, cmap=cmap, vminmax=vm,
-            nan_color=nan_color, plot_kind=plot_kind, atlas=atlas,
+            data=thr_data,
+            cmap=cmap,
+            vminmax=vm,
+            nan_color=nan_color,
+            plot_kind=plot_kind,
+            atlas=atlas,
         )
         specs.append(spec_thr)
 
@@ -614,8 +651,9 @@ def plot_normative_map(
 
     for i, spec in enumerate(specs):
         png = tmp / f"norm_{i}.png"
-        _render_row(spec, png, views=views, style=style,
-                    display_type=display_type, figsize_px=(px_w, px_h))
+        _render_row(
+            spec, png, views=views, style=style, display_type=display_type, figsize_px=(px_w, px_h)
+        )
         images.append(mpimg.imread(str(png)))
         labels.append(spec.label)
 
@@ -630,20 +668,21 @@ def plot_normative_map(
 # §5  CLUSTERING MAP
 # ======================================================================
 
+
 def plot_clustering_map(
     cluster_data: Any,
     *,
-    atlas: Optional[str] = None,
+    atlas: str | None = None,
     plot_kind: str = "cortical",
     cmap: str = "tab10",
     nan_color: Any = (0.9, 0.9, 0.9),
     style: str = "matte",
     display_type: str = "none",
-    views: Optional[List[str]] = None,
+    views: list[str] | None = None,
     title: str = "Atlas-Free Clustering",
-    save: Optional[PathLike] = None,
+    save: PathLike | None = None,
     **kwargs: Any,
-) -> Tuple[Figure, Axes]:
+) -> tuple[Figure, Axes]:
     """Visualise atlas-free clustering on brain surface.
 
     Parameters
@@ -655,10 +694,17 @@ def plot_clustering_map(
         views = VIEWS_CORTEX
 
     return plot_brain(
-        data=cluster_data, atlas=atlas, plot_kind=plot_kind,
-        cmap=cmap, nan_color=nan_color, style=style,
-        display_type=display_type, views=views,
-        title=title, save=save, **kwargs,
+        data=cluster_data,
+        atlas=atlas,
+        plot_kind=plot_kind,
+        cmap=cmap,
+        nan_color=nan_color,
+        style=style,
+        display_type=display_type,
+        views=views,
+        title=title,
+        save=save,
+        **kwargs,
     )
 
 
@@ -666,18 +712,19 @@ def plot_clustering_map(
 # §6  MORPHOMETRIC DESCRIPTOR GALLERY (4–10 rows)
 # ======================================================================
 
+
 def plot_morphometric_gallery(
-    specs: List[BrainPlotSpec],
+    specs: list[BrainPlotSpec],
     *,
-    views: Optional[List[str]] = None,
+    views: list[str] | None = None,
     style: str = "matte",
     display_type: str = "none",
     title: str = "Spectral Morphometry Gallery",
     panel_width_in: float = 12.0,
     row_height_in: float = 1.4,
-    save: Optional[PathLike] = None,
-    formats: Optional[Union[str, List[str]]] = None,
-) -> Tuple[Figure, List[Axes]]:
+    save: PathLike | None = None,
+    formats: str | list[str] | None = None,
+) -> tuple[Figure, list[Axes]]:
     """Multi-row panel with one descriptor per row.
 
     The flagship figure for spectral morphometry papers — stack
@@ -723,14 +770,21 @@ def plot_morphometric_gallery(
     with progress_simple("Rendering gallery", total=len(specs)) as tick:
         for i, spec in enumerate(specs):
             png = tmp / f"gallery_{i}.png"
-            _render_row(spec, png, views=views, style=style,
-                        display_type=display_type, figsize_px=(px_w, px_h))
+            _render_row(
+                spec,
+                png,
+                views=views,
+                style=style,
+                display_type=display_type,
+                figsize_px=(px_w, px_h),
+            )
             images.append(mpimg.imread(str(png)))
             labels.append(spec.label)
             tick(1)
 
     fig, axes = _compose_panel(
-        images, labels,
+        images,
+        labels,
         panel_width_in=panel_width_in,
         row_height_in=row_height_in,
         title=title,
@@ -742,17 +796,17 @@ def plot_morphometric_gallery(
 
 
 def plot_top10_morphometrics(
-    descriptor_data: Dict[str, Any],
+    descriptor_data: dict[str, Any],
     *,
-    atlas: Optional[str] = None,
+    atlas: str | None = None,
     plot_kind: str = "cortical",
-    views: Optional[List[str]] = None,
+    views: list[str] | None = None,
     style: str = "matte",
     display_type: str = "none",
     title: str = "Top 10 Spectral Morphometrics",
-    save: Optional[PathLike] = None,
-    formats: Optional[Union[str, List[str]]] = None,
-) -> Tuple[Figure, List[Axes]]:
+    save: PathLike | None = None,
+    formats: str | list[str] | None = None,
+) -> tuple[Figure, list[Axes]]:
     """Pre-configured 10-row gallery for the canonical descriptors.
 
     Parameters
@@ -769,20 +823,37 @@ def plot_top10_morphometrics(
     fig, axes
     """
     order = [
-        "hks", "wks", "si_hks", "bks", "gps",
-        "gaussian_k", "mean_k", "shape_idx", "casorati", "curvedness",
+        "hks",
+        "wks",
+        "si_hks",
+        "bks",
+        "gps",
+        "gaussian_k",
+        "mean_k",
+        "shape_idx",
+        "casorati",
+        "curvedness",
     ]
     specs = []
     for name in order:
         if name in descriptor_data:
-            specs.append(BrainPlotSpec.from_descriptor(
-                name, data=descriptor_data[name],
-                plot_kind=plot_kind, atlas=atlas,
-            ))
+            specs.append(
+                BrainPlotSpec.from_descriptor(
+                    name,
+                    data=descriptor_data[name],
+                    plot_kind=plot_kind,
+                    atlas=atlas,
+                )
+            )
 
     return plot_morphometric_gallery(
-        specs, views=views, style=style, display_type=display_type,
-        title=title, save=save, formats=formats,
+        specs,
+        views=views,
+        style=style,
+        display_type=display_type,
+        title=title,
+        save=save,
+        formats=formats,
         row_height_in=1.3,
     )
 
@@ -791,18 +862,19 @@ def plot_top10_morphometrics(
 # §7  MULTI-DESCRIPTOR COMPARISON PANEL
 # ======================================================================
 
+
 def plot_multi_descriptor_panel(
-    rows: List[BrainPlotSpec],
+    rows: list[BrainPlotSpec],
     *,
-    views: Optional[List[str]] = None,
+    views: list[str] | None = None,
     style: str = "matte",
     display_type: str = "none",
     title: str = "",
     panel_width_in: float = 12.0,
     row_height_in: float = 1.5,
-    save: Optional[PathLike] = None,
-    formats: Optional[Union[str, List[str]]] = None,
-) -> Tuple[Figure, List[Axes]]:
+    save: PathLike | None = None,
+    formats: str | list[str] | None = None,
+) -> tuple[Figure, list[Axes]]:
     """Generic multi-row panel — the workhorse compositor.
 
     Parameters
@@ -811,15 +883,22 @@ def plot_multi_descriptor_panel(
         4–8 rows (or more).
     """
     return plot_morphometric_gallery(
-        rows, views=views, style=style, display_type=display_type,
-        title=title, panel_width_in=panel_width_in,
-        row_height_in=row_height_in, save=save, formats=formats,
+        rows,
+        views=views,
+        style=style,
+        display_type=display_type,
+        title=title,
+        panel_width_in=panel_width_in,
+        row_height_in=row_height_in,
+        save=save,
+        formats=formats,
     )
 
 
 # ======================================================================
 # §8  BILATERAL COMPARISON
 # ======================================================================
+
 
 def plot_bilateral_comparison(
     left_spec: BrainPlotSpec,
@@ -828,9 +907,9 @@ def plot_bilateral_comparison(
     style: str = "matte",
     display_type: str = "none",
     title: str = "L vs R Comparison",
-    save: Optional[PathLike] = None,
-    formats: Optional[Union[str, List[str]]] = None,
-) -> Tuple[Figure, List[Axes]]:
+    save: PathLike | None = None,
+    formats: str | list[str] | None = None,
+) -> tuple[Figure, list[Axes]]:
     """Side-by-side L vs R hemisphere comparison (2 rows).
 
     Parameters
@@ -847,8 +926,9 @@ def plot_bilateral_comparison(
 
     for spec, views, i in [(left_spec, views_l, 0), (right_spec, views_r, 1)]:
         png = tmp / f"bilat_{i}.png"
-        _render_row(spec, png, views=views, style=style,
-                    display_type=display_type, figsize_px=(px_w, px_h))
+        _render_row(
+            spec, png, views=views, style=style, display_type=display_type, figsize_px=(px_w, px_h)
+        )
         images.append(mpimg.imread(str(png)))
         labels.append(spec.label)
 
@@ -863,17 +943,18 @@ def plot_bilateral_comparison(
 # §9  SPECTRAL PROGRESSION (HKS across t / WKS across e)
 # ======================================================================
 
+
 def plot_spectral_progression(
-    scale_specs: List[BrainPlotSpec],
+    scale_specs: list[BrainPlotSpec],
     *,
     descriptor_name: str = "HKS",
-    views: Optional[List[str]] = None,
+    views: list[str] | None = None,
     style: str = "matte",
     display_type: str = "none",
-    title: Optional[str] = None,
-    save: Optional[PathLike] = None,
-    formats: Optional[Union[str, List[str]]] = None,
-) -> Tuple[Figure, List[Axes]]:
+    title: str | None = None,
+    save: PathLike | None = None,
+    formats: str | list[str] | None = None,
+) -> tuple[Figure, list[Axes]]:
     """Multi-scale spectral descriptor progression.
 
     One row per scale parameter (time for HKS, energy for WKS).
@@ -892,9 +973,14 @@ def plot_spectral_progression(
         title = f"{descriptor_name} — multi-scale progression"
 
     return plot_morphometric_gallery(
-        scale_specs, views=views, style=style,
-        display_type=display_type, title=title,
-        row_height_in=1.3, save=save, formats=formats,
+        scale_specs,
+        views=views,
+        style=style,
+        display_type=display_type,
+        title=title,
+        row_height_in=1.3,
+        save=save,
+        formats=formats,
     )
 
 
@@ -902,21 +988,22 @@ def plot_spectral_progression(
 # §10  TRACT VISUALISATION
 # ======================================================================
 
+
 def plot_brain_tracts(
     data: Any = None,
     *,
     atlas: str = "xtract_tiny",
     cmap: str = "inferno",
-    vminmax: Optional[List[float]] = None,
+    vminmax: list[float] | None = None,
     nan_color: str = "#BDBDBD",
     orientation_coloring: bool = False,
     style: str = "matte",
     display_type: str = "none",
-    views: Optional[List[str]] = None,
+    views: list[str] | None = None,
     title: str = "",
-    save: Optional[PathLike] = None,
+    save: PathLike | None = None,
     **kwargs: Any,
-) -> Tuple[Figure, Axes]:
+) -> tuple[Figure, Axes]:
     """White matter tract visualisation.
 
     Parameters
@@ -930,9 +1017,11 @@ def plot_brain_tracts(
         views = ["left_lateral", "anterior", "superior"]
 
     spec = BrainPlotSpec(
-        data=data, cmap=cmap,
+        data=data,
+        cmap=cmap,
         vminmax=vminmax or [None, None],
-        nan_color=nan_color, plot_kind="tracts",
+        nan_color=nan_color,
+        plot_kind="tracts",
         atlas=atlas,
         extra_kwargs={
             "orientation_coloring": orientation_coloring,
@@ -942,9 +1031,14 @@ def plot_brain_tracts(
 
     tmp = Path(tempfile.mkdtemp())
     png = tmp / "tracts.png"
-    _render_row(spec, png, views=views, style=style,
-                display_type=display_type,
-                figsize_px=(int(10 * DPI), int(2.5 * DPI)))
+    _render_row(
+        spec,
+        png,
+        views=views,
+        style=style,
+        display_type=display_type,
+        figsize_px=(int(10 * DPI), int(2.5 * DPI)),
+    )
 
     img = mpimg.imread(str(png))
     fig, axes = _compose_panel([img], [""], title=title, border=False)
@@ -957,22 +1051,25 @@ def plot_brain_tracts(
 # ======================================================================
 
 __all__ = [
-    # Constants
-    "DPI", "VIEWS_CORTEX", "VIEWS_FULL", "VIEWS_MEDIAL",
     "DESCRIPTOR_STYLES",
+    # Constants
+    "DPI",
+    "VIEWS_CORTEX",
+    "VIEWS_FULL",
+    "VIEWS_MEDIAL",
     # Spec
     "BrainPlotSpec",
+    "plot_bilateral_comparison",
     # Single-row
     "plot_brain",
     "plot_brain_subcortical",
     "plot_brain_tracts",
+    "plot_clustering_map",
     # Multi-row panels
     "plot_group_comparison",
-    "plot_normative_map",
-    "plot_clustering_map",
     "plot_morphometric_gallery",
-    "plot_top10_morphometrics",
     "plot_multi_descriptor_panel",
-    "plot_bilateral_comparison",
+    "plot_normative_map",
     "plot_spectral_progression",
+    "plot_top10_morphometrics",
 ]

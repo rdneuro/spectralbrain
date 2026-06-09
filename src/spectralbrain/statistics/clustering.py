@@ -56,22 +56,15 @@ Dhillon IS. Co-clustering documents and words using bipartite
 from __future__ import annotations
 
 import warnings
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import (
     Any,
-    Callable,
-    Dict,
-    List,
     Literal,
-    Optional,
-    Sequence,
-    Tuple,
-    Union,
 )
 
 import numpy as np
 import scipy.sparse as sp
-from scipy import stats as sp_stats
 
 from spectralbrain.runtime import (
     DescriptorMatrix,
@@ -90,38 +83,42 @@ logger = get_logger(__name__)
 # Lazy imports — every optional dependency is loaded on first use
 # ──────────────────────────────────────────────────────────────────────
 
+
 def _require_hdbscan():
     """Lazy-import HDBSCAN."""
     try:
         import hdbscan
+
         return hdbscan
     except ImportError:
-        raise ImportError(
-            "hdbscan required: pip install hdbscan"
-        )
+        raise ImportError("hdbscan required: pip install hdbscan")
 
 
 def _require_sklearn_cluster():
     """Lazy-import sklearn.cluster."""
     from sklearn import cluster as skc
+
     return skc
 
 
 def _require_sklearn_metrics():
     """Lazy-import sklearn.metrics."""
     from sklearn import metrics as skm
+
     return skm
 
 
 def _require_sklearn_decomposition():
     """Lazy-import sklearn.decomposition."""
     from sklearn import decomposition as skd
+
     return skd
 
 
 def _require_sklearn_mixture():
     """Lazy-import sklearn.mixture."""
     from sklearn import mixture as skmix
+
     return skmix
 
 
@@ -129,6 +126,7 @@ def _require_umap():
     """Lazy-import UMAP."""
     try:
         import umap
+
         return umap
     except ImportError:
         raise ImportError("umap-learn required: pip install umap-learn")
@@ -137,19 +135,19 @@ def _require_umap():
 def _require_leidenalg():
     """Lazy-import leidenalg."""
     try:
-        import leidenalg
         import igraph
+        import leidenalg
+
         return leidenalg, igraph
     except ImportError:
-        raise ImportError(
-            "leidenalg + igraph required: pip install leidenalg python-igraph"
-        )
+        raise ImportError("leidenalg + igraph required: pip install leidenalg python-igraph")
 
 
 def _require_gudhi():
     """Lazy-import GUDHI."""
     try:
         import gudhi
+
         return gudhi
     except ImportError:
         raise ImportError("gudhi required: pip install gudhi")
@@ -159,6 +157,7 @@ def _require_tslearn():
     """Lazy-import tslearn."""
     try:
         import tslearn
+
         return tslearn
     except ImportError:
         raise ImportError("tslearn required: pip install tslearn")
@@ -168,6 +167,7 @@ def _require_skfda():
     """Lazy-import scikit-fda."""
     try:
         import skfda
+
         return skfda
     except ImportError:
         raise ImportError("scikit-fda required: pip install scikit-fda")
@@ -176,19 +176,19 @@ def _require_skfda():
 def _require_pymc():
     """Lazy-import PyMC for Bayesian clustering."""
     try:
-        import pymc as pm
         import arviz as az
+        import pymc as pm
+
         return pm, az
     except ImportError:
-        raise ImportError(
-            "pymc + arviz required: pip install pymc arviz"
-        )
+        raise ImportError("pymc + arviz required: pip install pymc arviz")
 
 
 def _require_torch():
     """Lazy-import PyTorch."""
     try:
         import torch
+
         return torch
     except ImportError:
         raise ImportError("PyTorch required: pip install torch")
@@ -198,6 +198,7 @@ def _require_joblib():
     """Lazy-import joblib for parallelisation."""
     try:
         import joblib
+
         return joblib
     except ImportError:
         raise ImportError("joblib required: pip install joblib")
@@ -207,6 +208,7 @@ def _require_dionysus():
     """Lazy-import dionysus2 for persistent homology."""
     try:
         import dionysus
+
         return dionysus
     except ImportError:
         raise ImportError("dionysus required: pip install dionysus")
@@ -216,11 +218,10 @@ def _require_kepler_mapper():
     """Lazy-import KeplerMapper for TDA."""
     try:
         import kmapper
+
         return kmapper
     except ImportError:
-        raise ImportError(
-            "kepler-mapper required: pip install kmapper"
-        )
+        raise ImportError("kepler-mapper required: pip install kmapper")
 
 
 def _require_tensorly():
@@ -228,6 +229,7 @@ def _require_tensorly():
     try:
         import tensorly
         import tensorly.decomposition
+
         return tensorly
     except ImportError:
         raise ImportError("tensorly required: pip install tensorly")
@@ -237,6 +239,7 @@ def _require_pygsp():
     """Lazy-import PyGSP for graph signal processing."""
     try:
         import pygsp
+
         return pygsp
     except ImportError:
         raise ImportError("PyGSP required: pip install PyGSP")
@@ -245,6 +248,7 @@ def _require_pygsp():
 # ======================================================================
 # §1  RESULT CONTAINERS
 # ======================================================================
+
 
 @dataclass
 class ClusterResult:
@@ -272,9 +276,9 @@ class ClusterResult:
     labels: LabelArray
     n_clusters: int
     method: str
-    probabilities: Optional[np.ndarray] = None
-    quality: Dict[str, float] = field(default_factory=dict)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    probabilities: np.ndarray | None = None
+    quality: dict[str, float] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     @property
     def noise_count(self) -> int:
@@ -282,11 +286,9 @@ class ClusterResult:
         return int((self.labels == -1).sum())
 
     @property
-    def cluster_sizes(self) -> Dict[int, int]:
+    def cluster_sizes(self) -> dict[int, int]:
         """Return a dict mapping cluster label to member count."""
-        unique, counts = np.unique(
-            self.labels[self.labels >= 0], return_counts=True
-        )
+        unique, counts = np.unique(self.labels[self.labels >= 0], return_counts=True)
         return dict(zip(unique.tolist(), counts.tolist()))
 
     def __repr__(self) -> str:
@@ -319,9 +321,9 @@ class TemporalClusterResult:
     labels: LabelArray
     n_clusters: int
     method: str
-    centroids: Optional[np.ndarray] = None
-    quality: Dict[str, float] = field(default_factory=dict)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    centroids: np.ndarray | None = None
+    quality: dict[str, float] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -341,8 +343,8 @@ class FusionResult:
 
     fused: DescriptorMatrix
     method: str
-    weights: Optional[np.ndarray] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    weights: np.ndarray | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -370,9 +372,9 @@ class BayesianClusterConfirmation:
     label_probabilities: np.ndarray
     waic: float
     loo: float
-    cluster_credible_intervals: Dict[int, Dict[str, Any]]
+    cluster_credible_intervals: dict[int, dict[str, Any]]
     agreement_with_input: float
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -394,11 +396,11 @@ class VineyardResult:
     metadata : dict
     """
 
-    vines: List[np.ndarray]
-    diagrams: Dict[int, np.ndarray]
-    salient_features: List[Dict[str, Any]]
+    vines: list[np.ndarray]
+    diagrams: dict[int, np.ndarray]
+    salient_features: list[dict[str, Any]]
     scale_of_emergence: np.ndarray
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -422,12 +424,12 @@ class MapperResult:
         downstream visualisation.
     """
 
-    nerve_graph: Dict[int, List[int]]
-    node_membership: Dict[int, List[int]]
+    nerve_graph: dict[int, list[int]]
+    node_membership: dict[int, list[int]]
     n_nodes: int
     n_edges: int
     vertex_to_nodes: np.ndarray
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -457,7 +459,7 @@ class TensorDecompositionResult:
     labels: LabelArray
     n_components: int
     reconstruction_error: float
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -478,23 +480,22 @@ class ScaleSpaceBlobResult:
     metadata : dict
     """
 
-    blob_trajectories: List[List[Dict[str, Any]]]
+    blob_trajectories: list[list[dict[str, Any]]]
     natural_scales: np.ndarray
     blob_labels: LabelArray
     n_blobs: int
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 # ======================================================================
 # §2  DISTANCE / AFFINITY CONSTRUCTION
 # ======================================================================
 
+
 def build_descriptor_distance(
     H: DescriptorMatrix,
     *,
-    metric: Literal[
-        "euclidean", "cosine", "correlation", "manhattan"
-    ] = "euclidean",
+    metric: Literal["euclidean", "cosine", "correlation", "manhattan"] = "euclidean",
     log_transform: bool = True,
     normalize: Literal["none", "l1", "l2"] = "l1",
     backend: Literal["auto", "cpu", "gpu"] = "auto",
@@ -521,7 +522,7 @@ def build_descriptor_distance(
         Symmetric pairwise distance matrix.
     """
     H = np.asarray(H, dtype=np.float64)
-    n, t = H.shape
+    _n, _t = H.shape
 
     # --- preprocessing ---
     X = np.log(H + 1e-12) if log_transform else H.copy()
@@ -555,8 +556,7 @@ def build_descriptor_distance(
             D_t = 1.0 - X_cn @ X_cn.T
             D_t.clamp_(min=0.0)
         elif metric == "manhattan":
-            D_t = torch.cdist(X_t.unsqueeze(0), X_t.unsqueeze(0),
-                              p=1.0).squeeze(0)
+            D_t = torch.cdist(X_t.unsqueeze(0), X_t.unsqueeze(0), p=1.0).squeeze(0)
         else:
             raise ValueError(f"Unknown metric: {metric}")
 
@@ -565,6 +565,7 @@ def build_descriptor_distance(
         torch.cuda.empty_cache()
     else:
         from scipy.spatial.distance import pdist, squareform
+
         D = squareform(pdist(X, metric=metric))
 
     np.fill_diagonal(D, 0.0)
@@ -597,11 +598,12 @@ def build_hybrid_distance(
     ndarray, shape (N, N)
         Normalised fused distance.
     """
-    n = D_descriptor.shape[0]
+    D_descriptor.shape[0]
 
     # --- geodesic distance from adjacency ---
     if geodesic_backend == "dijkstra":
         from scipy.sparse.csgraph import shortest_path
+
         A = sp.csr_matrix(adjacency).copy()
         # ensure positive weights for Dijkstra
         A.data = np.abs(A.data)
@@ -609,11 +611,10 @@ def build_hybrid_distance(
         D_geo = shortest_path(A, method="D", directed=False)
     elif geodesic_backend == "heat":
         try:
-            import potpourri3d as pp3d
+            import potpourri3d  # noqa: F401 -- availability probe
         except ImportError:
             raise ImportError(
-                "potpourri3d required for heat-method geodesics: "
-                "pip install potpourri3d"
+                "potpourri3d required for heat-method geodesics: pip install potpourri3d"
             )
         raise NotImplementedError(
             "Heat-method geodesics require (vertices, faces). "
@@ -627,10 +628,7 @@ def build_hybrid_distance(
     med_desc = np.median(D_descriptor[D_descriptor > 0]) or 1.0
     med_geo = np.median(D_geo[D_geo > 0]) or 1.0
 
-    D_fused = (
-        alpha * (D_descriptor / med_desc)
-        + (1.0 - alpha) * (D_geo / med_geo)
-    )
+    D_fused = alpha * (D_descriptor / med_desc) + (1.0 - alpha) * (D_geo / med_geo)
     np.fill_diagonal(D_fused, 0.0)
     return D_fused
 
@@ -639,7 +637,7 @@ def build_hks_affinity_graph(
     H: DescriptorMatrix,
     adjacency: SparseMatrix,
     *,
-    sigma: Optional[float] = None,
+    sigma: float | None = None,
     log_transform: bool = True,
 ) -> SparseMatrix:
     """Build HKS-weighted mesh adjacency for graph-based clustering.
@@ -680,10 +678,9 @@ def build_hks_affinity_graph(
     if sigma is None:
         sigma = float(np.median(d_feat[d_feat > 0])) or 1.0
 
-    affinity_weights = base_weights * np.exp(-d_feat**2 / (2 * sigma**2))
+    affinity_weights = base_weights * np.exp(-(d_feat**2) / (2 * sigma**2))
 
-    W = sp.csr_matrix((affinity_weights, (rows, cols)),
-                       shape=adjacency.shape)
+    W = sp.csr_matrix((affinity_weights, (rows, cols)), shape=adjacency.shape)
     # symmetrise
     W = (W + W.T) / 2.0
     return W
@@ -693,18 +690,17 @@ def build_hks_affinity_graph(
 # §3  SPATIAL CLUSTERING
 # ======================================================================
 
+
 def cluster_hdbscan(
     H: DescriptorMatrix,
     *,
-    adjacency: Optional[SparseMatrix] = None,
+    adjacency: SparseMatrix | None = None,
     alpha_fusion: float = 0.7,
     min_cluster_size: int = 200,
     min_samples: int = 10,
     cluster_selection_method: Literal["eom", "leaf"] = "eom",
-    metric: Literal[
-        "euclidean", "precomputed"
-    ] = "euclidean",
-    dim_reduction: Optional[Literal["umap", "pca"]] = "umap",
+    metric: Literal["euclidean", "precomputed"] = "euclidean",
+    dim_reduction: Literal["umap", "pca"] | None = "umap",
     n_components: int = 8,
     log_transform: bool = True,
     random_state: int = 42,
@@ -782,11 +778,16 @@ def cluster_hdbscan(
         # --- fused or pure distance ---
         if adjacency is not None:
             D_desc = build_descriptor_distance(
-                X, metric="euclidean", log_transform=False,
-                normalize="none", backend=backend,
+                X,
+                metric="euclidean",
+                log_transform=False,
+                normalize="none",
+                backend=backend,
             )
             D = build_hybrid_distance(
-                D_desc, adjacency, alpha=alpha_fusion,
+                D_desc,
+                adjacency,
+                alpha=alpha_fusion,
             )
             use_metric = "precomputed"
         else:
@@ -814,13 +815,10 @@ def cluster_hdbscan(
         valid = labels >= 0
         if actual_metric == "precomputed":
             quality["silhouette"] = float(
-                skm.silhouette_score(D[np.ix_(valid, valid)],
-                                     labels[valid], metric="precomputed")
+                skm.silhouette_score(D[np.ix_(valid, valid)], labels[valid], metric="precomputed")
             )
         else:
-            quality["silhouette"] = float(
-                skm.silhouette_score(D[valid], labels[valid])
-            )
+            quality["silhouette"] = float(skm.silhouette_score(D[valid], labels[valid]))
 
     return ClusterResult(
         labels=labels.astype(np.int64),
@@ -831,8 +829,7 @@ def cluster_hdbscan(
         metadata={
             "outlier_scores": clusterer.outlier_scores_,
             "condensed_tree": (
-                clusterer.condensed_tree_
-                if hasattr(clusterer, "condensed_tree_") else None
+                clusterer.condensed_tree_ if hasattr(clusterer, "condensed_tree_") else None
             ),
             "min_cluster_size": min_cluster_size,
             "min_samples": min_samples,
@@ -841,16 +838,14 @@ def cluster_hdbscan(
 
 
 def cluster_leiden(
-    adjacency_or_H: Union[SparseMatrix, DescriptorMatrix],
+    adjacency_or_H: SparseMatrix | DescriptorMatrix,
     *,
-    H: Optional[DescriptorMatrix] = None,
+    H: DescriptorMatrix | None = None,
     resolution: float = 1.0,
-    quality_function: Literal[
-        "modularity", "cpm"
-    ] = "modularity",
+    quality_function: Literal["modularity", "cpm"] = "modularity",
     n_iterations: int = -1,
     random_state: int = 42,
-    sigma: Optional[float] = None,
+    sigma: float | None = None,
 ) -> ClusterResult:
     """Leiden community detection on mesh graph.
 
@@ -892,12 +887,13 @@ def cluster_leiden(
     else:
         # descriptor matrix → build k-NN affinity graph
         from sklearn.neighbors import kneighbors_graph
+
         X = np.asarray(adjacency_or_H, dtype=np.float64)
         k = min(30, X.shape[0] - 1)
         A = kneighbors_graph(X, n_neighbors=k, mode="distance")
         # convert distance to similarity
         sigma_knn = np.median(A.data) or 1.0
-        A.data = np.exp(-A.data**2 / (2 * sigma_knn**2))
+        A.data = np.exp(-(A.data**2) / (2 * sigma_knn**2))
         A = (A + A.T) / 2.0
 
     A_coo = sp.coo_matrix(A)
@@ -1004,7 +1000,7 @@ def cluster_gnmf(
         )
         H = H - H.min()
 
-    n, T = H.shape
+    _n, _T = H.shape
     rng = np.random.default_rng(random_state)
 
     # --- build adjacency and degree ---
@@ -1019,11 +1015,9 @@ def cluster_gnmf(
     use_gpu = _resolve_backend(backend)
 
     if use_gpu:
-        return _gnmf_gpu(H, A_off, D_diag, n_components, lam,
-                         sparsity_alpha, n_iter, tol, rng)
+        return _gnmf_gpu(H, A_off, D_diag, n_components, lam, sparsity_alpha, n_iter, tol, rng)
     else:
-        return _gnmf_cpu(H, A_off, D_diag, n_components, lam,
-                         sparsity_alpha, n_iter, tol, rng)
+        return _gnmf_cpu(H, A_off, D_diag, n_components, lam, sparsity_alpha, n_iter, tol, rng)
 
 
 def _gnmf_cpu(H, A_off, D_diag, r, lam, alpha, n_iter, tol, rng):
@@ -1038,21 +1032,21 @@ def _gnmf_cpu(H, A_off, D_diag, r, lam, alpha, n_iter, tol, rng):
     with progress_simple("GNMF", total=n_iter) as update:
         for it in range(n_iter):
             # --- update F ---
-            numerator_F = W.T @ H                       # (r, T)
-            denominator_F = W.T @ W @ F + eps           # (r, T)
+            numerator_F = W.T @ H  # (r, T)
+            denominator_F = W.T @ W @ F + eps  # (r, T)
             F *= numerator_F / denominator_F
 
             # --- update W ---
-            AW = A_off @ W                               # (n, r)
-            DW = D_diag[:, None] * W                     # (n, r)
-            numerator_W = H @ F.T + lam * AW             # (n, r)
+            AW = A_off @ W  # (n, r)
+            DW = D_diag[:, None] * W  # (n, r)
+            numerator_W = H @ F.T + lam * AW  # (n, r)
             denominator_W = W @ (F @ F.T) + lam * DW + alpha + eps
             W *= numerator_W / denominator_W
 
             # --- convergence ---
             if it % 10 == 0:
                 obj = (
-                    0.5 * np.linalg.norm(H - W @ F, 'fro')**2
+                    0.5 * np.linalg.norm(H - W @ F, "fro") ** 2
                     + lam * np.trace(W.T @ (D_diag[:, None] * W - A_off @ W))
                     + alpha * np.abs(W).sum()
                 )
@@ -1092,18 +1086,12 @@ def _gnmf_gpu(H, A_off, D_diag, r, lam, alpha, n_iter, tol, rng):
 
     n, T = H.shape
     H_t = torch.tensor(H, dtype=torch.float32, device=device)
-    W_t = torch.tensor(
-        rng.random((n, r)).astype(np.float32) + 0.1, device=device
-    )
-    F_t = torch.tensor(
-        rng.random((r, T)).astype(np.float32) + 0.1, device=device
-    )
+    W_t = torch.tensor(rng.random((n, r)).astype(np.float32) + 0.1, device=device)
+    F_t = torch.tensor(rng.random((r, T)).astype(np.float32) + 0.1, device=device)
 
     # sparse adjacency on GPU
     A_coo = sp.coo_matrix(A_off)
-    indices = torch.tensor(
-        np.vstack([A_coo.row, A_coo.col]), dtype=torch.long, device=device
-    )
+    indices = torch.tensor(np.vstack([A_coo.row, A_coo.col]), dtype=torch.long, device=device)
     values = torch.tensor(A_coo.data, dtype=torch.float32, device=device)
     A_t = torch.sparse_coo_tensor(indices, values, A_off.shape).coalesce()
     D_t = torch.tensor(D_diag, dtype=torch.float32, device=device)
@@ -1155,9 +1143,9 @@ def _gnmf_gpu(H, A_off, D_diag, r, lam, alpha, n_iter, tol, rng):
 def cluster_dpmm(
     H: DescriptorMatrix,
     *,
-    adjacency: Optional[SparseMatrix] = None,
+    adjacency: SparseMatrix | None = None,
     max_components: int = 25,
-    dim_reduction: Optional[Literal["umap", "pca"]] = "pca",
+    dim_reduction: Literal["umap", "pca"] | None = "pca",
     n_components_reduce: int = 8,
     log_transform: bool = True,
     random_state: int = 42,
@@ -1214,8 +1202,7 @@ def cluster_dpmm(
     if backend == "variational":
         return _dpmm_variational(X, max_components, random_state)
     elif backend == "pymc":
-        return _dpmm_pymc(X, adjacency, max_components, mrf_beta,
-                          random_state)
+        return _dpmm_pymc(X, adjacency, max_components, mrf_beta, random_state)
     else:
         raise ValueError(f"Unknown DPMM backend: {backend}")
 
@@ -1249,9 +1236,7 @@ def _dpmm_variational(X, K, seed):
 
     quality = {}
     if n_clusters >= 2:
-        quality["silhouette"] = float(
-            skm.silhouette_score(X, labels)
-        )
+        quality["silhouette"] = float(skm.silhouette_score(X, labels))
     quality["bic_lower_bound"] = float(model.lower_bound_)
 
     return ClusterResult(
@@ -1270,7 +1255,7 @@ def _dpmm_variational(X, K, seed):
 
 def _dpmm_pymc(X, adjacency, K, mrf_beta, seed):
     """Full Bayesian DPMM with optional MRF spatial prior via PyMC."""
-    pm, az = _require_pymc()
+    pm, _az = _require_pymc()
     import pytensor.tensor as pt
 
     n, d = X.shape
@@ -1280,18 +1265,13 @@ def _dpmm_pymc(X, adjacency, K, mrf_beta, seed):
         beta_sticks = pm.Beta("beta_sticks", 1.0, alpha, shape=K)
         w = pm.Deterministic(
             "w",
-            beta_sticks * pt.concatenate(
-                [pt.ones(1), pt.cumprod(1.0 - beta_sticks)[:-1]]
-            ),
+            beta_sticks * pt.concatenate([pt.ones(1), pt.cumprod(1.0 - beta_sticks)[:-1]]),
         )
 
         mu = pm.Normal("mu", 0.0, 5.0, shape=(K, d))
         sigma = pm.HalfNormal("sigma", 1.0, shape=(K, d))
 
-        comp_dists = [
-            pm.Normal.dist(mu=mu[k], sigma=sigma[k], shape=d)
-            for k in range(K)
-        ]
+        comp_dists = [pm.Normal.dist(mu=mu[k], sigma=sigma[k], shape=d) for k in range(K)]
         pm.Mixture("obs", w=w, comp_dists=comp_dists, observed=X)
 
         # MRF spatial prior (if adjacency provided)
@@ -1314,6 +1294,7 @@ def _dpmm_pymc(X, adjacency, K, mrf_beta, seed):
 
     # assign each point to nearest component weighted by w
     from scipy.spatial.distance import cdist
+
     D_km = cdist(X, mu_post)
     log_resp = np.log(w_post[None, :] + 1e-12) - 0.5 * D_km**2
     labels = log_resp.argmax(axis=1).astype(np.int64)
@@ -1337,8 +1318,8 @@ def cluster_persistence(
     H_scalar: ScalarMap,
     adjacency: SparseMatrix,
     *,
-    persistence_threshold: Optional[float] = None,
-    n_clusters: Optional[int] = None,
+    persistence_threshold: float | None = None,
+    n_clusters: int | None = None,
 ) -> ClusterResult:
     """Persistence-based clustering (ToMATo) on a scalar field.
 
@@ -1364,7 +1345,7 @@ def cluster_persistence(
     ClusterResult
         With ``persistence_pairs`` and ``diagram`` in metadata.
     """
-    gudhi = _require_gudhi()
+    _require_gudhi()
 
     density = -np.asarray(H_scalar, dtype=np.float64)
     n = len(density)
@@ -1378,6 +1359,7 @@ def cluster_persistence(
 
     try:
         from gudhi.clustering.tomato import Tomato
+
         tomato = Tomato(
             graph_type="manual",
             density_type="manual",
@@ -1389,8 +1371,7 @@ def cluster_persistence(
         elif persistence_threshold is not None:
             # set via diagram analysis
             tomato.n_clusters_ = int(
-                np.sum(tomato.diagram_[:, 1] - tomato.diagram_[:, 0]
-                       > persistence_threshold)
+                np.sum(tomato.diagram_[:, 1] - tomato.diagram_[:, 0] > persistence_threshold)
             )
             tomato.n_clusters_ = max(1, tomato.n_clusters_)
 
@@ -1403,20 +1384,16 @@ def cluster_persistence(
             method="persistence_tomato",
             quality={},
             metadata={
-                "diagram": (
-                    tomato.diagram_ if hasattr(tomato, "diagram_") else None
-                ),
+                "diagram": (tomato.diagram_ if hasattr(tomato, "diagram_") else None),
             },
         )
 
     except (ImportError, AttributeError):
         # fallback: manual union-find persistence on H₀
         logger.warning(
-            "GUDHI Tomato not available; using manual sub-level "
-            "persistence via union-find."
+            "GUDHI Tomato not available; using manual sub-level persistence via union-find."
         )
-        return _persistence_sublevel_h0(density, graph, n,
-                                         persistence_threshold, n_clusters)
+        return _persistence_sublevel_h0(density, graph, n, persistence_threshold, n_clusters)
 
 
 def _persistence_sublevel_h0(density, graph, n, tau, k):
@@ -1453,9 +1430,9 @@ def _persistence_sublevel_h0(density, graph, n, tau, k):
                         pairs.append((birth[rn], density[idx], rn))
 
     # compute persistence = death - birth
-    persistences = np.array(
-        [d - b for b, d, _ in pairs], dtype=np.float64
-    ) if pairs else np.array([])
+    persistences = (
+        np.array([d - b for b, d, _ in pairs], dtype=np.float64) if pairs else np.array([])
+    )
 
     # select threshold
     if k is not None and len(persistences) >= k - 1:
@@ -1491,9 +1468,7 @@ def _persistence_sublevel_h0(density, graph, n, tau, k):
                             parent2[rn] = ri
 
     # extract labels
-    labels = np.array(
-        [find2(parent2, i) for i in range(n)], dtype=np.int64
-    )
+    labels = np.array([find2(parent2, i) for i in range(n)], dtype=np.int64)
     unique_roots = np.unique(labels)
     relabel = {old: new for new, old in enumerate(unique_roots)}
     labels = np.array([relabel[l] for l in labels], dtype=np.int64)
@@ -1522,7 +1497,7 @@ def cluster_spectral_coclustering(
     H: DescriptorMatrix,
     *,
     n_clusters: int = 6,
-    adjacency: Optional[SparseMatrix] = None,
+    adjacency: SparseMatrix | None = None,
     laplacian_smoothing: float = 5.0,
 ) -> ClusterResult:
     """Spectral co-clustering of the vertex × time/energy matrix.
@@ -1564,6 +1539,7 @@ def cluster_spectral_coclustering(
     # --- optional Laplacian smoothing ---
     if adjacency is not None and laplacian_smoothing > 0:
         from scipy.sparse.linalg import spsolve
+
         L = sp.csr_matrix(adjacency, dtype=np.float64)
         I = sp.eye(H.shape[0], format="csr")
         K = len(np.unique(row_labels))
@@ -1590,6 +1566,7 @@ def cluster_spectral_coclustering(
 # ======================================================================
 # §4  TEMPORAL / SCALE CLUSTERING
 # ======================================================================
+
 
 def cluster_temporal_fpca(
     H: DescriptorMatrix,
@@ -1634,18 +1611,18 @@ def cluster_temporal_fpca(
     std[std == 0] = 1.0
     X_std = (X - mu) / std
 
-    pca = skd.PCA(n_components=min(n_components, X_std.shape[1]),
-                  random_state=random_state)
+    pca = skd.PCA(n_components=min(n_components, X_std.shape[1]), random_state=random_state)
     scores = pca.fit_transform(X_std)
 
     if clusterer == "kmeans":
-        km = skc.KMeans(n_clusters=n_clusters, n_init=10,
-                        random_state=random_state)
+        km = skc.KMeans(n_clusters=n_clusters, n_init=10, random_state=random_state)
         labels = km.fit_predict(scores).astype(np.int64)
         n_clust = n_clusters
     elif clusterer == "hdbscan":
         result = cluster_hdbscan(
-            scores, log_transform=False, dim_reduction=None,
+            scores,
+            log_transform=False,
+            dim_reduction=None,
             random_state=random_state,
         )
         labels = result.labels
@@ -1692,7 +1669,7 @@ def cluster_temporal_dtw(
     ClusterResult
         With ``barycenters`` in metadata.
     """
-    tslearn = _require_tslearn()
+    _require_tslearn()
     from tslearn.clustering import TimeSeriesKMeans
     from tslearn.preprocessing import TimeSeriesScalerMeanVariance
 
@@ -1732,6 +1709,7 @@ def cluster_temporal_dtw(
 # ======================================================================
 # §5  SPATIO-TEMPORAL JOINT CLUSTERING
 # ======================================================================
+
 
 def cluster_spatiotemporal_gnmf(
     H: DescriptorMatrix,
@@ -1835,7 +1813,8 @@ def cluster_spatiotemporal_gnmf(
         probabilities=W_norm,
         quality={},
         metadata={
-            "W": W, "F": F,
+            "W": W,
+            "F": F,
             "lambda_spatial": lam_spatial,
             "lambda_temporal": lam_temporal,
         },
@@ -1846,12 +1825,10 @@ def cluster_spatiotemporal_stdbscan(
     H: DescriptorMatrix,
     adjacency: SparseMatrix,
     *,
-    eps_spatial: Optional[float] = None,
-    eps_temporal: Optional[float] = None,
+    eps_spatial: float | None = None,
+    eps_temporal: float | None = None,
     min_pts: int = 10,
-    temporal_metric: Literal[
-        "euclidean", "softdtw"
-    ] = "euclidean",
+    temporal_metric: Literal["euclidean", "softdtw"] = "euclidean",
     gamma_dtw: float = 0.1,
     backend: Literal["auto", "cpu", "gpu"] = "auto",
 ) -> ClusterResult:
@@ -1879,10 +1856,11 @@ def cluster_spatiotemporal_stdbscan(
     ClusterResult
     """
     H = np.asarray(H, dtype=np.float64)
-    n, T = H.shape
+    n, _T = H.shape
 
     # --- geodesic distances via Dijkstra on mesh ---
     from scipy.sparse.csgraph import shortest_path
+
     A = sp.csr_matrix(adjacency).copy()
     A.data = np.abs(A.data)
     A.data[A.data == 0] = 1e-12
@@ -1891,10 +1869,12 @@ def cluster_spatiotemporal_stdbscan(
     # --- temporal distances ---
     if temporal_metric == "euclidean":
         from scipy.spatial.distance import pdist, squareform
+
         D_temp = squareform(pdist(H, metric="euclidean"))
     elif temporal_metric == "softdtw":
-        tslearn = _require_tslearn()
+        _require_tslearn()
         from tslearn.metrics import cdist_soft_dtw
+
         X_3d = H[:, :, np.newaxis]
         D_temp = cdist_soft_dtw(X_3d, gamma=gamma_dtw)
     else:
@@ -1925,9 +1905,7 @@ def cluster_spatiotemporal_stdbscan(
             visited[x] = True
 
             # conjunctive neighbourhood
-            nbr = np.where(
-                (D_geo[x] <= eps_spatial) & (D_temp[x] <= eps_temporal)
-            )[0]
+            nbr = np.where((D_geo[x] <= eps_spatial) & (D_temp[x] <= eps_temporal))[0]
             nbr = nbr[nbr != x]
 
             if len(nbr) < min_pts:
@@ -1941,10 +1919,7 @@ def cluster_spatiotemporal_stdbscan(
                 y = seeds.pop()
                 if not visited[y]:
                     visited[y] = True
-                    nbr_y = np.where(
-                        (D_geo[y] <= eps_spatial)
-                        & (D_temp[y] <= eps_temporal)
-                    )[0]
+                    nbr_y = np.where((D_geo[y] <= eps_spatial) & (D_temp[y] <= eps_temporal))[0]
                     nbr_y = nbr_y[nbr_y != y]
                     if len(nbr_y) >= min_pts:
                         seeds.extend(nbr_y.tolist())
@@ -1972,6 +1947,7 @@ def cluster_spatiotemporal_stdbscan(
 # ======================================================================
 # §6  HKS + WKS DESCRIPTOR FUSION
 # ======================================================================
+
 
 def fuse_concatenate(
     hks: DescriptorMatrix,
@@ -2076,8 +2052,8 @@ def fuse_joint_nmf(
         weights=None,
         metadata={
             "F_full": F,
-            "F_hks": F[:, :hks.shape[1]],
-            "F_wks": F[:, hks.shape[1]:],
+            "F_hks": F[:, : hks.shape[1]],
+            "F_wks": F[:, hks.shape[1] :],
             "reconstruction_error": model.reconstruction_err_,
         },
     )
@@ -2088,7 +2064,7 @@ def fuse_multi_kernel(
     wks: DescriptorMatrix,
     *,
     n_kernels_per_desc: int = 5,
-    sigma_range: Tuple[float, float] = (0.1, 10.0),
+    sigma_range: tuple[float, float] = (0.1, 10.0),
 ) -> FusionResult:
     """Multi-kernel fusion: build a combined kernel from HKS and WKS.
 
@@ -2110,13 +2086,13 @@ def fuse_multi_kernel(
         ``fused`` is the combined kernel matrix K, shape (N, N).
     """
     sigmas = np.logspace(
-        np.log10(sigma_range[0]), np.log10(sigma_range[1]),
+        np.log10(sigma_range[0]),
+        np.log10(sigma_range[1]),
         n_kernels_per_desc,
     )
 
     Hh = np.log(np.maximum(np.asarray(hks, dtype=np.float64), 1e-12))
-    Hw = np.log(np.maximum(np.abs(np.asarray(wks, dtype=np.float64))
-                            + 1e-12, 1e-12))
+    Hw = np.log(np.maximum(np.abs(np.asarray(wks, dtype=np.float64)) + 1e-12, 1e-12))
 
     n = Hh.shape[0]
     K = np.zeros((n, n), dtype=np.float64)
@@ -2143,11 +2119,12 @@ def fuse_multi_kernel(
 # §7  BAYESIAN CLUSTER CONFIRMATION
 # ======================================================================
 
+
 def confirm_clusters_bayesian(
     H: DescriptorMatrix,
     labels: LabelArray,
     *,
-    adjacency: Optional[SparseMatrix] = None,
+    adjacency: SparseMatrix | None = None,
     mrf_beta: float = 1.0,
     n_samples: int = 2000,
     n_tune: int = 1000,
@@ -2199,8 +2176,7 @@ def confirm_clusters_bayesian(
     # reduce dimensions
     X = np.log(H_valid + 1e-12)
     if X.shape[1] > dim_reduction:
-        X = skd.PCA(n_components=dim_reduction,
-                     random_state=random_state).fit_transform(X)
+        X = skd.PCA(n_components=dim_reduction, random_state=random_state).fit_transform(X)
 
     K = len(np.unique(lab_valid))
     n, d = X.shape
@@ -2218,10 +2194,7 @@ def confirm_clusters_bayesian(
         sigma = pm.HalfNormal("sigma", sigma=1.0, shape=(K, d))
         w = pm.Dirichlet("w", a=np.ones(K) * 10.0)
 
-        comp_dists = [
-            pm.Normal.dist(mu=mu[k], sigma=sigma[k], shape=d)
-            for k in range(K)
-        ]
+        comp_dists = [pm.Normal.dist(mu=mu[k], sigma=sigma[k], shape=d) for k in range(K)]
         pm.Mixture("obs", w=w, comp_dists=comp_dists, observed=X)
 
     with model:
@@ -2234,8 +2207,8 @@ def confirm_clusters_bayesian(
         )
 
     # --- compute MAP labels ---
-    w_post = trace.posterior["w"].values.mean(axis=(0, 1))     # (K,)
-    mu_post = trace.posterior["mu"].values.mean(axis=(0, 1))   # (K, d)
+    w_post = trace.posterior["w"].values.mean(axis=(0, 1))  # (K,)
+    mu_post = trace.posterior["mu"].values.mean(axis=(0, 1))  # (K, d)
     sig_post = trace.posterior["sigma"].values.mean(axis=(0, 1))  # (K, d)
 
     # log responsibility
@@ -2244,7 +2217,7 @@ def confirm_clusters_bayesian(
         diff = X - mu_post[k]
         log_resp[:, k] = (
             np.log(w_post[k] + 1e-12)
-            - 0.5 * np.sum((diff / (sig_post[k] + 1e-12))**2, axis=1)
+            - 0.5 * np.sum((diff / (sig_post[k] + 1e-12)) ** 2, axis=1)
             - np.sum(np.log(sig_post[k] + 1e-12))
         )
 
@@ -2298,13 +2271,14 @@ def confirm_clusters_bayesian(
 # §8  CLUSTER QUALITY & COMPARISON METRICS
 # ======================================================================
 
+
 def cluster_quality(
     H: DescriptorMatrix,
     labels: LabelArray,
     *,
-    adjacency: Optional[SparseMatrix] = None,
+    adjacency: SparseMatrix | None = None,
     metric: Literal["euclidean", "precomputed"] = "euclidean",
-) -> Dict[str, float]:
+) -> dict[str, float]:
     """Compute internal clustering quality metrics.
 
     Parameters
@@ -2331,29 +2305,21 @@ def cluster_quality(
     lab_v = labels[valid]
 
     result = {
-        "silhouette": float(
-            skm.silhouette_score(H_v, lab_v, metric=metric)
-        ),
+        "silhouette": float(skm.silhouette_score(H_v, lab_v, metric=metric)),
     }
 
     if metric != "precomputed":
-        result["calinski_harabasz"] = float(
-            skm.calinski_harabasz_score(H_v, lab_v)
-        )
-        result["davies_bouldin"] = float(
-            skm.davies_bouldin_score(H_v, lab_v)
-        )
+        result["calinski_harabasz"] = float(skm.calinski_harabasz_score(H_v, lab_v))
+        result["davies_bouldin"] = float(skm.davies_bouldin_score(H_v, lab_v))
 
     # spatial coherence: fraction of edges where both endpoints
     # share the same cluster label
     if adjacency is not None:
         A_coo = sp.coo_matrix(adjacency)
-        same = (labels[A_coo.row] == labels[A_coo.col])
+        same = labels[A_coo.row] == labels[A_coo.col]
         both_valid = (labels[A_coo.row] >= 0) & (labels[A_coo.col] >= 0)
         if both_valid.sum() > 0:
-            result["spatial_coherence"] = float(
-                same[both_valid].mean()
-            )
+            result["spatial_coherence"] = float(same[both_valid].mean())
 
     return result
 
@@ -2361,7 +2327,7 @@ def cluster_quality(
 def cluster_comparison(
     labels_a: LabelArray,
     labels_b: LabelArray,
-) -> Dict[str, float]:
+) -> dict[str, float]:
     """Compare two clusterings (e.g., algorithm output vs atlas labels).
 
     Returns
@@ -2389,15 +2355,16 @@ def cluster_comparison(
 # §9  CONVENIENCE / PIPELINE WRAPPERS
 # ======================================================================
 
+
 def auto_cluster(
     H: DescriptorMatrix,
     *,
-    adjacency: Optional[SparseMatrix] = None,
+    adjacency: SparseMatrix | None = None,
     methods: Sequence[str] = ("hdbscan", "leiden", "gnmf"),
     random_state: int = 42,
     backend: Literal["auto", "cpu", "gpu"] = "auto",
     **kwargs: Any,
-) -> Dict[str, ClusterResult]:
+) -> dict[str, ClusterResult]:
     """Run multiple clustering algorithms and return all results.
 
     A convenience function for exploratory analysis that runs a
@@ -2427,49 +2394,55 @@ def auto_cluster(
         try:
             if method == "hdbscan":
                 results[method] = cluster_hdbscan(
-                    H, adjacency=adjacency,
-                    random_state=random_state, backend=backend,
-                    **{k: v for k, v in kwargs.items()
-                       if k in ("min_cluster_size", "min_samples",
-                                "alpha_fusion", "dim_reduction")},
+                    H,
+                    adjacency=adjacency,
+                    random_state=random_state,
+                    backend=backend,
+                    **{
+                        k: v
+                        for k, v in kwargs.items()
+                        if k in ("min_cluster_size", "min_samples", "alpha_fusion", "dim_reduction")
+                    },
                 )
             elif method == "leiden" and adjacency is not None:
                 results[method] = cluster_leiden(
-                    adjacency, H=H,
+                    adjacency,
+                    H=H,
                     random_state=random_state,
-                    **{k: v for k, v in kwargs.items()
-                       if k in ("resolution", "quality_function")},
+                    **{k: v for k, v in kwargs.items() if k in ("resolution", "quality_function")},
                 )
             elif method == "gnmf" and adjacency is not None:
                 results[method] = cluster_gnmf(
-                    H, adjacency,
-                    random_state=random_state, backend=backend,
-                    **{k: v for k, v in kwargs.items()
-                       if k in ("n_components", "lam")},
+                    H,
+                    adjacency,
+                    random_state=random_state,
+                    backend=backend,
+                    **{k: v for k, v in kwargs.items() if k in ("n_components", "lam")},
                 )
             elif method == "dpmm":
                 results[method] = cluster_dpmm(
-                    H, adjacency=adjacency,
+                    H,
+                    adjacency=adjacency,
                     random_state=random_state,
-                    **{k: v for k, v in kwargs.items()
-                       if k in ("max_components",)},
+                    **{k: v for k, v in kwargs.items() if k in ("max_components",)},
                 )
             elif method == "fpca":
                 results[method] = cluster_temporal_fpca(
-                    H, random_state=random_state,
-                    **{k: v for k, v in kwargs.items()
-                       if k in ("n_components", "n_clusters")},
+                    H,
+                    random_state=random_state,
+                    **{k: v for k, v in kwargs.items() if k in ("n_components", "n_clusters")},
                 )
             elif method == "coclustering":
                 results[method] = cluster_spectral_coclustering(
-                    H, adjacency=adjacency,
-                    **{k: v for k, v in kwargs.items()
-                       if k in ("n_clusters",)},
+                    H,
+                    adjacency=adjacency,
+                    **{k: v for k, v in kwargs.items() if k in ("n_clusters",)},
                 )
             elif method == "persistence" and adjacency is not None:
                 # use summed HKS as scalar field
                 results[method] = cluster_persistence(
-                    H.sum(axis=1), adjacency,
+                    H.sum(axis=1),
+                    adjacency,
                 )
             else:
                 logger.warning(
@@ -2487,11 +2460,12 @@ def auto_cluster(
 # §10  PERSISTENCE VINEYARDS — TRACKING TOPOLOGY ACROSS HKS SCALES
 # ======================================================================
 
+
 def cluster_vineyards(
     H: DescriptorMatrix,
     adjacency: SparseMatrix,
     *,
-    n_scales: Optional[int] = None,
+    n_scales: int | None = None,
     min_persistence_frac: float = 0.1,
     min_life_frac: float = 0.3,
     backend: Literal["dionysus", "manual"] = "manual",
@@ -2565,16 +2539,14 @@ def cluster_vineyards(
             # filter by persistence
             f_range = f_vals.max() - f_vals.min()
             threshold = min_persistence_frac * f_range if f_range > 0 else 0
-            pairs_filtered = [
-                (b, d, v) for b, d, v in pairs
-                if (d - b) > threshold
-            ]
+            pairs_filtered = [(b, d, v) for b, d, v in pairs if (d - b) > threshold]
             diagrams[si] = {
                 "pairs": pairs_filtered,
                 "scale_index": int(ti),
                 "bd_array": (
                     np.array([(b, d) for b, d, _ in pairs_filtered])
-                    if pairs_filtered else np.empty((0, 2))
+                    if pairs_filtered
+                    else np.empty((0, 2))
                 ),
             }
             tick(1)
@@ -2590,27 +2562,22 @@ def cluster_vineyards(
         if len(vine) >= min_life:
             t_start = vine[0]["scale_index"]
             t_end = vine[-1]["scale_index"]
-            mean_persistence = np.mean(
-                [v["death"] - v["birth"] for v in vine]
+            mean_persistence = np.mean([v["death"] - v["birth"] for v in vine])
+            salient.append(
+                {
+                    "vine_length": len(vine),
+                    "t_start": int(scale_indices[t_start]),
+                    "t_end": int(scale_indices[t_end]),
+                    "mean_persistence": float(mean_persistence),
+                    "representative_vertex": vine[len(vine) // 2].get("vertex", -1),
+                }
             )
-            salient.append({
-                "vine_length": len(vine),
-                "t_start": int(scale_indices[t_start]),
-                "t_end": int(scale_indices[t_end]),
-                "mean_persistence": float(mean_persistence),
-                "representative_vertex": vine[len(vine) // 2].get(
-                    "vertex", -1
-                ),
-            })
             emergence.append(float(scale_indices[t_start]))
 
     # convert vines to arrays
     vine_arrays = []
     for vine in vines:
-        arr = np.array([
-            (scale_indices[v["scale_index"]], v["birth"], v["death"])
-            for v in vine
-        ])
+        arr = np.array([(scale_indices[v["scale_index"]], v["birth"], v["death"]) for v in vine])
         vine_arrays.append(arr)
 
     return VineyardResult(
@@ -2653,14 +2620,10 @@ def _sublevel_h0_pairs(f_vals, graph, n):
                 if ri != rn:
                     if birth[ri] > birth[rn]:
                         parent[ri] = rn
-                        pairs.append(
-                            (float(birth[ri]), float(f_vals[idx]), int(ri))
-                        )
+                        pairs.append((float(birth[ri]), float(f_vals[idx]), int(ri)))
                     else:
                         parent[rn] = ri
-                        pairs.append(
-                            (float(birth[rn]), float(f_vals[idx]), int(rn))
-                        )
+                        pairs.append((float(birth[rn]), float(f_vals[idx]), int(rn)))
     return pairs
 
 
@@ -2683,15 +2646,17 @@ def _link_vines(diagrams, T):
         if prev_pts is None or prev_pts.shape[0] == 0:
             # start new vines for each point
             for pi in range(bd.shape[0]):
-                vines.append([{
-                    "scale_index": si,
-                    "birth": float(bd[pi, 0]),
-                    "death": float(bd[pi, 1]),
-                }])
+                vines.append(
+                    [
+                        {
+                            "scale_index": si,
+                            "birth": float(bd[pi, 0]),
+                            "death": float(bd[pi, 1]),
+                        }
+                    ]
+                )
             prev_pts = bd.copy()
-            prev_vine_ids = list(range(
-                len(vines) - bd.shape[0], len(vines)
-            ))
+            prev_vine_ids = list(range(len(vines) - bd.shape[0], len(vines)))
             continue
 
         # match previous points to current by nearest neighbour
@@ -2716,21 +2681,27 @@ def _link_vines(diagrams, T):
         # extend matched vines
         for pi, ci in assignments.items():
             vid = prev_vine_ids[pi]
-            vines[vid].append({
-                "scale_index": si,
-                "birth": float(bd[ci, 0]),
-                "death": float(bd[ci, 1]),
-            })
+            vines[vid].append(
+                {
+                    "scale_index": si,
+                    "birth": float(bd[ci, 0]),
+                    "death": float(bd[ci, 1]),
+                }
+            )
             curr_vine_ids[ci] = vid
 
         # start new vines for unmatched current points
         for ci in range(bd.shape[0]):
             if curr_vine_ids[ci] is None:
-                vines.append([{
-                    "scale_index": si,
-                    "birth": float(bd[ci, 0]),
-                    "death": float(bd[ci, 1]),
-                }])
+                vines.append(
+                    [
+                        {
+                            "scale_index": si,
+                            "birth": float(bd[ci, 0]),
+                            "death": float(bd[ci, 1]),
+                        }
+                    ]
+                )
                 curr_vine_ids[ci] = len(vines) - 1
 
         prev_pts = bd.copy()
@@ -2743,18 +2714,17 @@ def _link_vines(diagrams, T):
 # §11  MAPPER PIPELINE — TOPOLOGICAL DATA ANALYSIS ON MESHES
 # ======================================================================
 
+
 def cluster_mapper(
     H: DescriptorMatrix,
     *,
     lens: Literal["hks_sum", "hks_first_pc", "custom"] = "hks_sum",
-    custom_lens: Optional[np.ndarray] = None,
+    custom_lens: np.ndarray | None = None,
     n_cubes: int = 15,
     perc_overlap: float = 0.3,
-    clusterer_method: Literal[
-        "dbscan", "hdbscan", "agglomerative"
-    ] = "dbscan",
+    clusterer_method: Literal["dbscan", "hdbscan", "agglomerative"] = "dbscan",
     clusterer_eps: float = 0.5,
-    dim_reduction: Optional[Literal["umap", "pca"]] = None,
+    dim_reduction: Literal["umap", "pca"] | None = None,
     n_components: int = 2,
     random_state: int = 42,
 ) -> MapperResult:
@@ -2807,11 +2777,11 @@ def cluster_mapper(
 
     # --- build lens ---
     if lens == "hks_sum":
-        lens_data = H.sum(axis=1, keepdims=True)    # (N, 1)
+        lens_data = H.sum(axis=1, keepdims=True)  # (N, 1)
     elif lens == "hks_first_pc":
         skd = _require_sklearn_decomposition()
         pca = skd.PCA(n_components=1, random_state=random_state)
-        lens_data = pca.fit_transform(H)              # (N, 1)
+        lens_data = pca.fit_transform(H)  # (N, 1)
     elif lens == "custom":
         if custom_lens is None:
             raise ValueError("custom_lens required when lens='custom'")
@@ -2825,12 +2795,14 @@ def cluster_mapper(
     if dim_reduction == "umap" and H.shape[1] > n_components:
         umap_mod = _require_umap()
         projected = umap_mod.UMAP(
-            n_components=n_components, random_state=random_state,
+            n_components=n_components,
+            random_state=random_state,
         ).fit_transform(H)
     elif dim_reduction == "pca" and H.shape[1] > n_components:
         skd = _require_sklearn_decomposition()
         projected = skd.PCA(
-            n_components=n_components, random_state=random_state,
+            n_components=n_components,
+            random_state=random_state,
         ).fit_transform(H)
     else:
         projected = H
@@ -2838,14 +2810,17 @@ def cluster_mapper(
     # --- configure clusterer for pullbacks ---
     if clusterer_method == "dbscan":
         from sklearn.cluster import DBSCAN
+
         inner_clusterer = DBSCAN(eps=clusterer_eps, min_samples=3)
     elif clusterer_method == "hdbscan":
         hdbscan_mod = _require_hdbscan()
         inner_clusterer = hdbscan_mod.HDBSCAN(min_cluster_size=5)
     elif clusterer_method == "agglomerative":
         from sklearn.cluster import AgglomerativeClustering
+
         inner_clusterer = AgglomerativeClustering(
-            n_clusters=None, distance_threshold=clusterer_eps,
+            n_clusters=None,
+            distance_threshold=clusterer_eps,
         )
     else:
         raise ValueError(f"Unknown clusterer_method: {clusterer_method}")
@@ -2904,11 +2879,12 @@ def cluster_mapper(
 # §12  NON-NEGATIVE TENSOR DECOMPOSITION (MULTI-SUBJECT)
 # ======================================================================
 
+
 def cluster_tensor_decomposition(
     tensor: np.ndarray,
     *,
     n_components: int = 8,
-    adjacency: Optional[SparseMatrix] = None,
+    adjacency: SparseMatrix | None = None,
     lam_spatial: float = 0.0,
     method: Literal["cp", "tucker"] = "cp",
     n_iter_max: int = 200,
@@ -2964,9 +2940,7 @@ def cluster_tensor_decomposition(
 
     T_data = np.asarray(tensor, dtype=np.float64)
     if T_data.ndim != 3:
-        raise ValueError(
-            f"Expected 3D tensor (N, T, S), got shape {T_data.shape}"
-        )
+        raise ValueError(f"Expected 3D tensor (N, T, S), got shape {T_data.shape}")
     T_data = np.maximum(T_data, 0.0) + 1e-12
 
     use_gpu = _resolve_backend(backend)
@@ -2975,8 +2949,7 @@ def cluster_tensor_decomposition(
         try:
             torch = _require_torch()
             tl.set_backend("pytorch")
-            T_tl = tl.tensor(T_data, dtype=torch.float32,
-                             device=torch.device("cuda"))
+            T_tl = tl.tensor(T_data, dtype=torch.float32, device=torch.device("cuda"))
         except Exception:
             logger.warning("GPU tensorly failed, falling back to numpy")
             tl.set_backend("numpy")
@@ -3001,23 +2974,26 @@ def cluster_tensor_decomposition(
             factors_obj, errors = result, []
 
         # extract factor matrices
-        weights = tl.to_numpy(factors_obj.weights) if hasattr(
-            factors_obj, "weights"
-        ) else np.ones(n_components)
-        W = tl.to_numpy(factors_obj.factors[0])    # (N, R)
-        F = tl.to_numpy(factors_obj.factors[1])    # (T, R)
-        S = tl.to_numpy(factors_obj.factors[2])    # (S, R)
+        tl.to_numpy(factors_obj.weights) if hasattr(factors_obj, "weights") else np.ones(
+            n_components
+        )
+        W = tl.to_numpy(factors_obj.factors[0])  # (N, R)
+        F = tl.to_numpy(factors_obj.factors[1])  # (T, R)
+        S = tl.to_numpy(factors_obj.factors[2])  # (S, R)
 
     elif method == "tucker":
         result = tl_decomp.non_negative_tucker(
             T_tl,
-            rank=[n_components, min(n_components, T_data.shape[1]),
-                  min(n_components, T_data.shape[2])],
+            rank=[
+                n_components,
+                min(n_components, T_data.shape[1]),
+                min(n_components, T_data.shape[2]),
+            ],
             n_iter_max=n_iter_max,
             tol=tol,
             random_state=random_state,
         )
-        core = tl.to_numpy(result[0])
+        tl.to_numpy(result[0])
         W = tl.to_numpy(result[1][0])
         F = tl.to_numpy(result[1][1])
         S = tl.to_numpy(result[1][2])
@@ -3045,13 +3021,10 @@ def cluster_tensor_decomposition(
 
     # --- cluster labels ---
     labels = W.argmax(axis=1).astype(np.int64)
-    n_clusters = len(np.unique(labels))
+    len(np.unique(labels))
 
     # reconstruction error
-    rec_err = float(
-        errors[-1] if isinstance(errors, list) and len(errors) > 0
-        else np.nan
-    )
+    rec_err = float(errors[-1] if isinstance(errors, list) and len(errors) > 0 else np.nan)
 
     if use_gpu:
         try:
@@ -3077,6 +3050,7 @@ def cluster_tensor_decomposition(
 # ======================================================================
 # §13  JOINT TIME-VERTEX GRAPH SIGNAL PROCESSING
 # ======================================================================
+
 
 def denoise_joint_timevertex(
     H: DescriptorMatrix,
@@ -3130,27 +3104,29 @@ def denoise_joint_timevertex(
     # --- graph spectral basis ---
     L = sp.csr_matrix(adjacency, dtype=np.float64)
     from scipy.sparse.linalg import eigsh
+
     k = min(n_eigenvectors, n - 1)
     eigenvalues_g, U = eigsh(L, k=k, which="SM")
     eigenvalues_g = np.maximum(eigenvalues_g, 0.0)
 
     # --- temporal spectral basis (DCT-II) ---
     from scipy.fft import dct, idct
-    H_graph = U.T @ H                         # (k, T)  graph-spectral
-    H_joint = dct(H_graph, type=2, axis=1)    # (k, T)  joint domain
+
+    H_graph = U.T @ H  # (k, T)  graph-spectral
+    H_joint = dct(H_graph, type=2, axis=1)  # (k, T)  joint domain
 
     # --- build separable filter ---
     omega = np.arange(T, dtype=np.float64)
-    omega = omega * np.pi / T   # normalised frequency
+    omega = omega * np.pi / T  # normalised frequency
 
-    g_graph = np.exp(-alpha_graph * eigenvalues_g)          # (k,)
-    g_time = np.exp(-beta_time * omega**2)                  # (T,)
-    G = g_graph[:, None] * g_time[None, :]                  # (k, T)
+    g_graph = np.exp(-alpha_graph * eigenvalues_g)  # (k,)
+    g_time = np.exp(-beta_time * omega**2)  # (T,)
+    G = g_graph[:, None] * g_time[None, :]  # (k, T)
 
     # --- apply filter ---
     H_filtered_joint = H_joint * G
     H_filtered_graph = idct(H_filtered_joint, type=2, axis=1) / (2 * T)
-    H_filtered = U @ H_filtered_graph                       # (N, T)
+    H_filtered = U @ H_filtered_graph  # (N, T)
 
     return H_filtered
 
@@ -3191,11 +3167,12 @@ def cluster_joint_spectral(
         With ``spectral_energy`` in metadata.
     """
     H = np.asarray(H, dtype=np.float64)
-    n, T = H.shape
+    n, _T = H.shape
 
     # --- graph spectral basis ---
     L = sp.csr_matrix(adjacency, dtype=np.float64)
     from scipy.sparse.linalg import eigsh
+
     k = min(n_eigenvectors, n - 1)
     eigenvalues_g, U = eigsh(L, k=k, which="SM")
     eigenvalues_g = np.maximum(eigenvalues_g, 0.0)
@@ -3220,8 +3197,8 @@ def cluster_joint_spectral(
             # energy of vertex i in this graph-frequency band
             # = sum_j=j_start..j_end-1 sum_t |U[i,j] * H[i,t]|²
             # = sum_j U[i,j]² * sum_t H[i,t]²
-            U_band_sq = np.sum(U[:, j_start:j_end]**2, axis=1)   # (N,)
-            H_energy = np.sum(H**2, axis=1)                        # (N,)
+            U_band_sq = np.sum(U[:, j_start:j_end] ** 2, axis=1)  # (N,)
+            H_energy = np.sum(H**2, axis=1)  # (N,)
             energy_features[:, bi] = U_band_sq * H_energy
             tick(1)
 
@@ -3234,12 +3211,13 @@ def cluster_joint_spectral(
     skc = _require_sklearn_cluster()
 
     if clusterer == "kmeans":
-        km = skc.KMeans(n_clusters=n_clusters, n_init=10,
-                        random_state=random_state)
+        km = skc.KMeans(n_clusters=n_clusters, n_init=10, random_state=random_state)
         labels = km.fit_predict(energy_features).astype(np.int64)
     elif clusterer == "hdbscan":
         res = cluster_hdbscan(
-            energy_features, log_transform=False, dim_reduction=None,
+            energy_features,
+            log_transform=False,
+            dim_reduction=None,
             random_state=random_state,
         )
         labels = res.labels
@@ -3265,11 +3243,12 @@ def cluster_joint_spectral(
 # §14  SCALE-SPACE BLOB TRACKING (LINDEBERG ON MANIFOLDS)
 # ======================================================================
 
+
 def cluster_scalespace_blobs(
     H: DescriptorMatrix,
     adjacency: SparseMatrix,
     *,
-    t_values: Optional[np.ndarray] = None,
+    t_values: np.ndarray | None = None,
     gamma_normalize: float = 1.0,
     linking_radius: float = 3.0,
     min_trajectory_length: int = 3,
@@ -3357,12 +3336,14 @@ def cluster_scalespace_blobs(
                         is_max = False
                         break
                 if is_max and vals[v] > 0:
-                    local_max.append({
-                        "vertex": v,
-                        "scale_index": ti,
-                        "t_value": float(t_values[ti]),
-                        "response": float(vals[v]),
-                    })
+                    local_max.append(
+                        {
+                            "vertex": v,
+                            "scale_index": ti,
+                            "t_value": float(t_values[ti]),
+                            "response": float(vals[v]),
+                        }
+                    )
             maxima_per_scale.append(local_max)
             tick(1)
 
@@ -3382,10 +3363,12 @@ def cluster_scalespace_blobs(
             for m in curr_maxima:
                 trajectories.append([m])
             prev_maxima = curr_maxima
-            prev_traj_ids = list(range(
-                len(trajectories) - len(curr_maxima),
-                len(trajectories),
-            ))
+            prev_traj_ids = list(
+                range(
+                    len(trajectories) - len(curr_maxima),
+                    len(trajectories),
+                )
+            )
             continue
 
         # link by k-hop proximity
@@ -3422,9 +3405,7 @@ def cluster_scalespace_blobs(
         prev_traj_ids = curr_traj_ids
 
     # filter by minimum trajectory length
-    long_trajectories = [
-        tr for tr in trajectories if len(tr) >= min_trajectory_length
-    ]
+    long_trajectories = [tr for tr in trajectories if len(tr) >= min_trajectory_length]
 
     # natural scale: for each vertex, find t where normalised response
     # is maximal
@@ -3450,9 +3431,7 @@ def cluster_scalespace_blobs(
         # build centroid for each blob
         blob_centroids = np.zeros(len(long_trajectories))
         for bi, traj in enumerate(long_trajectories):
-            blob_centroids[bi] = np.mean(
-                [s["t_value"] for s in traj]
-            )
+            blob_centroids[bi] = np.mean([s["t_value"] for s in traj])
 
         for v in unassigned:
             # find nearest assigned neighbour
@@ -3486,6 +3465,7 @@ def cluster_scalespace_blobs(
 # §15  MULTI-VIEW CLUSTERING (GEOMETRY + DESCRIPTOR VIEWS)
 # ======================================================================
 
+
 def cluster_multiview(
     H: DescriptorMatrix,
     adjacency: SparseMatrix,
@@ -3494,9 +3474,7 @@ def cluster_multiview(
     n_eigenvectors_geo: int = 20,
     n_eigenvectors_desc: int = 10,
     alpha: float = 0.5,
-    fusion: Literal[
-        "spectral_average", "late_consensus", "concatenate"
-    ] = "spectral_average",
+    fusion: Literal["spectral_average", "late_consensus", "concatenate"] = "spectral_average",
     random_state: int = 42,
 ) -> ClusterResult:
     """Multi-view clustering with geometry and descriptor views.
@@ -3548,6 +3526,7 @@ def cluster_multiview(
     # --- View 1: Laplacian eigenfunctions ---
     L = sp.csr_matrix(adjacency, dtype=np.float64)
     from scipy.sparse.linalg import eigsh
+
     k_geo = min(n_eigenvectors_geo, n - 1)
     _, Phi = eigsh(L, k=k_geo, which="SM")
     Phi = Phi[:, 1:] if k_geo > 1 else Phi  # drop constant mode
@@ -3556,9 +3535,7 @@ def cluster_multiview(
     skd = _require_sklearn_decomposition()
     k_desc = min(n_eigenvectors_desc, H.shape[1])
     X_log = np.log(np.maximum(H, 1e-12))
-    Psi = skd.PCA(
-        n_components=k_desc, random_state=random_state
-    ).fit_transform(X_log)
+    Psi = skd.PCA(n_components=k_desc, random_state=random_state).fit_transform(X_log)
 
     if fusion == "spectral_average":
         # build affinity for each view
@@ -3579,37 +3556,51 @@ def cluster_multiview(
         L2 = D2_deg - A2
 
         # normalise each
-        D1_inv_sqrt = np.diag(
-            1.0 / np.sqrt(np.diag(D1_deg) + 1e-12)
-        )
-        D2_inv_sqrt = np.diag(
-            1.0 / np.sqrt(np.diag(D2_deg) + 1e-12)
-        )
+        D1_inv_sqrt = np.diag(1.0 / np.sqrt(np.diag(D1_deg) + 1e-12))
+        D2_inv_sqrt = np.diag(1.0 / np.sqrt(np.diag(D2_deg) + 1e-12))
         L1_sym = D1_inv_sqrt @ L1 @ D1_inv_sqrt
         L2_sym = D2_inv_sqrt @ L2 @ D2_inv_sqrt
 
         L_avg = alpha * L1_sym + (1.0 - alpha) * L2_sym
 
-        eigvals, eigvecs = np.linalg.eigh(L_avg)
+        _eigvals, eigvecs = np.linalg.eigh(L_avg)
         U = eigvecs[:, :n_clusters]
         # row-normalise (Ng-Jordan-Weiss)
         norms = np.linalg.norm(U, axis=1, keepdims=True)
         norms[norms == 0] = 1.0
         U /= norms
 
-        labels = skc.KMeans(
-            n_clusters=n_clusters, n_init=10, random_state=random_state,
-        ).fit_predict(U).astype(np.int64)
+        labels = (
+            skc.KMeans(
+                n_clusters=n_clusters,
+                n_init=10,
+                random_state=random_state,
+            )
+            .fit_predict(U)
+            .astype(np.int64)
+        )
 
     elif fusion == "late_consensus":
         # cluster each view, then majority vote
-        lab1 = skc.KMeans(
-            n_clusters=n_clusters, n_init=10, random_state=random_state,
-        ).fit_predict(Phi).astype(np.int64)
+        lab1 = (
+            skc.KMeans(
+                n_clusters=n_clusters,
+                n_init=10,
+                random_state=random_state,
+            )
+            .fit_predict(Phi)
+            .astype(np.int64)
+        )
 
-        lab2 = skc.KMeans(
-            n_clusters=n_clusters, n_init=10, random_state=random_state,
-        ).fit_predict(Psi).astype(np.int64)
+        lab2 = (
+            skc.KMeans(
+                n_clusters=n_clusters,
+                n_init=10,
+                random_state=random_state,
+            )
+            .fit_predict(Psi)
+            .astype(np.int64)
+        )
 
         # consensus via co-association matrix
         C = np.zeros((n, n), dtype=np.float64)
@@ -3620,11 +3611,15 @@ def cluster_multiview(
         C /= 2.0
 
         # spectral clustering on co-association
-        labels = skc.SpectralClustering(
-            n_clusters=n_clusters,
-            affinity="precomputed",
-            random_state=random_state,
-        ).fit_predict(C).astype(np.int64)
+        labels = (
+            skc.SpectralClustering(
+                n_clusters=n_clusters,
+                affinity="precomputed",
+                random_state=random_state,
+            )
+            .fit_predict(C)
+            .astype(np.int64)
+        )
 
     elif fusion == "concatenate":
         # normalise each view to unit variance
@@ -3632,9 +3627,15 @@ def cluster_multiview(
         Psi_n = Psi / (Psi.std(axis=0, keepdims=True) + 1e-12)
         Z = np.hstack([alpha * Phi_n, (1.0 - alpha) * Psi_n])
 
-        labels = skc.KMeans(
-            n_clusters=n_clusters, n_init=10, random_state=random_state,
-        ).fit_predict(Z).astype(np.int64)
+        labels = (
+            skc.KMeans(
+                n_clusters=n_clusters,
+                n_init=10,
+                random_state=random_state,
+            )
+            .fit_predict(Z)
+            .astype(np.int64)
+        )
     else:
         raise ValueError(f"Unknown fusion: {fusion}")
 
@@ -3651,15 +3652,14 @@ def cluster_multiview(
 # §16  SPECTRAL GRAPH WAVELET CLUSTERING
 # ======================================================================
 
+
 def cluster_wavelet_coefficients(
     H: DescriptorMatrix,
     adjacency: SparseMatrix,
     *,
     n_scales: int = 5,
     n_clusters: int = 6,
-    wavelet_type: Literal[
-        "mexican_hat", "heat", "meyer"
-    ] = "mexican_hat",
+    wavelet_type: Literal["mexican_hat", "heat", "meyer"] = "mexican_hat",
     n_eigenvectors: int = 100,
     clusterer: Literal["kmeans", "hdbscan"] = "kmeans",
     random_state: int = 42,
@@ -3706,11 +3706,12 @@ def cluster_wavelet_coefficients(
         spectral graph theory. *ACHA* 30(2):129–150, 2011.
     """
     H = np.asarray(H, dtype=np.float64)
-    n, T = H.shape
+    n, _T = H.shape
 
     # --- Laplacian eigenbasis ---
     L = sp.csr_matrix(adjacency, dtype=np.float64)
     from scipy.sparse.linalg import eigsh
+
     k = min(n_eigenvectors, n - 1)
     eigenvalues, U = eigsh(L, k=k, which="SM")
     eigenvalues = np.maximum(eigenvalues, 0.0)
@@ -3749,25 +3750,24 @@ def cluster_wavelet_coefficients(
         device = torch.device("cuda")
         U_t = torch.tensor(U, dtype=torch.float32, device=device)
         H_t = torch.tensor(H, dtype=torch.float32, device=device)
-        eig_t = torch.tensor(eigenvalues, dtype=torch.float32, device=device)
+        torch.tensor(eigenvalues, dtype=torch.float32, device=device)
 
-        energy_features = torch.zeros(
-            (n, n_scales), dtype=torch.float32, device=device
-        )
+        energy_features = torch.zeros((n, n_scales), dtype=torch.float32, device=device)
 
         with progress_simple("Wavelet energy [GPU]", total=n_scales) as tick:
             for si, s in enumerate(scales):
                 g_s = torch.tensor(
                     _wavelet_kernel(s, eigenvalues),
-                    dtype=torch.float32, device=device,
+                    dtype=torch.float32,
+                    device=device,
                 )
                 # wavelet coefficients at scale s:
                 # W_s H = U diag(g_s) U^T H
-                H_spec = U_t.T @ H_t                       # (k, T)
-                H_filtered = (g_s[:, None] * H_spec)        # (k, T)
-                W_s_H = U_t @ H_filtered                    # (N, T)
+                H_spec = U_t.T @ H_t  # (k, T)
+                H_filtered = g_s[:, None] * H_spec  # (k, T)
+                W_s_H = U_t @ H_filtered  # (N, T)
                 # energy = sum over time of squared coefficients
-                energy_features[:, si] = (W_s_H ** 2).sum(dim=1)
+                energy_features[:, si] = (W_s_H**2).sum(dim=1)
                 tick(1)
 
         energy_np = energy_features.cpu().numpy().astype(np.float64)
@@ -3778,11 +3778,11 @@ def cluster_wavelet_coefficients(
 
         with progress_simple("Wavelet energy [CPU]", total=n_scales) as tick:
             for si, s in enumerate(scales):
-                g_s = _wavelet_kernel(s, eigenvalues)       # (k,)
-                H_spec = U.T @ H                             # (k, T)
-                H_filtered = g_s[:, None] * H_spec           # (k, T)
-                W_s_H = U @ H_filtered                       # (N, T)
-                energy_np[:, si] = np.sum(W_s_H ** 2, axis=1)
+                g_s = _wavelet_kernel(s, eigenvalues)  # (k,)
+                H_spec = U.T @ H  # (k, T)
+                H_filtered = g_s[:, None] * H_spec  # (k, T)
+                W_s_H = U @ H_filtered  # (N, T)
+                energy_np[:, si] = np.sum(W_s_H**2, axis=1)
                 tick(1)
 
     # normalise
@@ -3794,12 +3794,20 @@ def cluster_wavelet_coefficients(
     skc = _require_sklearn_cluster()
 
     if clusterer == "kmeans":
-        labels = skc.KMeans(
-            n_clusters=n_clusters, n_init=10, random_state=random_state,
-        ).fit_predict(energy_np).astype(np.int64)
+        labels = (
+            skc.KMeans(
+                n_clusters=n_clusters,
+                n_init=10,
+                random_state=random_state,
+            )
+            .fit_predict(energy_np)
+            .astype(np.int64)
+        )
     elif clusterer == "hdbscan":
         res = cluster_hdbscan(
-            energy_np, log_transform=False, dim_reduction=None,
+            energy_np,
+            log_transform=False,
+            dim_reduction=None,
             random_state=random_state,
         )
         labels = res.labels
@@ -3831,6 +3839,7 @@ def _meyer_aux(x):
 # Internal helpers
 # ======================================================================
 
+
 def _resolve_backend(backend: str) -> bool:
     """Return True if GPU should be used."""
     if backend == "gpu":
@@ -3840,6 +3849,7 @@ def _resolve_backend(backend: str) -> bool:
     # auto
     try:
         import torch
+
         return torch.cuda.is_available()
     except ImportError:
         return False

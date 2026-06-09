@@ -18,45 +18,44 @@ Typical usage::
     )
 """
 
-from spectralbrain.viz.geometry.points import (
-    plot_point_cloud,
-    plot_mls_reconstruction,
-    plot_clusters,
-    plot_point_cloud_panel,
-    plot_warp,
-    plot_voronoi,
-    plot_point_cloud_o3d,
-)
-
 from spectralbrain.viz.geometry.meshes import (
-    CURVATURE_METHODS,
     CAMERA_PRESETS,
-    plot_mesh,
-    plot_wireframe,
+    CURVATURE_METHODS,
     plot_curvature,
-    plot_multi_view,
+    plot_mesh,
     plot_mesh_comparison,
-    plot_scalar_difference,
     plot_mesh_pyvista,
+    plot_multi_view,
+    plot_scalar_difference,
+    plot_wireframe,
+)
+from spectralbrain.viz.geometry.points import (
+    plot_clusters,
+    plot_mls_reconstruction,
+    plot_point_cloud,
+    plot_point_cloud_o3d,
+    plot_point_cloud_panel,
+    plot_voronoi,
+    plot_warp,
 )
 
 __all__ = [
-    # Points
-    "plot_point_cloud",
-    "plot_mls_reconstruction",
-    "plot_clusters",
-    "plot_point_cloud_panel",
-    "plot_warp",
-    "plot_voronoi",
-    "plot_point_cloud_o3d",
+    "CAMERA_PRESETS",
     # Meshes
     "CURVATURE_METHODS",
-    "CAMERA_PRESETS",
-    "plot_mesh",
-    "plot_wireframe",
+    "plot_clusters",
     "plot_curvature",
-    "plot_multi_view",
+    "plot_mesh",
     "plot_mesh_comparison",
-    "plot_scalar_difference",
     "plot_mesh_pyvista",
+    "plot_mls_reconstruction",
+    "plot_multi_view",
+    # Points
+    "plot_point_cloud",
+    "plot_point_cloud_o3d",
+    "plot_point_cloud_panel",
+    "plot_scalar_difference",
+    "plot_voronoi",
+    "plot_warp",
+    "plot_wireframe",
 ]

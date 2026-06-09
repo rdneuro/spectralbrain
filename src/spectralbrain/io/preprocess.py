@@ -23,7 +23,8 @@ Examples
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List, Optional
+
+import numpy as np
 
 from spectralbrain.runtime import (
     ContainerManager,
@@ -34,7 +35,7 @@ from spectralbrain.runtime import (
 logger = get_logger(__name__)
 
 # Module-level container manager (lazy singleton).
-_manager: Optional[ContainerManager] = None
+_manager: ContainerManager | None = None
 
 
 def _get_manager() -> ContainerManager:
@@ -49,11 +50,12 @@ def _get_manager() -> ContainerManager:
 # §1  HIGH-LEVEL PREPROCESSING FUNCTIONS
 # ======================================================================
 
+
 def skull_strip(
     input_path: PathLike,
-    output_path: Optional[PathLike] = None,
+    output_path: PathLike | None = None,
     *,
-    gpu: Optional[bool] = None,
+    gpu: bool | None = None,
 ) -> Path:
     """Skull-strip a T1w image using HD-BET.
 
@@ -98,9 +100,9 @@ def skull_strip(
 
 def segment(
     input_path: PathLike,
-    output_path: Optional[PathLike] = None,
+    output_path: PathLike | None = None,
     *,
-    gpu: Optional[bool] = None,
+    gpu: bool | None = None,
 ) -> Path:
     """Segment a T1w (or T2w/FLAIR) image using SynthSeg.
 
@@ -142,9 +144,9 @@ def segment(
 
 def run_fastsurfer(
     input_path: PathLike,
-    output_dir: Optional[PathLike] = None,
+    output_dir: PathLike | None = None,
     *,
-    gpu: Optional[bool] = None,
+    gpu: bool | None = None,
 ) -> Path:
     """Run FastSurfer segmentation (seg_only mode).
 
@@ -182,16 +184,17 @@ def run_fastsurfer(
 # §2  PIPELINE: RAW → GEOMETRY
 # ======================================================================
 
+
 def raw_to_pointcloud(
     input_path: PathLike,
     label_id: int,
     *,
-    output_dir: Optional[PathLike] = None,
-    gpu: Optional[bool] = None,
+    output_dir: PathLike | None = None,
+    gpu: bool | None = None,
     jitter: bool = True,
     jitter_scale: float = 0.25,
-    seed: Optional[int] = None,
-) -> "np.ndarray":
+    seed: int | None = None,
+) -> np.ndarray:
     """End-to-end: raw T1w → skull-strip → segment → point cloud.
 
     Chains :func:`skull_strip`, :func:`segment`, and
@@ -225,7 +228,6 @@ def raw_to_pointcloud(
     >>> hippo.shape
     (4231, 3)
     """
-    import numpy as np
     from spectralbrain.io.loaders import labels_to_pointcloud, load_nifti
 
     inp = Path(input_path)
@@ -241,8 +243,12 @@ def raw_to_pointcloud(
     # Step 3: extract point cloud
     data, affine = load_nifti(seg)
     points = labels_to_pointcloud(
-        data, affine, label_id,
-        jitter=jitter, jitter_scale=jitter_scale, seed=seed,
+        data,
+        affine,
+        label_id,
+        jitter=jitter,
+        jitter_scale=jitter_scale,
+        seed=seed,
     )
     return points
 
@@ -251,12 +257,13 @@ def raw_to_pointcloud(
 # §3  CONTAINER STATUS / MANAGEMENT
 # ======================================================================
 
+
 def status() -> None:
     """Print the status of all preprocessing containers."""
     _get_manager().status()
 
 
-def clean(tool: Optional[str] = None) -> None:
+def clean(tool: str | None = None) -> None:
     """Remove cached container(s).
 
     Parameters
@@ -270,10 +277,10 @@ def clean(tool: Optional[str] = None) -> None:
 # ======================================================================
 
 __all__ = [
-    "skull_strip",
-    "segment",
-    "run_fastsurfer",
-    "raw_to_pointcloud",
-    "status",
     "clean",
+    "raw_to_pointcloud",
+    "run_fastsurfer",
+    "segment",
+    "skull_strip",
+    "status",
 ]

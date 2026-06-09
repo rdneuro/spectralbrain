@@ -7,14 +7,14 @@ specific subpackage.
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import sys
 import time
+from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Generator, List, Optional, Union
+from typing import Any
 
 import numpy as np
 
@@ -26,6 +26,7 @@ logger = get_logger(__name__)
 # ======================================================================
 # §1  TIMING
 # ======================================================================
+
 
 @contextmanager
 def timer(label: str = "Operation") -> Generator[None, None, None]:
@@ -72,9 +73,9 @@ class Timer:
     def __init__(self) -> None:
         """Initialise the timer with an optional label."""
         self._start: float = 0
-        self._laps: List[tuple] = []
+        self._laps: list[tuple] = []
 
-    def start(self) -> "Timer":
+    def start(self) -> Timer:
         """Start the timer and return self."""
         self._start = time.perf_counter()
         self._laps = []
@@ -86,7 +87,7 @@ class Timer:
         self._laps.append((label, elapsed))
         return elapsed
 
-    def report(self) -> Dict[str, float]:
+    def report(self) -> dict[str, float]:
         """Return and log all laps."""
         result = {}
         prev = 0.0
@@ -105,6 +106,7 @@ class Timer:
 # §2  REPRODUCIBILITY
 # ======================================================================
 
+
 def seed_everything(seed: int = 42) -> None:
     """Set random seeds for NumPy, Python, and optional frameworks.
 
@@ -113,12 +115,14 @@ def seed_everything(seed: int = 42) -> None:
     seed : int
     """
     import random
+
     random.seed(seed)
-    np.random.seed(seed)
+    np.random.seed(seed)  # noqa: NPY002 -- intentional global legacy-state seeding
     os.environ["PYTHONHASHSEED"] = str(seed)
 
     try:
         import torch
+
         torch.manual_seed(seed)
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(seed)
@@ -126,12 +130,12 @@ def seed_everything(seed: int = 42) -> None:
         pass
 
     try:
-        import jax
+        import jax  # noqa: F401 -- availability probe
+
         # JAX uses explicit PRNG keys, not global state.
         # Set env var for deterministic ops.
         os.environ["XLA_FLAGS"] = (
-            os.environ.get("XLA_FLAGS", "") +
-            " --xla_gpu_deterministic_reductions"
+            os.environ.get("XLA_FLAGS", "") + " --xla_gpu_deterministic_reductions"
         )
     except ImportError:
         pass
@@ -139,7 +143,7 @@ def seed_everything(seed: int = 42) -> None:
     logger.debug("Seeded everything with %d", seed)
 
 
-def get_reproducibility_info() -> Dict[str, str]:
+def get_reproducibility_info() -> dict[str, str]:
     """Collect version info for reproducibility metadata.
 
     Returns
@@ -148,6 +152,7 @@ def get_reproducibility_info() -> Dict[str, str]:
         Keys: python, numpy, scipy, spectralbrain, platform, date.
     """
     import platform as plat
+
     import scipy
 
     from spectralbrain.runtime import __version__
@@ -174,6 +179,7 @@ def get_reproducibility_info() -> Dict[str, str]:
 # ======================================================================
 # §3  FILE / PATH HELPERS
 # ======================================================================
+
 
 def ensure_dir(path: PathLike) -> Path:
     """Create directory if it doesn't exist. Returns the Path."""
@@ -207,7 +213,7 @@ def find_files(
     directory: PathLike,
     pattern: str = "*",
     recursive: bool = True,
-) -> List[Path]:
+) -> list[Path]:
     """Glob for files in a directory.
 
     Parameters
@@ -231,7 +237,8 @@ def find_files(
 # §4  SUBJECTS / BIDS HELPERS
 # ======================================================================
 
-def parse_bids_filename(filename: str) -> Dict[str, str]:
+
+def parse_bids_filename(filename: str) -> dict[str, str]:
     """Extract BIDS entities from a filename.
 
     Parameters
@@ -246,7 +253,7 @@ def parse_bids_filename(filename: str) -> Dict[str, str]:
     """
     stem = Path(filename).name.split(".")[0]
     parts = stem.split("_")
-    entities: Dict[str, str] = {}
+    entities: dict[str, str] = {}
     for part in parts:
         if "-" in part:
             key, val = part.split("-", 1)
@@ -259,7 +266,7 @@ def parse_bids_filename(filename: str) -> Dict[str, str]:
 def collect_subjects(
     bids_dir: PathLike,
     pattern: str = "sub-*",
-) -> List[str]:
+) -> list[str]:
     """List subject IDs in a BIDS directory.
 
     Parameters
@@ -273,20 +280,18 @@ def collect_subjects(
         Subject IDs (e.g. ``["sub-01", "sub-02", ...]``).
     """
     d = Path(bids_dir)
-    return sorted([
-        p.name for p in d.glob(pattern)
-        if p.is_dir()
-    ])
+    return sorted([p.name for p in d.glob(pattern) if p.is_dir()])
 
 
 # ======================================================================
 # §5  PRETTY PRINTING
 # ======================================================================
 
+
 def print_dict(
-    d: Dict[str, Any],
+    d: dict[str, Any],
     *,
-    title: Optional[str] = None,
+    title: str | None = None,
     indent: int = 2,
 ) -> None:
     """Pretty-print a dict with Rich (fallback to plain)."""
@@ -322,14 +327,20 @@ def format_array_summary(arr: np.ndarray, name: str = "array") -> str:
 
 
 __all__ = [
-    # Timing
-    "timer", "Timer",
-    # Reproducibility
-    "seed_everything", "get_reproducibility_info",
+    "Timer",
+    "collect_subjects",
     # File/path
-    "ensure_dir", "file_hash", "find_files",
+    "ensure_dir",
+    "file_hash",
+    "find_files",
+    "format_array_summary",
+    "get_reproducibility_info",
     # BIDS
-    "parse_bids_filename", "collect_subjects",
+    "parse_bids_filename",
     # Pretty printing
-    "print_dict", "format_array_summary",
+    "print_dict",
+    # Reproducibility
+    "seed_everything",
+    # Timing
+    "timer",
 ]

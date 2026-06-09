@@ -29,9 +29,8 @@ PyMC, ArviZ (optional, lazy-imported).
 from __future__ import annotations
 
 import abc
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, Tuple, Union
+from typing import Any, Literal
 
 import numpy as np
 
@@ -48,33 +47,33 @@ logger = get_logger(__name__)
 # Lazy imports
 # ======================================================================
 
+
 def _require_pymc():
     """Lazy-import PyMC, raising a clear error if unavailable."""
     try:
         import pymc as pm
+
         return pm
     except ImportError as exc:
-        raise ImportError(
-            "PyMC is required for Bayesian models.\n"
-            "  pip install pymc"
-        ) from exc
+        raise ImportError("PyMC is required for Bayesian models.\n  pip install pymc") from exc
 
 
 def _require_arviz():
     """Lazy-import ArviZ, raising a clear error if unavailable."""
     try:
         import arviz as az
+
         return az
     except ImportError as exc:
         raise ImportError(
-            "ArviZ is required for Bayesian diagnostics.\n"
-            "  pip install arviz"
+            "ArviZ is required for Bayesian diagnostics.\n  pip install arviz"
         ) from exc
 
 
 # ======================================================================
 # §0  BASE CLASS
 # ======================================================================
+
 
 class BayesianModel(abc.ABC):
     """Abstract base for all SpectralBrain Bayesian models.
@@ -107,15 +106,15 @@ class BayesianModel(abc.ABC):
         X: np.ndarray,
         y: np.ndarray,
         *,
-        sampler: Literal["auto", "nuts", "nutpie", "numpyro"] = "auto",
+        sampler: Literal["auto", "nuts", "nutpie", "numpyro", "blackjax"] = "auto",
         draws: int = 2000,
         tune: int = 1000,
         chains: int = 4,
         cores: int = 4,
         target_accept: float = 0.95,
-        seed: Optional[int] = 42,
+        seed: int | None = 42,
         **kwargs: Any,
-    ) -> "BayesianModel":
+    ) -> BayesianModel:
         """Fit the model via MCMC sampling.
 
         Parameters
@@ -141,51 +140,89 @@ class BayesianModel(abc.ABC):
         X = np.asarray(X, dtype=np.float64)
         y = np.asarray(y, dtype=np.float64)
 
-        self.model_ = self._build_model(X, y, **kwargs)
+        # Subclasses pass model-specific data via instance attributes set in
+        # their own fit(); _build_model reads those, so no kwargs flow here.
+        self.model_ = self._build_model(X, y)
 
         with self.model_:
             if sampler in ("auto", "nuts"):
-                try:
-                    # Try nutpie first.
-                    import nutpie
-                    compiled = nutpie.compile_pymc_model(self.model_)
-                    self.trace_ = nutpie.sample(
-                        compiled, draws=draws, tune=tune,
-                        chains=chains, seed=seed,
-                    )
-                    logger.info("Fitted with nutpie (%d draws × %d chains).", draws, chains)
-                    self._is_fitted = True
-                    return self
-                except (ImportError, Exception):
-                    pass
+                if sampler == "auto":
+                    # Try nutpie; fall back to PyMC NUTS on a *logged* failure
+                    # (never silently swallow a real model error).
+                    try:
+                        import nutpie
 
-                # Fallback to PyMC native.
+                        compiled = nutpie.compile_pymc_model(self.model_)
+                        self.trace_ = nutpie.sample(
+                            compiled, draws=draws, tune=tune, chains=chains, seed=seed
+                        )
+                        logger.info("Fitted with nutpie (%d draws × %d chains).", draws, chains)
+                        self._is_fitted = True
+                        return self
+                    except ImportError:
+                        logger.info("nutpie not installed; using PyMC NUTS.")
+                    except Exception as exc:
+                        logger.warning("nutpie failed (%s); falling back to PyMC NUTS.", exc)
+
+                # PyMC native NUTS (explicit sampler="nuts" or auto-fallback).
                 self.trace_ = pm.sample(
-                    draws=draws, tune=tune, chains=chains,
-                    cores=cores, target_accept=target_accept,
-                    random_seed=seed, return_inferencedata=True,
-                    progressbar=True, **kwargs,
+                    draws=draws,
+                    tune=tune,
+                    chains=chains,
+                    cores=cores,
+                    target_accept=target_accept,
+                    random_seed=seed,
+                    return_inferencedata=True,
+                    progressbar=True,
+                    **kwargs,
                 )
                 logger.info("Fitted with PyMC NUTS (%d draws × %d chains).", draws, chains)
 
             elif sampler == "nutpie":
                 import nutpie
+
                 compiled = nutpie.compile_pymc_model(self.model_)
                 self.trace_ = nutpie.sample(
-                    compiled, draws=draws, tune=tune,
-                    chains=chains, seed=seed,
+                    compiled,
+                    draws=draws,
+                    tune=tune,
+                    chains=chains,
+                    seed=seed,
                 )
                 logger.info("Fitted with nutpie (%d draws × %d chains).", draws, chains)
 
             elif sampler == "numpyro":
                 import pymc.sampling.jax as pmjax
+
                 self.trace_ = pmjax.sample_numpyro_nuts(
-                    draws=draws, tune=tune, chains=chains,
+                    draws=draws,
+                    tune=tune,
+                    chains=chains,
                     target_accept=target_accept,
                     random_seed=seed,
-                    progress_bar=True, **kwargs,
+                    progress_bar=True,
+                    **kwargs,
                 )
                 logger.info("Fitted with NumPyro (%d draws × %d chains).", draws, chains)
+
+            elif sampler == "blackjax":
+                import pymc.sampling.jax as pmjax
+
+                self.trace_ = pmjax.sample_blackjax_nuts(
+                    draws=draws,
+                    tune=tune,
+                    chains=chains,
+                    target_accept=target_accept,
+                    random_seed=seed,
+                    # BlackJAX's progress bar needs the optional `fastprogress`
+                    # package; default off so it works on a base install.
+                    progressbar=kwargs.pop("progressbar", False),
+                    **kwargs,
+                )
+                logger.info("Fitted with BlackJAX (%d draws × %d chains).", draws, chains)
+
+            else:
+                raise ValueError(f"Unknown sampler: {sampler!r}")
 
         self._is_fitted = True
         return self
@@ -195,7 +232,7 @@ class BayesianModel(abc.ABC):
         X_new: np.ndarray,
         *,
         n_samples: int = 500,
-        seed: Optional[int] = None,
+        seed: int | None = None,
     ) -> np.ndarray:
         """Generate posterior predictive samples.
 
@@ -218,7 +255,8 @@ class BayesianModel(abc.ABC):
         with self.model_:
             pm.set_data({"X": X_new})
             ppc = pm.sample_posterior_predictive(
-                self.trace_, random_seed=seed,
+                self.trace_,
+                random_seed=seed,
                 predictions=True,
             )
 
@@ -256,7 +294,7 @@ class BayesianModel(abc.ABC):
 
     def summary(
         self,
-        var_names: Optional[List[str]] = None,
+        var_names: list[str] | None = None,
         hdi_prob: float = 0.94,
     ) -> Any:
         """ArviZ summary table.
@@ -277,7 +315,7 @@ class BayesianModel(abc.ABC):
     def save(self, path: PathLike) -> Path:
         """Save trace to NetCDF."""
         self._check_fitted()
-        az = _require_arviz()
+        _require_arviz()
         out = Path(path)
         self.trace_.to_netcdf(str(out))
         logger.info("Trace saved → %s", out)
@@ -292,14 +330,13 @@ class BayesianModel(abc.ABC):
     def _check_fitted(self) -> None:
         """Raise RuntimeError if the model has not been fitted."""
         if not self._is_fitted:
-            raise RuntimeError(
-                "Model not fitted yet. Call .fit(X, y) first."
-            )
+            raise RuntimeError("Model not fitted yet. Call .fit(X, y) first.")
 
 
 # ======================================================================
 # §1  HORSESHOE REGRESSION
 # ======================================================================
+
 
 class HorseshoeRegression(BayesianModel):
     """Sparse Bayesian regression with horseshoe prior.
@@ -338,7 +375,7 @@ class HorseshoeRegression(BayesianModel):
     def _build_model(self, X: np.ndarray, y: np.ndarray, **kw: Any) -> Any:
         """Build the horseshoe regression PyMC model."""
         pm = _require_pymc()
-        n, d = X.shape
+        _n, d = X.shape
 
         with pm.Model() as model:
             X_data = pm.Data("X", X)
@@ -373,7 +410,7 @@ class HorseshoeRegression(BayesianModel):
         ndarray, shape (d,)
         """
         self._check_fitted()
-        az = _require_arviz()
+        _require_arviz()
         beta = self.trace_.posterior["beta"].values
         return np.abs(beta).mean(axis=(0, 1))
 
@@ -381,6 +418,7 @@ class HorseshoeRegression(BayesianModel):
 # ======================================================================
 # §2  BAYESIAN GROUP COMPARISON (BEST — Kruschke 2013)
 # ======================================================================
+
 
 class BayesianGroupComparison(BayesianModel):
     """Bayesian Estimation Supersedes the T-test (BEST).
@@ -404,7 +442,7 @@ class BayesianGroupComparison(BayesianModel):
     >>> model.effect_size_posterior()
     """
 
-    def __init__(self, rope: Tuple[float, float] = (-0.1, 0.1)) -> None:
+    def __init__(self, rope: tuple[float, float] = (-0.1, 0.1)) -> None:
         """Initialise with ROPE bounds.
 
         Parameters
@@ -415,7 +453,7 @@ class BayesianGroupComparison(BayesianModel):
         super().__init__()
         self.rope = rope
 
-    def fit(self, group_a: np.ndarray, group_b: np.ndarray, **kwargs) -> "BayesianGroupComparison":
+    def fit(self, group_a: np.ndarray, group_b: np.ndarray, **kwargs) -> BayesianGroupComparison:
         """Fit BEST model.
 
         Parameters
@@ -457,9 +495,7 @@ class BayesianGroupComparison(BayesianModel):
             # Derived quantities.
             pm.Deterministic("diff_means", mu_a - mu_b)
             pm.Deterministic("diff_stds", sigma_a - sigma_b)
-            pooled_sd = pm.math.sqrt(
-                (sigma_a ** 2 + sigma_b ** 2) / 2
-            )
+            pooled_sd = pm.math.sqrt((sigma_a**2 + sigma_b**2) / 2)
             pm.Deterministic("effect_size", (mu_a - mu_b) / pooled_sd)
 
         return model
@@ -481,7 +517,7 @@ class BayesianGroupComparison(BayesianModel):
         self._check_fitted()
         return self.trace_.posterior["effect_size"].values.ravel()
 
-    def rope_probability(self) -> Dict[str, float]:
+    def rope_probability(self) -> dict[str, float]:
         """Probability of effect size in, below, and above ROPE.
 
         Returns
@@ -502,6 +538,7 @@ class BayesianGroupComparison(BayesianModel):
 # ======================================================================
 # §3  HIERARCHICAL LINEAR MODEL
 # ======================================================================
+
 
 class HierarchicalLinearModel(BayesianModel):
     """Multi-site hierarchical linear model with random effects.
@@ -543,14 +580,15 @@ class HierarchicalLinearModel(BayesianModel):
         self._site_labels = np.asarray(site_labels)
         self._unique_sites = np.unique(self._site_labels)
         self._site_idx = np.searchsorted(
-            self._unique_sites, self._site_labels,
+            self._unique_sites,
+            self._site_labels,
         )
         return super().fit(X, y, **kwargs)
 
     def _build_model(self, X: np.ndarray, y: np.ndarray, **kw: Any) -> Any:
         """Build the hierarchical linear PyMC model with site random effects."""
         pm = _require_pymc()
-        n, d = X.shape
+        _n, d = X.shape
         n_sites = len(self._unique_sites)
 
         with pm.Model() as model:
@@ -572,7 +610,9 @@ class HierarchicalLinearModel(BayesianModel):
             if self.random_effects == "slope" and d > 0:
                 sigma_slope = pm.HalfNormal("sigma_slope", sigma=1.0)
                 beta_site = pm.Normal(
-                    "beta_site", mu=0, sigma=sigma_slope,
+                    "beta_site",
+                    mu=0,
+                    sigma=sigma_slope,
                     shape=(n_sites, d),
                 )
                 mu = mu + (X_data * beta_site[site_idx]).sum(axis=1)
@@ -597,6 +637,7 @@ class HierarchicalLinearModel(BayesianModel):
 # ======================================================================
 # §4  GAUSSIAN PROCESS NORMATIVE
 # ======================================================================
+
 
 class GaussianProcessNormative(BayesianModel):
     """GP-based normative model for age trajectories.
@@ -637,8 +678,8 @@ class GaussianProcessNormative(BayesianModel):
         super().__init__()
         self.kernel = kernel
         self.lengthscale_prior = lengthscale_prior
-        self._X_train: Optional[np.ndarray] = None
-        self._y_train: Optional[np.ndarray] = None
+        self._X_train: np.ndarray | None = None
+        self._y_train: np.ndarray | None = None
 
     def _build_model(self, X: np.ndarray, y: np.ndarray, **kw: Any) -> Any:
         """Build the GP normative PyMC model."""
@@ -660,11 +701,11 @@ class GaussianProcessNormative(BayesianModel):
 
             # Kernel.
             if self.kernel == "matern32":
-                cov = eta ** 2 * gp.cov.Matern32(input_dim=X.shape[1], ls=ls)
+                cov = eta**2 * gp.cov.Matern32(input_dim=X.shape[1], ls=ls)
             elif self.kernel == "matern52":
-                cov = eta ** 2 * gp.cov.Matern52(input_dim=X.shape[1], ls=ls)
+                cov = eta**2 * gp.cov.Matern52(input_dim=X.shape[1], ls=ls)
             elif self.kernel == "rbf":
-                cov = eta ** 2 * gp.cov.ExpQuad(input_dim=X.shape[1], ls=ls)
+                cov = eta**2 * gp.cov.ExpQuad(input_dim=X.shape[1], ls=ls)
             else:
                 raise ValueError(f"Unknown kernel: {self.kernel!r}")
 
@@ -674,7 +715,7 @@ class GaussianProcessNormative(BayesianModel):
 
         return model
 
-    def predict(self, X_new: np.ndarray, **kwargs) -> Tuple[np.ndarray, np.ndarray]:
+    def predict(self, X_new: np.ndarray, **kwargs) -> tuple[np.ndarray, np.ndarray]:
         """Posterior predictive mean and std at new points.
 
         Parameters
@@ -690,12 +731,14 @@ class GaussianProcessNormative(BayesianModel):
         pm = _require_pymc()
 
         import uuid
+
         pred_name = f"f_pred_{uuid.uuid4().hex[:8]}"
 
         with self.model_:
-            pred = self._gp.conditional(pred_name, X_new)
+            self._gp.conditional(pred_name, X_new)
             ppc = pm.sample_posterior_predictive(
-                self.trace_, var_names=[pred_name],
+                self.trace_,
+                var_names=[pred_name],
                 random_seed=kwargs.get("seed"),
             )
 
@@ -728,6 +771,7 @@ class GaussianProcessNormative(BayesianModel):
 # ======================================================================
 # §5  BAYESIAN SPATIAL MODEL
 # ======================================================================
+
 
 class BayesianSpatialModel(BayesianModel):
     """Vertex-wise Bayesian model with spatial GMRF prior.
@@ -804,18 +848,20 @@ class BayesianSpatialModel(BayesianModel):
             # Simplified: model group difference per vertex as
             # spatially smooth via CAR-like prior.
             sigma_spatial = pm.HalfNormal("sigma_spatial", sigma=1)
-            tau_spatial = 1 / (sigma_spatial ** 2)
+            tau_spatial = 1 / (sigma_spatial**2)
 
             # Vertex-level effects (simplified as Normal with spatial std).
             vertex_effect = pm.Normal(
-                "vertex_effect", mu=0,
-                sigma=sigma_spatial, shape=N,
+                "vertex_effect",
+                mu=0,
+                sigma=sigma_spatial,
+                shape=N,
             )
 
             # Spatial penalty as potential (soft GMRF).
             Q_dense = Q.toarray()
-            spatial_penalty = -0.5 * tau_spatial * pm.math.dot(
-                vertex_effect, pm.math.dot(Q_dense, vertex_effect)
+            spatial_penalty = (
+                -0.5 * tau_spatial * pm.math.dot(vertex_effect, pm.math.dot(Q_dense, vertex_effect))
             )
             pm.Potential("spatial_prior", spatial_penalty)
 
@@ -826,7 +872,9 @@ class BayesianSpatialModel(BayesianModel):
             for s in range(S):
                 mu_s = alpha + beta_group * group_float[s] + vertex_effect
                 pm.Normal(
-                    f"y_{s}", mu=mu_s, sigma=sigma_obs,
+                    f"y_{s}",
+                    mu=mu_s,
+                    sigma=sigma_obs,
                     observed=self._vertex_data[s],
                 )
 
@@ -846,6 +894,7 @@ class BayesianSpatialModel(BayesianModel):
 # ======================================================================
 # §6  BAYESIAN CONNECTOME COMPARISON
 # ======================================================================
+
 
 class BayesianConnectome(BayesianModel):
     """Hierarchical Bayesian model for connectome comparison.
@@ -882,7 +931,7 @@ class BayesianConnectome(BayesianModel):
         group_a_connectomes: np.ndarray,
         group_b_connectomes: np.ndarray,
         **kwargs,
-    ) -> "BayesianConnectome":
+    ) -> BayesianConnectome:
         """Fit connectome comparison model.
 
         Parameters
@@ -899,11 +948,11 @@ class BayesianConnectome(BayesianModel):
         # Extract upper triangle for modeling.
         triu_idx = np.triu_indices(self._R, k=1)
         self._triu_idx = triu_idx
-        n_edges = len(triu_idx[0])
+        len(triu_idx[0])
 
         # Stack into X (group indicator), y (edge values).
-        a_edges = np.array([c[triu_idx] for c in a])       # (n_a, n_edges)
-        b_edges = np.array([c[triu_idx] for c in b])       # (n_b, n_edges)
+        a_edges = np.array([c[triu_idx] for c in a])  # (n_a, n_edges)
+        b_edges = np.array([c[triu_idx] for c in b])  # (n_b, n_edges)
         self._a_edges = a_edges
         self._b_edges = b_edges
 
@@ -926,13 +975,17 @@ class BayesianConnectome(BayesianModel):
 
             # Per-edge difference.
             edge_diff = pm.Normal(
-                "edge_diff", mu=mu_diff, sigma=sigma_diff,
+                "edge_diff",
+                mu=mu_diff,
+                sigma=sigma_diff,
                 shape=n_edges,
             )
 
             # Group means.
             grand_mean = pm.Normal(
-                "grand_mean", mu=all_edges.mean(), sigma=all_edges.std(),
+                "grand_mean",
+                mu=all_edges.mean(),
+                sigma=all_edges.std(),
                 shape=n_edges,
             )
 
@@ -940,12 +993,16 @@ class BayesianConnectome(BayesianModel):
 
             # Likelihoods.
             pm.Normal(
-                "obs_a", mu=grand_mean + edge_diff / 2,
-                sigma=sigma_obs, observed=a_mean,
+                "obs_a",
+                mu=grand_mean + edge_diff / 2,
+                sigma=sigma_obs,
+                observed=a_mean,
             )
             pm.Normal(
-                "obs_b", mu=grand_mean - edge_diff / 2,
-                sigma=sigma_obs, observed=b_mean,
+                "obs_b",
+                mu=grand_mean - edge_diff / 2,
+                sigma=sigma_obs,
+                observed=b_mean,
             )
 
         return model
@@ -983,12 +1040,12 @@ class BayesianConnectome(BayesianModel):
 
 # ======================================================================
 
-__all__: List[str] = [
-    "BayesianModel",
-    "HorseshoeRegression",
-    "BayesianGroupComparison",
-    "HierarchicalLinearModel",
-    "GaussianProcessNormative",
-    "BayesianSpatialModel",
+__all__: list[str] = [
     "BayesianConnectome",
+    "BayesianGroupComparison",
+    "BayesianModel",
+    "BayesianSpatialModel",
+    "GaussianProcessNormative",
+    "HierarchicalLinearModel",
+    "HorseshoeRegression",
 ]

@@ -22,8 +22,8 @@ Sections
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Tuple, Union
+from dataclasses import dataclass
+from typing import Any, Literal
 
 import numpy as np
 from scipy import stats as sp_stats
@@ -33,7 +33,6 @@ from spectralbrain.runtime import (
     DescriptorMatrix,
     DistanceMatrix,
     GlobalDescriptor,
-    NetworkMatrix,
     ScalarMap,
     get_logger,
     progress_simple,
@@ -46,17 +45,18 @@ logger = get_logger(__name__)
 # §1  VERTEX-WISE GROUP COMPARISON
 # ======================================================================
 
+
 @dataclass
 class VertexWiseResult:
     """Results of a vertex-wise statistical test."""
 
-    statistic: np.ndarray       # (N,) test statistic per vertex
-    p_values: np.ndarray        # (N,) uncorrected p-values
-    p_corrected: np.ndarray     # (N,) corrected p-values
-    correction: str             # method used
-    significant: np.ndarray     # (N,) bool mask at alpha
+    statistic: np.ndarray  # (N,) test statistic per vertex
+    p_values: np.ndarray  # (N,) uncorrected p-values
+    p_corrected: np.ndarray  # (N,) corrected p-values
+    correction: str  # method used
+    significant: np.ndarray  # (N,) bool mask at alpha
     alpha: float
-    effect_size: Optional[np.ndarray] = None  # (N,) Cohen's d
+    effect_size: np.ndarray | None = None  # (N,) Cohen's d
 
     @property
     def n_significant(self) -> int:
@@ -78,8 +78,9 @@ def vertexwise_ttest(
     *,
     correction: Literal["fdr", "bonferroni", "none"] = "fdr",
     alpha: float = 0.05,
+    equal_var: bool = False,
 ) -> VertexWiseResult:
-    """Independent two-sample t-test at each vertex.
+    """Independent two-sample t-test at each vertex (vectorised).
 
     Parameters
     ----------
@@ -89,10 +90,12 @@ def vertexwise_ttest(
     group_b : ndarray, shape (n_b, N)
         Descriptor values for group B.
     correction : str
-        ``"fdr"`` — Benjamini-Hochberg.
-        ``"bonferroni"`` — Bonferroni.
-        ``"none"`` — no correction.
+        ``"fdr"`` — Benjamini-Hochberg; ``"bonferroni"``; ``"none"``.
     alpha : float
+    equal_var : bool
+        If ``False`` (default), Welch's t-test (does not assume equal
+        variances) — the safer default for groups with unequal size or
+        spread. If ``True``, Student's pooled-variance t-test.
 
     Returns
     -------
@@ -105,12 +108,11 @@ def vertexwise_ttest(
     if b.ndim == 3:
         b = b.mean(axis=-1)
 
-    N = a.shape[1]
-    t_stat = np.zeros(N)
-    p_vals = np.ones(N)
-
-    for v in range(N):
-        t_stat[v], p_vals[v] = sp_stats.ttest_ind(a[:, v], b[:, v])
+    # Vectorised across vertices (axis=0 = subjects).
+    t_stat, p_vals = sp_stats.ttest_ind(a, b, axis=0, equal_var=equal_var)
+    # Constant-across-subjects vertices yield NaN — treat as null.
+    t_stat = np.nan_to_num(np.asarray(t_stat), nan=0.0)
+    p_vals = np.where(np.isnan(p_vals), 1.0, p_vals)
 
     p_corr = _correct_pvalues(p_vals, method=correction)
     d = _cohens_d_arrays(a, b)
@@ -151,14 +153,10 @@ def vertexwise_mannwhitney(
     if b.ndim == 3:
         b = b.mean(axis=-1)
 
-    N = a.shape[1]
-    u_stat = np.zeros(N)
-    p_vals = np.ones(N)
-
-    for v in range(N):
-        u_stat[v], p_vals[v] = sp_stats.mannwhitneyu(
-            a[:, v], b[:, v], alternative="two-sided",
-        )
+    # Vectorised across vertices (scipy >= 1.7 supports axis=).
+    u_stat, p_vals = sp_stats.mannwhitneyu(a, b, alternative="two-sided", axis=0)
+    u_stat = np.nan_to_num(np.asarray(u_stat), nan=0.0)
+    p_vals = np.where(np.isnan(p_vals), 1.0, p_vals)
 
     p_corr = _correct_pvalues(p_vals, method=correction)
 
@@ -178,22 +176,48 @@ def vertexwise_permutation(
     *,
     n_permutations: int = 5000,
     stat_func: Literal["t", "mean_diff"] = "t",
-    seed: Optional[int] = None,
+    correction: Literal["max", "fdr", "none"] = "max",
+    seed: int | None = None,
     alpha: float = 0.05,
 ) -> VertexWiseResult:
-    """Permutation test at each vertex (non-parametric, exact).
+    """Permutation test at each vertex with multiple-comparison control.
+
+    The label permutation builds an exact (non-parametric) null. Crucially,
+    the per-vertex permutation p-value is **not** corrected for multiple
+    comparisons on its own. This function offers proper correction:
+
+    - ``correction="max"`` (default): family-wise error rate (FWER) control
+      via the **maximum-statistic** null distribution (Westfall & Young;
+      Nichols & Holmes 2002). On each permutation the maximum of
+      ``|statistic|`` across all vertices is recorded; a vertex is
+      significant if its observed statistic exceeds the
+      ``(1-alpha)`` quantile of that null. This is the standard rigorous
+      correction for vertex/voxel-wise permutation testing.
+    - ``correction="fdr"``: per-vertex permutation p-values, then
+      Benjamini-Hochberg.
+    - ``correction="none"``: raw per-vertex permutation p-values.
 
     Parameters
     ----------
     group_a, group_b : ndarray, shape (n, N)
     n_permutations : int
-    stat_func : str
+    stat_func : ``"t"`` or ``"mean_diff"``
+    correction : ``"max"``, ``"fdr"``, or ``"none"``
     seed : int, optional
     alpha : float
 
     Returns
     -------
     VertexWiseResult
+        ``p_values`` are always the raw per-vertex permutation p-values;
+        ``p_corrected`` reflects the chosen correction. For ``"max"``,
+        ``p_corrected`` is the FWER-adjusted p-value (fraction of the
+        max-null at or above each observed statistic).
+
+    References
+    ----------
+    Nichols TE, Holmes AP. Nonparametric permutation tests for functional
+    neuroimaging. *Hum Brain Mapp* 15(1):1–25, 2002.
     """
     a = np.asarray(group_a, dtype=np.float64)
     b = np.asarray(group_b, dtype=np.float64)
@@ -207,39 +231,45 @@ def vertexwise_permutation(
     n_a, N = a.shape
     n_total = combined.shape[0]
 
-    # Observed statistic.
-    if stat_func == "t":
-        obs = np.array([
-            sp_stats.ttest_ind(a[:, v], b[:, v])[0] for v in range(N)
-        ])
-    else:
-        obs = a.mean(axis=0) - b.mean(axis=0)
+    def _stat(xa: np.ndarray, xb: np.ndarray) -> np.ndarray:
+        if stat_func == "t":
+            t, _ = sp_stats.ttest_ind(xa, xb, axis=0, equal_var=False)
+            return np.nan_to_num(np.asarray(t), nan=0.0)
+        return xa.mean(axis=0) - xb.mean(axis=0)
 
-    # Permutation distribution.
-    count_extreme = np.zeros(N, dtype=np.int64)
+    obs = _stat(a, b)
+    abs_obs = np.abs(obs)
+
+    count_extreme = np.zeros(N, dtype=np.int64)  # per-vertex (uncorrected)
+    count_max = np.zeros(N, dtype=np.int64)  # FWER via max-statistic
     with progress_simple("Permutation test", total=n_permutations) as tick:
         for _ in range(n_permutations):
             perm = rng.permutation(n_total)
-            a_perm = combined[perm[:n_a]]
-            b_perm = combined[perm[n_a:]]
-            if stat_func == "t":
-                perm_stat = np.array([
-                    sp_stats.ttest_ind(a_perm[:, v], b_perm[:, v])[0]
-                    for v in range(N)
-                ])
-            else:
-                perm_stat = a_perm.mean(axis=0) - b_perm.mean(axis=0)
-            count_extreme += (np.abs(perm_stat) >= np.abs(obs)).astype(np.int64)
+            perm_stat = _stat(combined[perm[:n_a]], combined[perm[n_a:]])
+            abs_perm = np.abs(perm_stat)
+            count_extreme += (abs_perm >= abs_obs).astype(np.int64)
+            count_max += (abs_perm.max() >= abs_obs).astype(np.int64)
             tick(1)
 
+    # Raw per-vertex permutation p-values (add-one for validity).
     p_vals = (count_extreme + 1) / (n_permutations + 1)
+
+    if correction == "max":
+        p_corr = (count_max + 1) / (n_permutations + 1)
+        corr_label = "permutation-max (FWER)"
+    elif correction == "fdr":
+        p_corr = _fdr_bh(p_vals)
+        corr_label = "permutation+fdr"
+    else:
+        p_corr = p_vals.copy()
+        corr_label = "permutation (uncorrected)"
 
     return VertexWiseResult(
         statistic=obs,
         p_values=p_vals,
-        p_corrected=p_vals,  # permutation p-values are already corrected
-        correction="permutation",
-        significant=p_vals < alpha,
+        p_corrected=p_corr,
+        correction=corr_label,
+        significant=p_corr < alpha,
         alpha=alpha,
     )
 
@@ -311,7 +341,7 @@ def tfce(
             extent = c_mask.sum()
             # Add contribution: e^E · h^H · dh.
             vertices_in_cluster = np.where(mask)[0][c_mask]
-            tfce_map[vertices_in_cluster] += (extent ** E) * (h ** H) * dh
+            tfce_map[vertices_in_cluster] += (extent**E) * (h**H) * dh
 
     return tfce_map
 
@@ -346,6 +376,7 @@ def _fdr_bh(p_values: np.ndarray) -> np.ndarray:
 # ======================================================================
 # §2  EFFECT SIZES
 # ======================================================================
+
 
 def _cohens_d_arrays(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     """Cohen's d per column (vertex)."""
@@ -404,6 +435,7 @@ def hedges_g_map(
 # §3  VERTEX-WISE CORRELATION
 # ======================================================================
 
+
 def vertexwise_correlation(
     descriptors: np.ndarray,
     scores: np.ndarray,
@@ -411,7 +443,7 @@ def vertexwise_correlation(
     method: Literal["pearson", "spearman"] = "pearson",
     correction: str = "fdr",
     alpha: float = 0.05,
-    covariates: Optional[np.ndarray] = None,
+    covariates: np.ndarray | None = None,
 ) -> VertexWiseResult:
     """Correlate a per-vertex descriptor with a clinical score.
 
@@ -435,25 +467,44 @@ def vertexwise_correlation(
     if desc.ndim == 3:
         desc = desc.mean(axis=-1)
     scores = np.asarray(scores, dtype=np.float64)
-    S, N = desc.shape
+    S = desc.shape[0]
 
-    r_vals = np.zeros(N)
-    p_vals = np.ones(N)
+    # Number of covariates removed (for partial-correlation degrees of freedom).
+    n_cov = 0
+    if covariates is not None:
+        cov = np.asarray(covariates, dtype=np.float64)
+        if cov.ndim == 1:
+            cov = cov[:, None]
+        n_cov = cov.shape[1]
+        # Residualise scores and every vertex column on the covariates.
+        scores = _residualise(scores, cov)
+        desc = _residualise_columns(desc, cov)
 
-    for v in range(N):
-        x = desc[:, v]
+    if method == "spearman":
+        # Spearman = Pearson on ranks.
+        x = _rank_columns(desc)
+        y = sp_stats.rankdata(scores)
+    else:
+        x = desc
         y = scores
 
-        if covariates is not None:
-            # Partial correlation: residualise both x and y.
-            cov = np.asarray(covariates, dtype=np.float64)
-            x = _residualise(x, cov)
-            y = _residualise(y, cov)
+    # Vectorised Pearson across vertices.
+    xc = x - x.mean(axis=0)
+    yc = y - y.mean()
+    denom = np.sqrt((xc**2).sum(axis=0) * (yc**2).sum())
+    r_vals = np.where(denom > 1e-30, (xc * yc[:, None]).sum(axis=0) / (denom + 1e-30), 0.0)
+    r_vals = np.clip(r_vals, -1.0, 1.0)
 
-        if method == "pearson":
-            r_vals[v], p_vals[v] = sp_stats.pearsonr(x, y)
-        else:
-            r_vals[v], p_vals[v] = sp_stats.spearmanr(x, y)
+    # Two-sided p-value from t-distribution with df = S - 2 - n_cov.
+    df = S - 2 - n_cov
+    if df <= 0:
+        raise ValueError(
+            f"Not enough samples for {n_cov} covariates: df = {df} (need S > {2 + n_cov})."
+        )
+    with np.errstate(divide="ignore", invalid="ignore"):
+        t_stat = r_vals * np.sqrt(df / (1.0 - r_vals**2))
+    t_stat = np.nan_to_num(t_stat, nan=0.0, posinf=0.0, neginf=0.0)
+    p_vals = 2.0 * sp_stats.t.sf(np.abs(t_stat), df)
 
     p_corr = _correct_pvalues(p_vals, method=correction)
 
@@ -467,6 +518,18 @@ def vertexwise_correlation(
     )
 
 
+def _residualise_columns(Y: np.ndarray, X: np.ndarray) -> np.ndarray:
+    """Residualise every column of ``Y`` (S, N) on design ``X`` (S, C)."""
+    Xd = np.column_stack([np.ones(len(Y)), X])
+    beta, *_ = np.linalg.lstsq(Xd, Y, rcond=None)
+    return Y - Xd @ beta
+
+
+def _rank_columns(Y: np.ndarray) -> np.ndarray:
+    """Column-wise rank transform (for Spearman)."""
+    return sp_stats.rankdata(Y, axis=0)
+
+
 def _residualise(y: np.ndarray, X: np.ndarray) -> np.ndarray:
     """OLS residuals: y - X @ (X^+ @ y)."""
     X = np.column_stack([np.ones(len(y)), X])
@@ -477,6 +540,7 @@ def _residualise(y: np.ndarray, X: np.ndarray) -> np.ndarray:
 # ======================================================================
 # §4  SURPRISE / ANOMALY MAPS
 # ======================================================================
+
 
 def surprise_map(
     subject_descriptor: np.ndarray,
@@ -530,15 +594,17 @@ def surprise_map_percentile(
 # §5  CLASSIFICATION
 # ======================================================================
 
+
 @dataclass
 class ClassificationResult:
     """Output of a classification analysis."""
+
     accuracy: float
     accuracy_std: float
     auc: float
     auc_std: float
-    feature_importance: Optional[np.ndarray]
-    confusion_matrix: Optional[np.ndarray]
+    feature_importance: np.ndarray | None
+    confusion_matrix: np.ndarray | None
     model_name: str
 
     def __repr__(self) -> str:
@@ -556,7 +622,7 @@ def classify(
     *,
     model: Literal["svm", "logistic", "random_forest"] = "svm",
     n_folds: int = 5,
-    seed: Optional[int] = 42,
+    seed: int | None = 42,
 ) -> ClassificationResult:
     """Cross-validated classification with feature importance.
 
@@ -573,17 +639,20 @@ def classify(
     ClassificationResult
     """
     from sklearn.model_selection import StratifiedKFold, cross_val_score
-    from sklearn.preprocessing import StandardScaler
     from sklearn.pipeline import Pipeline
+    from sklearn.preprocessing import StandardScaler
 
     if model == "svm":
         from sklearn.svm import SVC
+
         clf = SVC(kernel="linear", probability=True, random_state=seed)
     elif model == "logistic":
         from sklearn.linear_model import LogisticRegression
+
         clf = LogisticRegression(max_iter=1000, random_state=seed)
     elif model == "random_forest":
         from sklearn.ensemble import RandomForestClassifier
+
         clf = RandomForestClassifier(n_estimators=100, random_state=seed)
     else:
         raise ValueError(f"Unknown model: {model!r}")
@@ -616,6 +685,7 @@ def classify(
 # ======================================================================
 # §6  DIMENSION COLLAPSING — from per-vertex to per-shape
 # ======================================================================
+
 
 def fisher_vector(
     descriptor: DescriptorMatrix,
@@ -653,7 +723,7 @@ def fisher_vector(
     Sánchez J, Perronnin F, Mensink T, Verbeek J. Image classification
     with the Fisher vector. *IJCV* 105(3):222–245, 2013.
     """
-    N, T = descriptor.shape
+    N, _T = descriptor.shape
     K = gmm_means.shape[0]
 
     # Responsibilities: γ(n, k) = P(k|x_n)
@@ -662,7 +732,7 @@ def fisher_vector(
         diff = descriptor - gmm_means[k]
         log_resp[:, k] = (
             np.log(gmm_weights[k] + 1e-30)
-            - 0.5 * np.sum(diff ** 2 / (gmm_covs[k] + 1e-30), axis=1)
+            - 0.5 * np.sum(diff**2 / (gmm_covs[k] + 1e-30), axis=1)
             - 0.5 * np.sum(np.log(gmm_covs[k] + 1e-30))
         )
     # Normalise responsibilities.
@@ -672,10 +742,10 @@ def fisher_vector(
 
     fv_parts = []
     for k in range(K):
-        gamma_k = resp[:, k]                                # (N,)
+        gamma_k = resp[:, k]  # (N,)
         sqrt_w = np.sqrt(gmm_weights[k] + 1e-30)
-        diff = descriptor - gmm_means[k]                    # (N, T)
-        sigma = gmm_covs[k]                                  # (T,)
+        diff = descriptor - gmm_means[k]  # (N, T)
+        sigma = gmm_covs[k]  # (T,)
 
         # First-order gradient (mean).
         g_mean = (1 / (N * sqrt_w)) * np.sum(
@@ -683,14 +753,14 @@ def fisher_vector(
         )
         # Second-order gradient (variance).
         g_var = (1 / (N * sqrt_w * np.sqrt(2))) * np.sum(
-            gamma_k[:, None] * (diff ** 2 / (sigma + 1e-30) - 1), axis=0
+            gamma_k[:, None] * (diff**2 / (sigma + 1e-30) - 1), axis=0
         )
         fv_parts.extend([g_mean, g_var])
 
     fv = np.concatenate(fv_parts)
 
     # L2 normalisation + power normalisation.
-    fv = np.sign(fv) * np.sqrt(np.abs(fv))                  # power norm
+    fv = np.sign(fv) * np.sqrt(np.abs(fv))  # power norm
     norm = np.linalg.norm(fv)
     if norm > 1e-10:
         fv /= norm
@@ -702,8 +772,8 @@ def fit_gmm_codebook(
     all_descriptors: np.ndarray,
     n_components: int = 32,
     *,
-    seed: Optional[int] = 42,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    seed: int | None = 42,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Fit a GMM codebook on pooled descriptors from a population.
 
     Parameters
@@ -738,7 +808,7 @@ def bag_of_spectral_words(
     codebook: np.ndarray,
     *,
     soft: bool = True,
-    sigma: Optional[float] = None,
+    sigma: float | None = None,
 ) -> GlobalDescriptor:
     """Bag-of-Words encoding of per-vertex descriptors.
 
@@ -764,14 +834,12 @@ def bag_of_spectral_words(
     if soft:
         if sigma is None:
             sigma = float(np.median(dists))
-        weights = np.exp(-dists ** 2 / (2 * sigma ** 2))
+        weights = np.exp(-(dists**2) / (2 * sigma**2))
         weights /= weights.sum(axis=1, keepdims=True)
         histogram = weights.sum(axis=0)
     else:
         assignments = np.argmin(dists, axis=1)
-        histogram = np.bincount(assignments, minlength=codebook.shape[0]).astype(
-            np.float64
-        )
+        histogram = np.bincount(assignments, minlength=codebook.shape[0]).astype(np.float64)
 
     # L1 normalisation.
     histogram /= histogram.sum() + 1e-30
@@ -782,9 +850,9 @@ def kernel_mean_embedding(
     descriptor: DescriptorMatrix,
     *,
     kernel: Literal["rbf", "linear"] = "rbf",
-    sigma: Optional[float] = None,
+    sigma: float | None = None,
     n_landmarks: int = 100,
-    seed: Optional[int] = None,
+    seed: int | None = None,
 ) -> GlobalDescriptor:
     """Kernel mean embedding of a descriptor distribution.
 
@@ -811,6 +879,7 @@ def kernel_mean_embedding(
 
     if sigma is None:
         from scipy.spatial.distance import pdist
+
         sample = descriptor[rng.choice(N, min(200, N), replace=False)]
         sigma = float(np.median(pdist(sample))) if len(sample) > 1 else 1.0
         sigma = max(sigma, 1e-6)
@@ -830,6 +899,7 @@ def kernel_mean_embedding(
 # ======================================================================
 # §7  DISSIMILARITY MEASURES
 # ======================================================================
+
 
 def emd_distance(a: np.ndarray, b: np.ndarray) -> float:
     """Earth Mover's Distance (1D Wasserstein) between distributions.
@@ -922,6 +992,7 @@ def energy_distance(a: np.ndarray, b: np.ndarray) -> float:
 # §8  RSA — Representational Similarity Analysis
 # ======================================================================
 
+
 def rdm(
     features: np.ndarray,
     *,
@@ -959,8 +1030,8 @@ def rsa_compare(
     *,
     method: Literal["spearman", "pearson", "kendall"] = "spearman",
     permutations: int = 0,
-    seed: Optional[int] = None,
-) -> Tuple[float, float]:
+    seed: int | None = None,
+) -> tuple[float, float]:
     """Compare two RDMs via Representational Similarity Analysis.
 
     Parameters
@@ -1022,8 +1093,8 @@ def mantel_test(
     *,
     n_permutations: int = 5000,
     method: Literal["pearson", "spearman"] = "spearman",
-    seed: Optional[int] = None,
-) -> Tuple[float, float]:
+    seed: int | None = None,
+) -> tuple[float, float]:
     """Mantel test — correlation between two distance matrices.
 
     Tests whether two distance matrices are correlated by comparing
@@ -1043,7 +1114,8 @@ def mantel_test(
     p_value : float
     """
     return rsa_compare(
-        matrix_a, matrix_b,
+        matrix_a,
+        matrix_b,
         method=method,
         permutations=n_permutations,
         seed=seed,
@@ -1053,6 +1125,7 @@ def mantel_test(
 # ======================================================================
 # §9  CONNECTOME & NETWORK ANALYSIS
 # ======================================================================
+
 
 def modularity(
     connectome: ConnectomeMatrix,
@@ -1119,14 +1192,14 @@ def participation_coefficient(
     labels = np.asarray(community_labels)
     communities = np.unique(labels)
 
-    s_total = A.sum(axis=1)                                 # (R,)
+    s_total = A.sum(axis=1)  # (R,)
     PC = np.ones(len(A))
 
     for c in communities:
         mask = labels == c
-        s_c = A[:, mask].sum(axis=1)                        # (R,)
+        s_c = A[:, mask].sum(axis=1)  # (R,)
         ratio = s_c / (s_total + 1e-30)
-        PC -= ratio ** 2
+        PC -= ratio**2
 
     return PC
 
@@ -1134,7 +1207,7 @@ def participation_coefficient(
 def intra_inter_ratio(
     connectome: ConnectomeMatrix,
     community_labels: np.ndarray,
-) -> Dict[str, float]:
+) -> dict[str, float]:
     """Intra- vs inter-community connectivity ratio.
 
     Parameters
@@ -1167,6 +1240,7 @@ def intra_inter_ratio(
 # §10  ASYMMETRY ANALYSIS
 # ======================================================================
 
+
 def lateralisation_index(
     left: np.ndarray,
     right: np.ndarray,
@@ -1193,7 +1267,7 @@ def asymmetry_test(
     right: np.ndarray,
     *,
     test: Literal["paired_t", "wilcoxon"] = "wilcoxon",
-) -> Tuple[float, float]:
+) -> tuple[float, float]:
     """Test whether L and R descriptors differ significantly.
 
     Parameters
@@ -1221,10 +1295,11 @@ def asymmetry_test(
 # §11  DIMENSIONALITY REDUCTION
 # ======================================================================
 
+
 def spectral_pca(
     features: np.ndarray,
     n_components: int = 2,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """PCA on spectral features.
 
     Parameters
@@ -1249,7 +1324,7 @@ def spectral_mds(
     distance_matrix: DistanceMatrix,
     n_components: int = 2,
     *,
-    seed: Optional[int] = None,
+    seed: int | None = None,
 ) -> np.ndarray:
     """Classical MDS embedding from a distance matrix.
 
@@ -1280,7 +1355,7 @@ def spectral_umap(
     *,
     n_neighbors: int = 15,
     min_dist: float = 0.1,
-    seed: Optional[int] = None,
+    seed: int | None = None,
 ) -> np.ndarray:
     """UMAP embedding of spectral features.
 
@@ -1299,10 +1374,7 @@ def spectral_umap(
     try:
         import umap
     except ImportError as exc:
-        raise ImportError(
-            "umap-learn is required for UMAP.\n"
-            "  pip install umap-learn"
-        ) from exc
+        raise ImportError("umap-learn is required for UMAP.\n  pip install umap-learn") from exc
 
     reducer = umap.UMAP(
         n_components=n_components,
@@ -1315,47 +1387,47 @@ def spectral_umap(
 
 # ======================================================================
 
-__all__: List[str] = [
-    # Vertex-wise tests
-    "VertexWiseResult",
-    "vertexwise_ttest",
-    "vertexwise_mannwhitney",
-    "vertexwise_permutation",
-    "tfce",
-    # Effect sizes
-    "cohens_d_map",
-    "hedges_g_map",
-    # Correlation
-    "vertexwise_correlation",
-    # Surprise maps
-    "surprise_map",
-    "surprise_map_percentile",
+__all__: list[str] = [
     # Classification
     "ClassificationResult",
+    # Vertex-wise tests
+    "VertexWiseResult",
+    "asymmetry_test",
+    "bag_of_spectral_words",
     "classify",
+    # Effect sizes
+    "cohens_d_map",
+    # Dissimilarity
+    "emd_distance",
+    "energy_distance",
     # Dimension collapsing
     "fisher_vector",
     "fit_gmm_codebook",
-    "bag_of_spectral_words",
-    "kernel_mean_embedding",
-    # Dissimilarity
-    "emd_distance",
-    "kl_divergence",
+    "hedges_g_map",
+    "intra_inter_ratio",
     "js_divergence",
-    "energy_distance",
-    # RSA
-    "rdm",
-    "rsa_compare",
+    "kernel_mean_embedding",
+    "kl_divergence",
+    # Asymmetry
+    "lateralisation_index",
     "mantel_test",
     # Connectome
     "modularity",
     "participation_coefficient",
-    "intra_inter_ratio",
-    # Asymmetry
-    "lateralisation_index",
-    "asymmetry_test",
+    # RSA
+    "rdm",
+    "rsa_compare",
+    "spectral_mds",
     # Dimensionality reduction
     "spectral_pca",
-    "spectral_mds",
     "spectral_umap",
+    # Surprise maps
+    "surprise_map",
+    "surprise_map_percentile",
+    "tfce",
+    # Correlation
+    "vertexwise_correlation",
+    "vertexwise_mannwhitney",
+    "vertexwise_permutation",
+    "vertexwise_ttest",
 ]

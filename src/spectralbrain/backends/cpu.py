@@ -19,27 +19,14 @@ Only NumPy and SciPy are hard requirements.
 from __future__ import annotations
 
 import gc
-import os
-import sys
-import warnings
+from collections.abc import Callable, Generator, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import (
     Any,
-    Callable,
-    Dict,
-    Generator,
-    Iterable,
-    Iterator,
-    List,
     Literal,
-    Optional,
-    Protocol,
-    Sequence,
-    Tuple,
     TypeVar,
-    Union,
 )
 
 import numpy as np
@@ -53,7 +40,6 @@ from spectralbrain.runtime import (
     SparseMatrix,
     get_logger,
     progress_parallel,
-    progress_simple,
 )
 
 logger = get_logger(__name__)
@@ -65,6 +51,7 @@ R = TypeVar("R")
 # ======================================================================
 # §1  NUMPY / SCIPY COMPUTE BACKEND
 # ======================================================================
+
 
 class NumpyBackend:
     """CPU compute backend using NumPy + SciPy.
@@ -89,14 +76,14 @@ class NumpyBackend:
     @staticmethod
     def eigsh(
         L: SparseMatrix,
-        M: Optional[MassMatrix] = None,
+        M: MassMatrix | None = None,
         k: int = 100,
         *,
         sigma: float = -0.01,
         which: str = "LM",
         tol: float = 0.0,
-        maxiter: Optional[int] = None,
-    ) -> Tuple[Eigenvalues, Eigenvectors]:
+        maxiter: int | None = None,
+    ) -> tuple[Eigenvalues, Eigenvectors]:
         """Solve the generalised sparse eigenproblem L v = λ M v.
 
         Uses SciPy's ARPACK wrapper in shift-invert mode (default
@@ -141,9 +128,13 @@ class NumpyBackend:
             M = sp.csc_matrix(M, dtype=np.float64)
 
         eigenvalues, eigenvectors = spla.eigsh(
-            L, k=k, M=M,
-            sigma=sigma, which=which,
-            tol=tol, maxiter=maxiter,
+            L,
+            k=k,
+            M=M,
+            sigma=sigma,
+            which=which,
+            tol=tol,
+            maxiter=maxiter,
         )
 
         # Sort ascending (ARPACK returns in arbitrary order after
@@ -164,7 +155,7 @@ class NumpyBackend:
         data: np.ndarray,
         row: np.ndarray,
         col: np.ndarray,
-        shape: Tuple[int, int],
+        shape: tuple[int, int],
         *,
         format: str = "csc",
     ) -> SparseMatrix:
@@ -186,9 +177,10 @@ class NumpyBackend:
         SparseMatrix
         """
         coo = sp.coo_matrix(
-            (np.asarray(data, dtype=np.float64),
-             (np.asarray(row, dtype=np.int64),
-              np.asarray(col, dtype=np.int64))),
+            (
+                np.asarray(data, dtype=np.float64),
+                (np.asarray(row, dtype=np.int64), np.asarray(col, dtype=np.int64)),
+            ),
             shape=shape,
         )
         if format == "csc":
@@ -207,12 +199,12 @@ class NumpyBackend:
         return np.asarray(data, dtype=dtype)
 
     @staticmethod
-    def zeros(shape: Tuple[int, ...], dtype: np.dtype = np.float64) -> np.ndarray:
+    def zeros(shape: tuple[int, ...], dtype: np.dtype = np.float64) -> np.ndarray:
         """Create a zero-filled array (mirrors numpy.zeros)."""
         return np.zeros(shape, dtype=dtype)
 
     @staticmethod
-    def ones(shape: Tuple[int, ...], dtype: np.dtype = np.float64) -> np.ndarray:
+    def ones(shape: tuple[int, ...], dtype: np.dtype = np.float64) -> np.ndarray:
         """Create a ones-filled array (mirrors numpy.ones)."""
         return np.ones(shape, dtype=dtype)
 
@@ -225,7 +217,7 @@ class NumpyBackend:
     def matmul(a: np.ndarray, b: np.ndarray) -> np.ndarray:
         """Matrix multiply (sparse- and dense-aware)."""
         if sp.issparse(a) or sp.issparse(b):
-            return (a @ b)
+            return a @ b
         return np.matmul(a, b)
 
     @staticmethod
@@ -244,17 +236,17 @@ class NumpyBackend:
         return np.sqrt(np.clip(x, 0.0, None))
 
     @staticmethod
-    def sum(x: np.ndarray, axis: Optional[int] = None) -> np.ndarray:
+    def sum(x: np.ndarray, axis: int | None = None) -> np.ndarray:
         """Sum reduction (mirrors numpy.sum)."""
         return np.sum(x, axis=axis)
 
     @staticmethod
-    def mean(x: np.ndarray, axis: Optional[int] = None) -> np.ndarray:
+    def mean(x: np.ndarray, axis: int | None = None) -> np.ndarray:
         """Mean reduction (mirrors numpy.mean)."""
         return np.mean(x, axis=axis)
 
     @staticmethod
-    def clip(x: np.ndarray, a_min: Optional[float], a_max: Optional[float]) -> np.ndarray:
+    def clip(x: np.ndarray, a_min: float | None, a_max: float | None) -> np.ndarray:
         """Element-wise clip (mirrors numpy.clip)."""
         return np.clip(x, a_min, a_max)
 
@@ -268,7 +260,7 @@ class NumpyBackend:
         return np.asarray(x)
 
     @staticmethod
-    def norm(x: np.ndarray, axis: Optional[int] = None, ord: Optional[int] = None) -> np.ndarray:
+    def norm(x: np.ndarray, axis: int | None = None, ord: int | None = None) -> np.ndarray:
         """Vector/matrix norm (mirrors numpy.linalg.norm)."""
         return np.linalg.norm(x, axis=axis, ord=ord)
 
@@ -302,27 +294,26 @@ class NumpyBackend:
 # §2  BAYESIAN CPU SAMPLERS
 # ======================================================================
 
+
 def _require_pymc():
     """Lazy-import PyMC, raising ImportError if unavailable."""
     try:
         import pymc as pm
+
         return pm
     except ImportError as exc:
-        raise ImportError(
-            "PyMC is required for Bayesian analysis.\n"
-            "  pip install pymc"
-        ) from exc
+        raise ImportError("PyMC is required for Bayesian analysis.\n  pip install pymc") from exc
 
 
 def _require_nutpie():
     """Lazy-import nutpie, raising ImportError if unavailable."""
     try:
         import nutpie
+
         return nutpie
     except ImportError as exc:
         raise ImportError(
-            "nutpie is required for the nutpie sampler backend.\n"
-            "  pip install nutpie"
+            "nutpie is required for the nutpie sampler backend.\n  pip install nutpie"
         ) from exc
 
 
@@ -330,11 +321,11 @@ def _require_arviz():
     """Lazy-import ArviZ, raising ImportError if unavailable."""
     try:
         import arviz as az
+
         return az
     except ImportError as exc:
         raise ImportError(
-            "ArviZ is required for Bayesian diagnostics.\n"
-            "  pip install arviz"
+            "ArviZ is required for Bayesian diagnostics.\n  pip install arviz"
         ) from exc
 
 
@@ -363,7 +354,7 @@ class SamplerConfig:
     chains: int = 4
     cores: int = 4
     target_accept: float = 0.95
-    random_seed: Optional[int] = 42
+    random_seed: int | None = 42
 
 
 class PyMCSampler:
@@ -388,7 +379,7 @@ class PyMCSampler:
 
     name: str = "nuts"
 
-    def __init__(self, config: Optional[SamplerConfig] = None) -> None:
+    def __init__(self, config: SamplerConfig | None = None) -> None:
         """Initialise with optional SamplerConfig."""
         self.config = config or SamplerConfig()
 
@@ -428,7 +419,9 @@ class PyMCSampler:
 
         logger.info(
             "PyMC NUTS: %d draws × %d chains (%d tune)",
-            cfg.draws, cfg.chains, cfg.tune,
+            cfg.draws,
+            cfg.chains,
+            cfg.tune,
         )
 
         with model:
@@ -457,7 +450,7 @@ class NutpieSampler:
 
     name: str = "nutpie"
 
-    def __init__(self, config: Optional[SamplerConfig] = None) -> None:
+    def __init__(self, config: SamplerConfig | None = None) -> None:
         """Initialise with optional SamplerConfig."""
         self.config = config or SamplerConfig()
 
@@ -484,7 +477,9 @@ class NutpieSampler:
 
         logger.info(
             "nutpie NUTS: %d draws × %d chains (%d tune)",
-            cfg.draws, cfg.chains, cfg.tune,
+            cfg.draws,
+            cfg.chains,
+            cfg.tune,
         )
 
         compiled = nutpie.compile_pymc_model(model)
@@ -502,8 +497,8 @@ class NutpieSampler:
 
 def get_bayesian_sampler(
     backend: Literal["nuts", "nutpie"] = "nuts",
-    config: Optional[SamplerConfig] = None,
-) -> Union[PyMCSampler, NutpieSampler]:
+    config: SamplerConfig | None = None,
+) -> PyMCSampler | NutpieSampler:
     """Factory for CPU Bayesian samplers.
 
     Parameters
@@ -529,16 +524,15 @@ def get_bayesian_sampler(
 # §3  JOBLIB PARALLELISATION UTILITIES
 # ======================================================================
 
+
 def _require_joblib():
     """Lazy-import joblib, raising ImportError if unavailable."""
     try:
         import joblib
+
         return joblib
     except ImportError as exc:
-        raise ImportError(
-            "joblib is required for parallelisation.\n"
-            "  pip install joblib"
-        ) from exc
+        raise ImportError("joblib is required for parallelisation.\n  pip install joblib") from exc
 
 
 def parallel_map(
@@ -550,7 +544,7 @@ def parallel_map(
     progress: bool = True,
     description: str = "Processing",
     **func_kwargs: Any,
-) -> List[R]:
+) -> list[R]:
     """Apply *func* to each item in parallel with optional progress.
 
     A thin wrapper around ``joblib.Parallel`` that integrates with
@@ -594,23 +588,18 @@ def parallel_map(
             joblib.delayed(func)(item, **func_kwargs) for item in items
         )
 
-    results: List[Optional[R]] = [None] * total
-
+    # Stream results back in submission order and advance the progress bar
+    # in THIS (parent) process.  The progress object holds a thread lock and
+    # must never be captured in the worker closure — doing so breaks pickling
+    # under the process-based ``loky`` backend.
+    results: list[R | None] = [None] * total
     with progress_parallel(description, total=total) as tick:
-        def _worker(idx: int, item: T) -> Tuple[int, R]:
-            """Execute func on a single item and report progress."""
-            result = func(item, **func_kwargs)
-            tick(1)
-            return idx, result
-
-        pairs = joblib.Parallel(n_jobs=n_jobs, backend=backend)(
-            joblib.delayed(_worker)(i, item)
-            for i, item in enumerate(items)
+        stream = joblib.Parallel(n_jobs=n_jobs, backend=backend, return_as="generator")(
+            joblib.delayed(func)(item, **func_kwargs) for item in items
         )
-
-    # Restore original order.
-    for idx, result in pairs:
-        results[idx] = result
+        for idx, result in enumerate(stream):
+            results[idx] = result
+            tick(1)
 
     return results  # type: ignore[return-value]
 
@@ -656,27 +645,23 @@ def parallel_batch(
     """
     joblib = _require_joblib()
     n = data.shape[axis]
-    slices = [
-        slice(i, min(i + batch_size, n))
-        for i in range(0, n, batch_size)
-    ]
+    slices = [slice(i, min(i + batch_size, n)) for i in range(0, n, batch_size)]
     batches = [np.take(data, range(*s.indices(n)), axis=axis) for s in slices]
 
     total = len(batches)
     if progress:
+        # Stream results and tick in the parent; never pickle the progress
+        # object into worker processes (see parallel_map for the rationale).
         with progress_parallel(description, total=total) as tick:
-            def _run(batch: np.ndarray) -> np.ndarray:
-                """Process one batch and report progress."""
-                r = func(batch)
-                tick(1)
-                return r
-            results = joblib.Parallel(n_jobs=n_jobs)(
-                joblib.delayed(_run)(b) for b in batches
+            stream = joblib.Parallel(n_jobs=n_jobs, return_as="generator")(
+                joblib.delayed(func)(b) for b in batches
             )
+            results = []
+            for r in stream:
+                results.append(r)
+                tick(1)
     else:
-        results = joblib.Parallel(n_jobs=n_jobs)(
-            joblib.delayed(func)(b) for b in batches
-        )
+        results = joblib.Parallel(n_jobs=n_jobs)(joblib.delayed(func)(b) for b in batches)
 
     return np.concatenate(results, axis=axis)
 
@@ -725,6 +710,7 @@ def batch_iterator(
 # §4  RAM MEMORY MANAGEMENT
 # ======================================================================
 
+
 @dataclass
 class MemoryInfo:
     """Snapshot of system RAM usage.
@@ -768,7 +754,7 @@ def ram_status() -> MemoryInfo:
     # Try /proc/meminfo first (no dependency, Linux only).
     meminfo_path = Path("/proc/meminfo")
     if meminfo_path.exists():
-        info: Dict[str, int] = {}
+        info: dict[str, int] = {}
         with open(meminfo_path) as f:
             for line in f:
                 parts = line.split()
@@ -776,8 +762,8 @@ def ram_status() -> MemoryInfo:
                     key = parts[0].rstrip(":")
                     val_kb = int(parts[1])
                     info[key] = val_kb
-        total = info.get("MemTotal", 0) / (1024 ** 2)
-        available = info.get("MemAvailable", 0) / (1024 ** 2)
+        total = info.get("MemTotal", 0) / (1024**2)
+        available = info.get("MemAvailable", 0) / (1024**2)
         used = total - available
         pct = 100 * used / total if total > 0 else 0
         return MemoryInfo(total, available, used, pct)
@@ -785,18 +771,16 @@ def ram_status() -> MemoryInfo:
     # Fallback: psutil.
     try:
         import psutil
+
         vm = psutil.virtual_memory()
         return MemoryInfo(
-            vm.total / (1024 ** 3),
-            vm.available / (1024 ** 3),
-            vm.used / (1024 ** 3),
+            vm.total / (1024**3),
+            vm.available / (1024**3),
+            vm.used / (1024**3),
             vm.percent,
         )
     except ImportError:
-        logger.warning(
-            "Cannot read memory info: /proc/meminfo not found "
-            "and psutil not installed."
-        )
+        logger.warning("Cannot read memory info: /proc/meminfo not found and psutil not installed.")
         return MemoryInfo(0, 0, 0, 0)
 
 
@@ -827,7 +811,7 @@ def gc_collect(generations: int = 2) -> int:
 
 
 def estimate_array_memory(
-    shape: Tuple[int, ...],
+    shape: tuple[int, ...],
     dtype: np.dtype = np.float64,
 ) -> float:
     """Estimate memory for an array in gigabytes.
@@ -851,7 +835,7 @@ def estimate_array_memory(
     for s in shape:
         n_elements *= s
     bytes_per_element = np.dtype(dtype).itemsize
-    return n_elements * bytes_per_element / (1024 ** 3)
+    return n_elements * bytes_per_element / (1024**3)
 
 
 @contextmanager
@@ -893,13 +877,15 @@ def memory_guard(
     if delta > 1.0:
         logger.info(
             "Block consumed ~%.1f GB RAM (%.1f → %.1f GB free)",
-            delta, info.available_gb, info_after.available_gb,
+            delta,
+            info.available_gb,
+            info_after.available_gb,
         )
 
 
 def shrink_array(
     arr: np.ndarray,
-    target_dtype: Optional[np.dtype] = None,
+    target_dtype: np.dtype | None = None,
 ) -> np.ndarray:
     """Downcast an array to save memory.
 
@@ -931,23 +917,23 @@ def shrink_array(
 # §5  __all__
 # ======================================================================
 
-__all__: List[str] = [
-    # Compute backend
-    "NumpyBackend",
-    # Bayesian samplers
-    "SamplerConfig",
-    "PyMCSampler",
-    "NutpieSampler",
-    "get_bayesian_sampler",
-    # Parallelisation
-    "parallel_map",
-    "parallel_batch",
-    "batch_iterator",
+__all__: list[str] = [
     # RAM management
     "MemoryInfo",
-    "ram_status",
-    "gc_collect",
+    # Compute backend
+    "NumpyBackend",
+    "NutpieSampler",
+    "PyMCSampler",
+    # Bayesian samplers
+    "SamplerConfig",
+    "batch_iterator",
     "estimate_array_memory",
+    "gc_collect",
+    "get_bayesian_sampler",
     "memory_guard",
+    "parallel_batch",
+    # Parallelisation
+    "parallel_map",
+    "ram_status",
     "shrink_array",
 ]

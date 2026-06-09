@@ -34,13 +34,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import (
     Any,
-    Dict,
-    List,
     Literal,
-    Optional,
-    Sequence,
-    Tuple,
-    Union,
 )
 
 import numpy as np
@@ -49,17 +43,13 @@ from scipy.spatial import cKDTree
 
 from spectralbrain.backends.cpu import NumpyBackend
 from spectralbrain.core.base import (
-    GeometricObject,
     SpectralDecomposition,
     compute_centroid,
     convex_hull_area,
-    estimate_point_density,
     farthest_point_sampling,
     knn_search,
 )
 from spectralbrain.runtime import (
-    Eigenvalues,
-    Eigenvectors,
     MassMatrix,
     Normals,
     PathLike,
@@ -76,6 +66,7 @@ logger = get_logger(__name__)
 # ======================================================================
 # §1  BRAIN POINT CLOUD CLASS
 # ======================================================================
+
 
 class BrainPointCloud:
     """Unstructured 3D point cloud for brain structures.
@@ -101,22 +92,20 @@ class BrainPointCloud:
     def __init__(
         self,
         points: Points,
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         """Initialise from a (N, 3) coordinate array."""
         self.points = np.asarray(points, dtype=np.float64)
         self.metadata = metadata or {}
 
         if self.points.ndim != 2 or self.points.shape[1] != 3:
-            raise ValueError(
-                f"points must be (N, 3), got {self.points.shape}"
-            )
+            raise ValueError(f"points must be (N, 3), got {self.points.shape}")
 
         # Cached properties.
-        self._normals: Optional[Normals] = None
-        self._L: Optional[SparseMatrix] = None
-        self._M: Optional[MassMatrix] = None
-        self._kd_tree: Optional[cKDTree] = None
+        self._normals: Normals | None = None
+        self._L: SparseMatrix | None = None
+        self._M: MassMatrix | None = None
+        self._kd_tree: cKDTree | None = None
 
     # ── GeometricObject protocol ──────────────────────────────────────
 
@@ -162,9 +151,9 @@ class BrainPointCloud:
         *,
         jitter: bool = True,
         jitter_scale: float = 0.25,
-        seed: Optional[int] = None,
-        subsample: Optional[int] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        seed: int | None = None,
+        subsample: int | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> BrainPointCloud:
         """Extract a point cloud from a volumetric label map.
 
@@ -202,8 +191,12 @@ class BrainPointCloud:
         from spectralbrain.io.loaders import labels_to_pointcloud
 
         points = labels_to_pointcloud(
-            label_volume, affine, label_id,
-            jitter=jitter, jitter_scale=jitter_scale, seed=seed,
+            label_volume,
+            affine,
+            label_id,
+            jitter=jitter,
+            jitter_scale=jitter_scale,
+            seed=seed,
         )
 
         meta = {
@@ -229,9 +222,9 @@ class BrainPointCloud:
         *,
         jitter: bool = True,
         jitter_scale: float = 0.25,
-        seed: Optional[int] = None,
-        subsample: Optional[int] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        seed: int | None = None,
+        subsample: int | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> BrainPointCloud:
         """Load a FreeSurfer segmentation and extract a structure.
 
@@ -261,9 +254,14 @@ class BrainPointCloud:
             **(metadata or {}),
         }
         return cls.from_volume(
-            data, affine, label_id,
-            jitter=jitter, jitter_scale=jitter_scale,
-            seed=seed, subsample=subsample, metadata=meta,
+            data,
+            affine,
+            label_id,
+            jitter=jitter,
+            jitter_scale=jitter_scale,
+            seed=seed,
+            subsample=subsample,
+            metadata=meta,
         )
 
     # ── From any surface file (vertices as points) ────────────────────
@@ -273,9 +271,9 @@ class BrainPointCloud:
         cls,
         surface_path: PathLike,
         *,
-        subsample: Optional[int] = None,
-        seed: Optional[int] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        subsample: int | None = None,
+        seed: int | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> BrainPointCloud:
         """Load a surface file and use its vertices as a point cloud.
 
@@ -321,9 +319,9 @@ class BrainPointCloud:
         label_id: int,
         *,
         jitter: bool = True,
-        seed: Optional[int] = None,
-        subsample: Optional[int] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        seed: int | None = None,
+        subsample: int | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> BrainPointCloud:
         """Extract a point cloud from an arbitrary atlas NIfTI.
 
@@ -352,8 +350,12 @@ class BrainPointCloud:
             **(metadata or {}),
         }
         return cls.from_volume(
-            data, affine, label_id,
-            jitter=jitter, seed=seed, subsample=subsample,
+            data,
+            affine,
+            label_id,
+            jitter=jitter,
+            seed=seed,
+            subsample=subsample,
             metadata=meta,
         )
 
@@ -366,9 +368,9 @@ class BrainPointCloud:
         *,
         threshold: float = 0.5,
         jitter: bool = True,
-        seed: Optional[int] = None,
-        subsample: Optional[int] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        seed: int | None = None,
+        subsample: int | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> BrainPointCloud:
         """Extract a point cloud from a TractSeg binary tract mask.
 
@@ -399,8 +401,12 @@ class BrainPointCloud:
         }
         # Use label_id=1 on the binarised mask.
         return cls.from_volume(
-            binary, affine, label_id=1,
-            jitter=jitter, seed=seed, subsample=subsample,
+            binary,
+            affine,
+            label_id=1,
+            jitter=jitter,
+            seed=seed,
+            subsample=subsample,
             metadata=meta,
         )
 
@@ -413,9 +419,9 @@ class BrainPointCloud:
         *,
         sampling: Literal["all", "endpoints", "midpoints", "uniform"] = "uniform",
         points_per_streamline: int = 10,
-        subsample: Optional[int] = None,
-        seed: Optional[int] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        subsample: int | None = None,
+        seed: int | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> BrainPointCloud:
         """Extract a point cloud from tractography streamlines.
 
@@ -444,14 +450,13 @@ class BrainPointCloud:
             import nibabel as nib
         except ImportError as exc:
             raise ImportError(
-                "nibabel is required for tractography loading.\n"
-                "  pip install nibabel"
+                "nibabel is required for tractography loading.\n  pip install nibabel"
             ) from exc
 
         trk = nib.streamlines.load(str(trk_path))
         streamlines = trk.streamlines
 
-        all_points: List[np.ndarray] = []
+        all_points: list[np.ndarray] = []
 
         if sampling == "all":
             for sl in streamlines:
@@ -478,10 +483,12 @@ class BrainPointCloud:
                     all_points.append(sl)
                     continue
                 # Resample by arc-length interpolation.
-                cumlen = np.concatenate([
-                    [0],
-                    np.cumsum(np.linalg.norm(np.diff(sl, axis=0), axis=1)),
-                ])
+                cumlen = np.concatenate(
+                    [
+                        [0],
+                        np.cumsum(np.linalg.norm(np.diff(sl, axis=0), axis=1)),
+                    ]
+                )
                 total = cumlen[-1]
                 if total < 1e-10:
                     all_points.append(sl[:1])
@@ -514,7 +521,9 @@ class BrainPointCloud:
 
         logger.info(
             "Extracted %d points from %d streamlines (%s sampling)",
-            points.shape[0], len(streamlines), sampling,
+            points.shape[0],
+            len(streamlines),
+            sampling,
         )
         return cls(points, metadata=meta)
 
@@ -526,12 +535,12 @@ class BrainPointCloud:
         raw_path: PathLike,
         label_id: int,
         *,
-        output_dir: Optional[PathLike] = None,
-        gpu: Optional[bool] = None,
+        output_dir: PathLike | None = None,
+        gpu: bool | None = None,
         jitter: bool = True,
-        seed: Optional[int] = None,
-        subsample: Optional[int] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        seed: int | None = None,
+        subsample: int | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> BrainPointCloud:
         """End-to-end: raw T1w/T2w/FLAIR → segment → point cloud.
 
@@ -558,9 +567,13 @@ class BrainPointCloud:
         from spectralbrain.io.preprocess import raw_to_pointcloud
 
         points = raw_to_pointcloud(
-            raw_path, label_id,
-            output_dir=output_dir, gpu=gpu,
-            jitter=jitter, jitter_scale=0.25, seed=seed,
+            raw_path,
+            label_id,
+            output_dir=output_dir,
+            gpu=gpu,
+            jitter=jitter,
+            jitter_scale=0.25,
+            seed=seed,
         )
 
         meta = {
@@ -585,10 +598,10 @@ class BrainPointCloud:
         method: Literal["knn", "belkin_niyogi", "robust"] = "robust",
         *,
         k: int = 30,
-        epsilon: Optional[float] = None,
-        sigma: Optional[float] = None,
+        epsilon: float | None = None,
+        sigma: float | None = None,
         robust_mollify: float = 1e-5,
-    ) -> Tuple[SparseMatrix, MassMatrix]:
+    ) -> tuple[SparseMatrix, MassMatrix]:
         """Construct a graph Laplacian on the point cloud.
 
         Parameters
@@ -618,15 +631,20 @@ class BrainPointCloud:
         """
         if method == "knn":
             L, M = _knn_laplacian(
-                self.points, k=k, sigma=sigma,
+                self.points,
+                k=k,
+                sigma=sigma,
             )
         elif method == "belkin_niyogi":
             L, M = _belkin_niyogi_laplacian(
-                self.points, k=k, epsilon=epsilon,
+                self.points,
+                k=k,
+                epsilon=epsilon,
             )
         elif method == "robust":
             L, M = _robust_laplacian_pc(
-                self.points, mollify_factor=robust_mollify,
+                self.points,
+                mollify_factor=robust_mollify,
             )
         else:
             raise ValueError(f"Unknown method: {method!r}")
@@ -635,7 +653,9 @@ class BrainPointCloud:
         self._M = M
         logger.info(
             "Point cloud Laplacian (%s): N=%d, nnz=%d",
-            method, L.shape[0], L.nnz,
+            method,
+            L.shape[0],
+            L.nnz,
         )
         return L, M
 
@@ -646,7 +666,7 @@ class BrainPointCloud:
         k: int = 50,
         *,
         laplacian_method: Literal["knn", "belkin_niyogi", "robust"] = "robust",
-        backend: Optional[Any] = None,
+        backend: Any | None = None,
         **kwargs: Any,
     ) -> SpectralDecomposition:
         """Compute the spectral decomposition.
@@ -734,9 +754,9 @@ class BrainPointCloud:
 
         with progress_simple("Estimating normals", total=N) as tick:
             for i in range(N):
-                nbrs = self.points[indices[i]]             # (k, 3)
-                cov = np.cov(nbrs, rowvar=False)           # (3, 3)
-                eigvals, eigvecs = np.linalg.eigh(cov)
+                nbrs = self.points[indices[i]]  # (k, 3)
+                cov = np.cov(nbrs, rowvar=False)  # (3, 3)
+                _eigvals, eigvecs = np.linalg.eigh(cov)
                 # Smallest eigenvalue → normal direction.
                 normals[i] = eigvecs[:, 0]
 
@@ -758,7 +778,7 @@ class BrainPointCloud:
     def local_curvature(
         self,
         k: int = 15,
-    ) -> Tuple[ScalarMap, ScalarMap]:
+    ) -> tuple[ScalarMap, ScalarMap]:
         """Estimate per-point curvature from local PCA eigenvalues.
 
         The ratio λ₀ / (λ₀ + λ₁ + λ₂) of the smallest eigenvalue
@@ -786,7 +806,7 @@ class BrainPointCloud:
             for i in range(N):
                 nbrs = self.points[indices[i]]
                 cov = np.cov(nbrs, rowvar=False)
-                eigvals = np.linalg.eigvalsh(cov)          # ascending
+                eigvals = np.linalg.eigvalsh(cov)  # ascending
                 total = eigvals.sum()
                 if total > 1e-20:
                     curvature[i] = eigvals[0] / total
@@ -804,12 +824,15 @@ class BrainPointCloud:
     def cluster(
         self,
         method: Literal[
-            "hdbscan", "spectral", "kmeans", "dbscan",
+            "hdbscan",
+            "spectral",
+            "kmeans",
+            "dbscan",
         ] = "hdbscan",
         *,
-        n_clusters: Optional[int] = None,
+        n_clusters: int | None = None,
         min_cluster_size: int = 50,
-        eps: Optional[float] = None,
+        eps: float | None = None,
         **kwargs: Any,
     ) -> np.ndarray:
         """Atlas-free spatial clustering of the point cloud.
@@ -850,17 +873,23 @@ class BrainPointCloud:
             if n_clusters is None:
                 raise ValueError("n_clusters required for spectral clustering.")
             return _cluster_spectral(
-                self.points, n_clusters=n_clusters, **kwargs,
+                self.points,
+                n_clusters=n_clusters,
+                **kwargs,
             )
         elif method == "kmeans":
             if n_clusters is None:
                 raise ValueError("n_clusters required for kmeans.")
             return _cluster_kmeans(
-                self.points, n_clusters=n_clusters, **kwargs,
+                self.points,
+                n_clusters=n_clusters,
+                **kwargs,
             )
         elif method == "dbscan":
             return _cluster_dbscan(
-                self.points, eps=eps, **kwargs,
+                self.points,
+                eps=eps,
+                **kwargs,
             )
         else:
             raise ValueError(f"Unknown clustering method: {method!r}")
@@ -871,7 +900,7 @@ class BrainPointCloud:
         self,
         n: int,
         *,
-        seed: Optional[int] = None,
+        seed: int | None = None,
     ) -> BrainPointCloud:
         """Return a subsampled copy via farthest-point sampling.
 
@@ -885,7 +914,7 @@ class BrainPointCloud:
         -------
         BrainPointCloud
         """
-        sampled, idx = farthest_point_sampling(self.points, n, seed=seed)
+        sampled, _idx = farthest_point_sampling(self.points, n, seed=seed)
         meta = {
             **self.metadata,
             "subsampled_to": n,
@@ -918,13 +947,17 @@ class BrainPointCloud:
         from spectralbrain.core.base import detect_density_outliers
 
         outliers = detect_density_outliers(
-            self.points, k=k, threshold_sigma=threshold_sigma,
+            self.points,
+            k=k,
+            threshold_sigma=threshold_sigma,
         )
         clean = self.points[~outliers]
         n_removed = outliers.sum()
         logger.info(
             "Denoised: removed %d / %d points (%.1f%%)",
-            n_removed, self.n_points, 100 * n_removed / self.n_points,
+            n_removed,
+            self.n_points,
+            100 * n_removed / self.n_points,
         )
         meta = {
             **self.metadata,
@@ -953,12 +986,13 @@ class BrainPointCloud:
 # §6  LAPLACIAN IMPLEMENTATIONS
 # ======================================================================
 
+
 def _knn_laplacian(
     points: Points,
     *,
     k: int = 30,
-    sigma: Optional[float] = None,
-) -> Tuple[SparseMatrix, MassMatrix]:
+    sigma: float | None = None,
+) -> tuple[SparseMatrix, MassMatrix]:
     """Gaussian-weighted kNN graph Laplacian.
 
     W_ij = exp(-||x_i - x_j||² / (2σ²))  if j ∈ kNN(i)
@@ -984,14 +1018,14 @@ def _knn_laplacian(
         sigma = float(np.median(dists[:, 1:]))
         if sigma < 1e-10:
             sigma = 1.0
-    sigma2 = 2.0 * sigma ** 2
+    sigma2 = 2.0 * sigma**2
 
     rows = np.repeat(np.arange(N), k)
     cols = indices.ravel()
-    weights = np.exp(-dists.ravel() ** 2 / sigma2)
+    weights = np.exp(-(dists.ravel() ** 2) / sigma2)
 
     W = sp.csr_matrix((weights, (rows, cols)), shape=(N, N))
-    W = (W + W.T) / 2                                     # symmetrise
+    W = (W + W.T) / 2  # symmetrise
 
     D_vals = np.asarray(W.sum(axis=1)).ravel()
     D = sp.diags(D_vals, 0, shape=(N, N), format="csc")
@@ -1007,8 +1041,8 @@ def _belkin_niyogi_laplacian(
     points: Points,
     *,
     k: int = 30,
-    epsilon: Optional[float] = None,
-) -> Tuple[SparseMatrix, MassMatrix]:
+    epsilon: float | None = None,
+) -> tuple[SparseMatrix, MassMatrix]:
     """Belkin–Niyogi heat-kernel Laplacian with convergence guarantees.
 
     The graph Laplacian L_ε converges to the continuous Laplace–
@@ -1036,7 +1070,7 @@ def _belkin_niyogi_laplacian(
 
     if epsilon is None:
         mean_dist = float(np.mean(dists[:, 1:]))
-        epsilon = mean_dist ** 2
+        epsilon = mean_dist**2
         if epsilon < 1e-10:
             epsilon = 1.0
 
@@ -1057,7 +1091,9 @@ def _belkin_niyogi_laplacian(
     # Uniform mass for point clouds (1/N per point).
     M = sp.diags(
         np.full(N, 1.0 / N, dtype=np.float64),
-        0, shape=(N, N), format="csc",
+        0,
+        shape=(N, N),
+        format="csc",
     )
 
     return L, M
@@ -1067,7 +1103,7 @@ def _robust_laplacian_pc(
     points: Points,
     *,
     mollify_factor: float = 1e-5,
-) -> Tuple[SparseMatrix, MassMatrix]:
+) -> tuple[SparseMatrix, MassMatrix]:
     """Sharp–Crane tufted Laplacian for point clouds (SGP 2020).
 
     Parameters
@@ -1083,8 +1119,7 @@ def _robust_laplacian_pc(
         import robust_laplacian as rl
     except ImportError as exc:
         raise ImportError(
-            "robust_laplacian is required for method='robust'.\n"
-            "  pip install robust_laplacian"
+            "robust_laplacian is required for method='robust'.\n  pip install robust_laplacian"
         ) from exc
 
     L, M = rl.point_cloud_laplacian(
@@ -1098,6 +1133,7 @@ def _robust_laplacian_pc(
 # §7  CLUSTERING IMPLEMENTATIONS
 # ======================================================================
 
+
 def _cluster_hdbscan(
     points: Points,
     *,
@@ -1107,14 +1143,18 @@ def _cluster_hdbscan(
     """HDBSCAN clustering."""
     try:
         from sklearn.cluster import HDBSCAN
+
         clusterer = HDBSCAN(
-            min_cluster_size=min_cluster_size, **kwargs,
+            min_cluster_size=min_cluster_size,
+            **kwargs,
         )
     except ImportError:
         try:
             import hdbscan
+
             clusterer = hdbscan.HDBSCAN(
-                min_cluster_size=min_cluster_size, **kwargs,
+                min_cluster_size=min_cluster_size,
+                **kwargs,
             )
         except ImportError as exc:
             raise ImportError(
@@ -1127,7 +1167,9 @@ def _cluster_hdbscan(
     n_noise = (labels == -1).sum()
     logger.info(
         "HDBSCAN: %d clusters, %d noise points (%.1f%%)",
-        n_clusters, n_noise, 100 * n_noise / len(labels),
+        n_clusters,
+        n_noise,
+        100 * n_noise / len(labels),
     )
     return labels
 
@@ -1148,7 +1190,7 @@ def _cluster_spectral(
     sigma = float(np.median(dists[:, 1:]))
     rows = np.repeat(np.arange(N), k)
     cols = indices.ravel()
-    weights = np.exp(-dists.ravel() ** 2 / (2 * sigma ** 2))
+    weights = np.exp(-(dists.ravel() ** 2) / (2 * sigma**2))
     W = sp.csr_matrix((weights, (rows, cols)), shape=(N, N))
     W = (W + W.T) / 2
 
@@ -1170,6 +1212,7 @@ def _cluster_kmeans(
 ) -> np.ndarray:
     """K-means clustering."""
     from sklearn.cluster import KMeans
+
     km = KMeans(n_clusters=n_clusters, n_init=10, **kwargs)
     labels = km.fit_predict(points)
     logger.info("K-means: %d clusters", n_clusters)
@@ -1179,7 +1222,7 @@ def _cluster_kmeans(
 def _cluster_dbscan(
     points: Points,
     *,
-    eps: Optional[float] = None,
+    eps: float | None = None,
     min_samples: int = 10,
     **kwargs: Any,
 ) -> np.ndarray:

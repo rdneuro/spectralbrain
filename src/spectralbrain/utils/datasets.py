@@ -7,11 +7,11 @@ and synthetic example datasets for tutorials and testing.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 import numpy as np
 
-from spectralbrain.runtime import Faces, PathLike, Vertices, get_logger
+from spectralbrain.runtime import Faces, Vertices, get_logger
 
 logger = get_logger(__name__)
 
@@ -22,13 +22,14 @@ _CACHE_DIR = Path.home() / ".cache" / "spectralbrain" / "datasets"
 # §1  SYNTHETIC EXAMPLE DATASETS
 # ======================================================================
 
+
 def make_two_group_example(
     n_per_group: int = 30,
     n_vertices: int = 500,
     n_scales: int = 10,
     effect_size: float = 0.5,
     seed: int = 42,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Generate a two-group synthetic dataset for tutorials.
 
     Creates descriptors for controls and patients with a focal
@@ -80,9 +81,9 @@ def make_two_group_example(
 def make_normative_example(
     n_subjects: int = 200,
     n_vertices: int = 500,
-    age_range: Tuple[float, float] = (20, 80),
+    age_range: tuple[float, float] = (20, 80),
     seed: int = 42,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Generate a synthetic normative cohort with age effects.
 
     Parameters
@@ -125,7 +126,7 @@ def make_connectome_example(
     n_networks: int = 5,
     group_effect: float = 0.3,
     seed: int = 42,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Generate synthetic geometric connectomes for two groups.
 
     Parameters
@@ -181,7 +182,7 @@ def make_laterality_example(
     n_features: int = 50,
     asymmetry: float = 0.3,
     seed: int = 42,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Generate synthetic bilateral descriptors for asymmetry analysis.
 
     Parameters
@@ -219,10 +220,11 @@ def make_laterality_example(
 # §2  TEMPLATE LOADERS
 # ======================================================================
 
+
 def fetch_fsaverage(
     mesh: str = "pial",
     hemisphere: str = "lh",
-) -> Tuple[Vertices, Faces]:
+) -> tuple[Vertices, Faces]:
     """Load fsaverage template surfaces from nibabel's bundled data.
 
     Parameters
@@ -245,7 +247,7 @@ def fetch_fsaverage(
     # nibabel ships fsaverage in its data directory.
     try:
         data_dir = Path(nib.__file__).parent / "freesurfer" / "data"
-        surf_path = data_dir / f"fsaverage" / "surf" / f"{hemisphere}.{mesh}"
+        surf_path = data_dir / "fsaverage" / "surf" / f"{hemisphere}.{mesh}"
         if surf_path.exists():
             v, f = fs.read_geometry(str(surf_path))
             return np.asarray(v, np.float64), np.asarray(f, np.int64)
@@ -255,7 +257,8 @@ def fetch_fsaverage(
     # Fallback: try nilearn's fetch_surf_fsaverage.
     try:
         from nilearn.datasets import fetch_surf_fsaverage
-        fsavg = fetch_surf_fsaverage(mesh=f"fsaverage")
+
+        fsavg = fetch_surf_fsaverage(mesh="fsaverage")
         key = f"{mesh}_{hemisphere}"
         v, f = nib.load(fsavg[key]).darrays[0].data, nib.load(fsavg[key]).darrays[1].data
         return np.asarray(v, np.float64), np.asarray(f, np.int64)
@@ -263,8 +266,7 @@ def fetch_fsaverage(
         pass
 
     raise FileNotFoundError(
-        "Could not load fsaverage. Install nibabel or nilearn:\n"
-        "  pip install nibabel nilearn"
+        "Could not load fsaverage. Install nibabel or nilearn:\n  pip install nibabel nilearn"
     )
 
 
@@ -272,11 +274,12 @@ def fetch_fsaverage(
 # §3  EXAMPLE MESH/POINTCLOUD
 # ======================================================================
 
+
 def example_sphere(
     n_lat: int = 30,
     n_lon: int = 60,
     radius: float = 50.0,
-) -> Tuple[Vertices, Faces]:
+) -> tuple[Vertices, Faces]:
     """Quick sphere mesh for testing.
 
     Returns
@@ -284,6 +287,7 @@ def example_sphere(
     vertices, faces
     """
     from spectralbrain.statistics.surrogates import SyntheticMesh
+
     return SyntheticMesh(seed=0).sphere(n_lat, n_lon, radius)
 
 
@@ -306,6 +310,7 @@ def example_point_cloud(
     ndarray, shape (n_points, 3)
     """
     from spectralbrain.statistics.surrogates import SyntheticPointCloud
+
     gen = SyntheticPointCloud(seed=seed)
     if shape == "sphere":
         return gen.sphere(n_points)
@@ -319,11 +324,11 @@ def example_point_cloud(
 
 
 __all__ = [
-    "make_two_group_example",
-    "make_normative_example",
+    "example_point_cloud",
+    "example_sphere",
+    "fetch_fsaverage",
     "make_connectome_example",
     "make_laterality_example",
-    "fetch_fsaverage",
-    "example_sphere",
-    "example_point_cloud",
+    "make_normative_example",
+    "make_two_group_example",
 ]

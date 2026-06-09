@@ -15,14 +15,13 @@ Implemented
 
 from __future__ import annotations
 
-from typing import Dict, List, Literal, Optional, Tuple
+from typing import Literal
 
 import numpy as np
 
 from spectralbrain.core.base import SpectralDecomposition
 from spectralbrain.runtime import (
     DescriptorMatrix,
-    ScalarMap,
     get_logger,
     progress_simple,
 )
@@ -34,12 +33,13 @@ logger = get_logger(__name__)
 # §1  FUNCTIONAL MAP ESTIMATION
 # ======================================================================
 
+
 def compute_functional_map(
     decomp_a: SpectralDecomposition,
     decomp_b: SpectralDecomposition,
     *,
     n_basis: int = 30,
-    descriptor_pairs: Optional[List[Tuple[np.ndarray, np.ndarray]]] = None,
+    descriptor_pairs: list[tuple[np.ndarray, np.ndarray]] | None = None,
     regularize: float = 1e-3,
 ) -> np.ndarray:
     """Estimate a functional map C between two shapes.
@@ -73,17 +73,16 @@ def compute_functional_map(
     k_b = min(n_basis, decomp_b.n_eigenvalues)
     k = min(k_a, k_b)
 
-    Phi_a = decomp_a.eigenvectors[:, :k]                   # (N_a, k)
-    Phi_b = decomp_b.eigenvectors[:, :k]                   # (N_b, k)
+    Phi_a = decomp_a.eigenvectors[:, :k]  # (N_a, k)
+    Phi_b = decomp_b.eigenvectors[:, :k]  # (N_b, k)
 
     if descriptor_pairs is None:
         # Default: use HKS at 5 time-scales.
         from spectralbrain.spectral.descriptors import compute_hks
-        hks_a = compute_hks(decomp_a, n_times=5)            # (N_a, 5)
-        hks_b = compute_hks(decomp_b, n_times=5)            # (N_b, 5)
-        descriptor_pairs = [
-            (hks_a[:, t], hks_b[:, t]) for t in range(5)
-        ]
+
+        hks_a = compute_hks(decomp_a, n_times=5)  # (N_a, 5)
+        hks_b = compute_hks(decomp_b, n_times=5)  # (N_b, 5)
+        descriptor_pairs = [(hks_a[:, t], hks_b[:, t]) for t in range(5)]
 
     # Project descriptors onto eigenbases.
     # M_a-weighted projection: a_coeff = Φ_a^T · M_a · f_a
@@ -105,8 +104,8 @@ def compute_functional_map(
         A_coeffs.append(a_c)
         B_coeffs.append(b_c)
 
-    A_mat = np.column_stack(A_coeffs)                       # (k, n_desc)
-    B_mat = np.column_stack(B_coeffs)                       # (k, n_desc)
+    A_mat = np.column_stack(A_coeffs)  # (k, n_desc)
+    B_mat = np.column_stack(B_coeffs)  # (k, n_desc)
 
     # Solve: C · A_mat ≈ B_mat  →  C = B_mat · A_mat^+ (regularised)
     # Ridge: C = B_mat · A_mat^T · (A_mat · A_mat^T + λI)^{-1}
@@ -120,6 +119,7 @@ def compute_functional_map(
 # ======================================================================
 # §2  SHAPE DIFFERENCE OPERATORS
 # ======================================================================
+
 
 def shape_difference_operator(
     C: np.ndarray,
@@ -162,15 +162,16 @@ def shape_difference_operator(
 # §3  DWKS — Deformation Wave Kernel Signature
 # ======================================================================
 
+
 def compute_dwks(
     decomp_source: SpectralDecomposition,
     decomp_target: SpectralDecomposition,
     *,
     n_basis: int = 30,
     n_energies: int = 50,
-    sigma: Optional[float] = None,
+    sigma: float | None = None,
     diff_type: Literal["area", "conformal"] = "area",
-    descriptor_pairs: Optional[List[Tuple[np.ndarray, np.ndarray]]] = None,
+    descriptor_pairs: list[tuple[np.ndarray, np.ndarray]] | None = None,
 ) -> DescriptorMatrix:
     """Deformation Wave Kernel Signature.
 
@@ -211,7 +212,8 @@ def compute_dwks(
     """
     # Step 1: Functional map C: source → target.
     C = compute_functional_map(
-        decomp_source, decomp_target,
+        decomp_source,
+        decomp_target,
         n_basis=n_basis,
         descriptor_pairs=descriptor_pairs,
     )
@@ -220,7 +222,7 @@ def compute_dwks(
     D = shape_difference_operator(C, type=diff_type)
 
     # Step 3: Eigendecompose D.
-    D_evals, D_evecs = np.linalg.eigh(D)                   # (k,), (k, k)
+    D_evals, D_evecs = np.linalg.eigh(D)  # (k,), (k, k)
     D_evals = np.clip(D_evals, 1e-10, None)
 
     # Step 4: Apply WKS filter to D's eigenvalues.
@@ -238,38 +240,41 @@ def compute_dwks(
 
     # WKS on D's spectrum: (n_energies, k)
     diff = energies[:, None] - log_D_evals[None, :]
-    gauss = np.exp(-diff ** 2 / (2 * sigma ** 2))
+    gauss = np.exp(-(diff**2) / (2 * sigma**2))
     C_norm = gauss.sum(axis=1, keepdims=True)
     C_norm = np.clip(C_norm, 1e-30, None)
-    gauss_norm = gauss / C_norm                             # (n_energies, k)
+    gauss_norm = gauss / C_norm  # (n_energies, k)
 
     # Step 5: Pull back to source shape via eigenvectors.
     # D_evecs live in the spectral basis; pull to spatial via Φ_source.
     k = min(n_basis, decomp_source.n_eigenvalues, D_evecs.shape[0])
-    Phi_source = decomp_source.eigenvectors[:, :k]          # (N, k)
-    D_evecs_trunc = D_evecs[:k, :]                          # (k, k)
+    Phi_source = decomp_source.eigenvectors[:, :k]  # (N, k)
+    D_evecs_trunc = D_evecs[:k, :]  # (k, k)
 
     # DWKS(x, e) = Σ_j g_e(μ_j) · (Φ · ψ_j)²(x)
     # where μ_j are D's eigenvalues and ψ_j are D's eigenvectors.
-    spatial_modes = Phi_source @ D_evecs_trunc               # (N, k)
-    spatial_modes_sq = spatial_modes ** 2                     # (N, k)
-    dwks = spatial_modes_sq @ gauss_norm.T                   # (N, n_energies)
+    spatial_modes = Phi_source @ D_evecs_trunc  # (N, k)
+    spatial_modes_sq = spatial_modes**2  # (N, k)
+    dwks = spatial_modes_sq @ gauss_norm.T  # (N, n_energies)
 
     logger.info(
         "DWKS: N=%d, n_energies=%d, n_basis=%d, diff=%s",
-        dwks.shape[0], n_energies, n_basis, diff_type,
+        dwks.shape[0],
+        n_energies,
+        n_basis,
+        diff_type,
     )
     return dwks
 
 
 def compute_dwks_collection(
     reference: SpectralDecomposition,
-    collection: Dict[str, SpectralDecomposition],
+    collection: dict[str, SpectralDecomposition],
     *,
     n_basis: int = 30,
     n_energies: int = 50,
     diff_type: str = "area",
-) -> Dict[str, DescriptorMatrix]:
+) -> dict[str, DescriptorMatrix]:
     """Compute DWKS for each shape in a collection against a reference.
 
     Parameters
@@ -285,12 +290,13 @@ def compute_dwks_collection(
     dict of {name: ndarray}
         DWKS descriptor per shape.
     """
-    results: Dict[str, DescriptorMatrix] = {}
+    results: dict[str, DescriptorMatrix] = {}
 
     with progress_simple("DWKS collection", total=len(collection)) as tick:
         for name, decomp in collection.items():
             results[name] = compute_dwks(
-                reference, decomp,
+                reference,
+                decomp,
                 n_basis=n_basis,
                 n_energies=n_energies,
                 diff_type=diff_type,
@@ -298,16 +304,17 @@ def compute_dwks_collection(
             tick(1)
 
     logger.info(
-        "DWKS collection: %d shapes vs reference", len(results),
+        "DWKS collection: %d shapes vs reference",
+        len(results),
     )
     return results
 
 
 # ======================================================================
 
-__all__: List[str] = [
-    "compute_functional_map",
-    "shape_difference_operator",
+__all__: list[str] = [
     "compute_dwks",
     "compute_dwks_collection",
+    "compute_functional_map",
+    "shape_difference_operator",
 ]

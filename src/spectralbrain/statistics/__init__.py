@@ -1,78 +1,129 @@
 """SpectralBrain statistics — EDA, frequentist, Bayesian, normative, surrogates, clustering."""
 
-from spectralbrain.statistics.eda import (  # noqa: F401
-    SpectralQCReport, spectral_qc,
-    OptimalKResult, optimal_k,
-    descriptor_profile, descriptor_correlation,
-    compute_icc, batch_effect_scan, eigenvalue_stability,
-    DescriptorRecommendation, recommend_descriptor,
-)
 from spectralbrain.statistics.analysis import (  # noqa: F401
+    ClassificationResult,
     VertexWiseResult,
-    vertexwise_ttest, vertexwise_mannwhitney, vertexwise_permutation,
-    tfce, cohens_d_map, hedges_g_map,
-    vertexwise_correlation, surprise_map, surprise_map_percentile,
-    ClassificationResult, classify,
-    fisher_vector, fit_gmm_codebook, bag_of_spectral_words,
+    bag_of_spectral_words,
+    classify,
+    cohens_d_map,
+    emd_distance,
+    energy_distance,
+    fisher_vector,
+    fit_gmm_codebook,
+    hedges_g_map,
+    js_divergence,
     kernel_mean_embedding,
-    emd_distance, kl_divergence, js_divergence, energy_distance,
+    kl_divergence,
+    surprise_map,
+    surprise_map_percentile,
+    tfce,
+    vertexwise_correlation,
+    vertexwise_mannwhitney,
+    vertexwise_permutation,
+    vertexwise_ttest,
 )
 from spectralbrain.statistics.bayesian import (  # noqa: F401
-    BayesianModel, HorseshoeRegression,
-    BayesianGroupComparison, HierarchicalLinearModel,
-    GaussianProcessNormative, BayesianSpatialModel,
     BayesianConnectome,
-)
-from spectralbrain.statistics.normative import (  # noqa: F401
-    HarmonizationResult, harmonize_combat, harmonize_combat_gam, harmonize,
-    NormativeModel, centile_curves, z_score_map, extreme_value_map,
-    NonInferiorityResult, non_inferiority_test,
-    equivalence_test_tost, auc_comparison_delong,
-    MethodComparisonResult, compare_methods,
-)
-from spectralbrain.statistics.surrogates import (  # noqa: F401
-    bootstrap_ci, bootstrap_paired_difference,
-    null_eigenvalue_permutation, null_phase_randomisation,
-    null_spin_permutation, null_subject_permutation,
-    null_edge_rewiring, null_parametric,
-    SyntheticDescriptors, SyntheticMesh, SyntheticPointCloud,
+    BayesianGroupComparison,
+    BayesianModel,
+    BayesianSpatialModel,
+    GaussianProcessNormative,
+    HierarchicalLinearModel,
+    HorseshoeRegression,
 )
 from spectralbrain.statistics.clustering import (  # noqa: F401
-    # Result containers
-    ClusterResult, TemporalClusterResult, FusionResult,
     BayesianClusterConfirmation,
-    VineyardResult, MapperResult, TensorDecompositionResult,
+    # Result containers
+    ClusterResult,
+    FusionResult,
+    MapperResult,
     ScaleSpaceBlobResult,
-    # Distance / affinity construction
-    build_descriptor_distance, build_hybrid_distance,
-    build_hks_affinity_graph,
-    # Spatial clustering
-    cluster_hdbscan, cluster_leiden, cluster_gnmf, cluster_dpmm,
-    cluster_persistence, cluster_spectral_coclustering,
-    # Temporal / scale clustering
-    cluster_temporal_fpca, cluster_temporal_dtw,
-    # Spatio-temporal joint clustering
-    cluster_spatiotemporal_gnmf, cluster_spatiotemporal_stdbscan,
-    # HKS + WKS descriptor fusion
-    fuse_concatenate, fuse_joint_nmf, fuse_multi_kernel,
-    # Bayesian cluster confirmation
-    confirm_clusters_bayesian,
-    # Quality metrics
-    cluster_quality, cluster_comparison,
-    # Persistence vineyards
-    cluster_vineyards,
-    # Mapper TDA
-    cluster_mapper,
-    # Tensor decomposition
-    cluster_tensor_decomposition,
-    # Joint time-vertex GSP
-    denoise_joint_timevertex, cluster_joint_spectral,
-    # Scale-space blob tracking
-    cluster_scalespace_blobs,
-    # Multi-view clustering
-    cluster_multiview,
-    # Wavelet clustering
-    cluster_wavelet_coefficients,
+    TemporalClusterResult,
+    TensorDecompositionResult,
+    VineyardResult,
     # Convenience
     auto_cluster,
+    # Distance / affinity construction
+    build_descriptor_distance,
+    build_hks_affinity_graph,
+    build_hybrid_distance,
+    cluster_comparison,
+    cluster_dpmm,
+    cluster_gnmf,
+    # Spatial clustering
+    cluster_hdbscan,
+    cluster_joint_spectral,
+    cluster_leiden,
+    # Mapper TDA
+    cluster_mapper,
+    # Multi-view clustering
+    cluster_multiview,
+    cluster_persistence,
+    # Quality metrics
+    cluster_quality,
+    # Scale-space blob tracking
+    cluster_scalespace_blobs,
+    # Spatio-temporal joint clustering
+    cluster_spatiotemporal_gnmf,
+    cluster_spatiotemporal_stdbscan,
+    cluster_spectral_coclustering,
+    cluster_temporal_dtw,
+    # Temporal / scale clustering
+    cluster_temporal_fpca,
+    # Tensor decomposition
+    cluster_tensor_decomposition,
+    # Persistence vineyards
+    cluster_vineyards,
+    # Wavelet clustering
+    cluster_wavelet_coefficients,
+    # Bayesian cluster confirmation
+    confirm_clusters_bayesian,
+    # Joint time-vertex GSP
+    denoise_joint_timevertex,
+    # HKS + WKS descriptor fusion
+    fuse_concatenate,
+    fuse_joint_nmf,
+    fuse_multi_kernel,
+)
+from spectralbrain.statistics.eda import (  # noqa: F401
+    DescriptorRecommendation,
+    OptimalKResult,
+    SpectralQCReport,
+    batch_effect_scan,
+    compute_icc,
+    descriptor_correlation,
+    descriptor_profile,
+    eigenvalue_stability,
+    optimal_k,
+    recommend_descriptor,
+    spectral_qc,
+)
+from spectralbrain.statistics.normative import (  # noqa: F401
+    HarmonizationResult,
+    MethodComparisonResult,
+    NonInferiorityResult,
+    NormativeModel,
+    auc_comparison_delong,
+    centile_curves,
+    compare_methods,
+    equivalence_test_tost,
+    extreme_value_map,
+    harmonize,
+    harmonize_combat,
+    harmonize_combat_gam,
+    non_inferiority_test,
+    z_score_map,
+)
+from spectralbrain.statistics.surrogates import (  # noqa: F401
+    SyntheticDescriptors,
+    SyntheticMesh,
+    SyntheticPointCloud,
+    bootstrap_ci,
+    bootstrap_paired_difference,
+    null_edge_rewiring,
+    null_eigenvalue_permutation,
+    null_parametric,
+    null_phase_randomisation,
+    null_spin_permutation,
+    null_subject_permutation,
 )

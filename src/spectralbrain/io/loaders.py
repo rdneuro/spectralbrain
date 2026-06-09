@@ -2,7 +2,7 @@
 
 Every loader returns plain NumPy arrays using the canonical type
 aliases from :mod:`spectralbrain.runtime`.  No loader returns
-library-specific objects (nibabel images, trimesh meshes, etc.) —
+library-specific objects (nibabel images, PyVista meshes, etc.) —
 downstream modules receive only arrays and dicts.
 
 The auto-detection function :func:`load` inspects the file extension
@@ -13,33 +13,30 @@ Dependencies
 ------------
 - **nibabel** — required for FreeSurfer, GIfTI, NIfTI, MGZ.
   Lazy-imported so ``import spectralbrain`` works without it.
-- **trimesh** — optional, for .ply / .obj / .stl.  Falls back to
-  nibabel for .gii and to a minimal numpy-based PLY reader.
-- **h5py** — optional, for HDF5 cache files.
+- **pyvista** — core dependency; reads generic meshes
+  (.ply / .obj / .stl / .vtk / .vtp) natively via VTK.
+- **h5py** — core dependency, for HDF5 cache files.
 """
 
 from __future__ import annotations
 
-import struct
+from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Tuple, Union
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 
+if TYPE_CHECKING:
+    import pandas as pd
+
 from spectralbrain.runtime import (
     DescriptorMatrix,
-    Eigenvalues,
-    Eigenvectors,
     Faces,
     GeometryFormat,
-    GlobalDescriptor,
     LabelArray,
-    MassMatrix,
-    Normals,
     PathLike,
     Points,
     ScalarMap,
-    SparseMatrix,
     Vertices,
     get_logger,
 )
@@ -50,27 +47,16 @@ logger = get_logger(__name__)
 # Lazy imports — keep ``import spectralbrain`` fast
 # ======================================================================
 
+
 def _require_nibabel():
     """Import nibabel or raise a helpful error."""
     try:
         import nibabel as nib
+
         return nib
     except ImportError as exc:
         raise ImportError(
-            "nibabel is required for neuroimaging I/O.\n"
-            "  pip install nibabel"
-        ) from exc
-
-
-def _require_trimesh():
-    """Import trimesh or raise a helpful error."""
-    try:
-        import trimesh
-        return trimesh
-    except ImportError as exc:
-        raise ImportError(
-            "trimesh is required for generic mesh I/O (.ply, .obj, .stl).\n"
-            "  pip install trimesh"
+            "nibabel is required for neuroimaging I/O.\n  pip install nibabel"
         ) from exc
 
 
@@ -78,12 +64,10 @@ def _require_h5py():
     """Import h5py or raise a helpful error."""
     try:
         import h5py
+
         return h5py
     except ImportError as exc:
-        raise ImportError(
-            "h5py is required for HDF5 I/O.\n"
-            "  pip install h5py"
-        ) from exc
+        raise ImportError("h5py is required for HDF5 I/O.\n  pip install h5py") from exc
 
 
 # ======================================================================
@@ -93,7 +77,7 @@ def _require_h5py():
 # Extension → GeometryFormat mapping.  Checked in order; first match
 # wins.  Compound extensions (.surf.gii) are tried before simple ones.
 
-_EXT_MAP: Dict[str, GeometryFormat] = {
+_EXT_MAP: dict[str, GeometryFormat] = {
     # GIfTI (compound extensions first)
     ".surf.gii": GeometryFormat.GIFTI_SURFACE,
     ".func.gii": GeometryFormat.GIFTI_FUNC,
@@ -166,29 +150,35 @@ def detect_format(path: PathLike) -> GeometryFormat:
     # Heuristic: common FS surface names without extensions.
     stem = p.name.lower()
     fs_surf_names = {
-        "lh.white", "rh.white", "lh.pial", "rh.pial",
-        "lh.inflated", "rh.inflated", "lh.sphere", "rh.sphere",
-        "lh.midthickness", "rh.midthickness",
-        "lh.smoothwm", "rh.smoothwm",
+        "lh.white",
+        "rh.white",
+        "lh.pial",
+        "rh.pial",
+        "lh.inflated",
+        "rh.inflated",
+        "lh.sphere",
+        "rh.sphere",
+        "lh.midthickness",
+        "rh.midthickness",
+        "lh.smoothwm",
+        "rh.smoothwm",
     }
     if stem in fs_surf_names:
         return GeometryFormat.FREESURFER_SURFACE
 
-    raise ValueError(
-        f"Cannot detect format of '{p}'.  "
-        f"Known extensions: {sorted(_EXT_MAP.keys())}"
-    )
+    raise ValueError(f"Cannot detect format of '{p}'.  Known extensions: {sorted(_EXT_MAP.keys())}")
 
 
 # ======================================================================
 # §2  UNIFIED LOADER
 # ======================================================================
 
+
 def load(
     path: PathLike,
     *,
-    fmt: Optional[GeometryFormat] = None,
-) -> Dict[str, Any]:
+    fmt: GeometryFormat | None = None,
+) -> dict[str, Any]:
     """Auto-detect format and load a neuroimaging / geometry file.
 
     This is the recommended entry point for users who don't want to
@@ -270,7 +260,8 @@ def load(
 
 # ── FreeSurfer surface (.white, .pial, …) ────────────────────────────
 
-def _load_fs_surface(path: Path) -> Dict[str, Any]:
+
+def _load_fs_surface(path: Path) -> dict[str, Any]:
     """Load a FreeSurfer binary surface file (.white, .pial, .inflated)."""
     nib = _require_nibabel()
     vertices, faces = nib.freesurfer.read_geometry(str(path))
@@ -280,7 +271,7 @@ def _load_fs_surface(path: Path) -> Dict[str, Any]:
     }
 
 
-def load_freesurfer_surface(path: PathLike) -> Tuple[Vertices, Faces]:
+def load_freesurfer_surface(path: PathLike) -> tuple[Vertices, Faces]:
     """Load a FreeSurfer surface file.
 
     Parameters
@@ -308,15 +299,13 @@ def load_freesurfer_surface(path: PathLike) -> Tuple[Vertices, Faces]:
 
 # ── FreeSurfer annotation (.annot) ────────────────────────────────────
 
-def _load_fs_annot(path: Path) -> Dict[str, Any]:
+
+def _load_fs_annot(path: Path) -> dict[str, Any]:
     """Load a FreeSurfer annotation file (.annot)."""
     nib = _require_nibabel()
     labels, ctab, names = nib.freesurfer.read_annot(str(path))
     # names come as bytes in some nibabel versions; decode.
-    decoded_names = [
-        n.decode("utf-8") if isinstance(n, bytes) else str(n)
-        for n in names
-    ]
+    decoded_names = [n.decode("utf-8") if isinstance(n, bytes) else str(n) for n in names]
     return {
         "labels": np.asarray(labels, dtype=np.int32),
         "ctab": np.asarray(ctab),
@@ -326,7 +315,7 @@ def _load_fs_annot(path: Path) -> Dict[str, Any]:
 
 def load_freesurfer_annot(
     path: PathLike,
-) -> Tuple[LabelArray, np.ndarray, List[str]]:
+) -> tuple[LabelArray, np.ndarray, list[str]]:
     """Load a FreeSurfer annotation (parcellation overlay).
 
     Parameters
@@ -355,7 +344,8 @@ def load_freesurfer_annot(
 
 # ── FreeSurfer morphometry (.thickness, .curv, .sulc, .area) ─────────
 
-def _load_fs_morph(path: Path) -> Dict[str, Any]:
+
+def _load_fs_morph(path: Path) -> dict[str, Any]:
     """Load a FreeSurfer morphometry overlay (.thickness, .curv, .sulc)."""
     nib = _require_nibabel()
     scalars = nib.freesurfer.read_morph_data(str(path))
@@ -382,25 +372,26 @@ def load_freesurfer_morph(path: PathLike) -> ScalarMap:
 
 # ── FreeSurfer label (.label) ─────────────────────────────────────────
 
-def _load_fs_label(path: Path) -> Dict[str, Any]:
+
+def _load_fs_label(path: Path) -> dict[str, Any]:
     """Load a FreeSurfer label file (.label)."""
     nib = _require_nibabel()
     label_array, scalar_values = nib.freesurfer.read_label(
-        str(path), read_scalars=True,
+        str(path),
+        read_scalars=True,
     )
     return {
         "indices": np.asarray(label_array, dtype=np.int64),
         "scalars": (
-            np.asarray(scalar_values, dtype=np.float64)
-            if scalar_values is not None
-            else None
+            np.asarray(scalar_values, dtype=np.float64) if scalar_values is not None else None
         ),
     }
 
 
 # ── GIfTI surface (.surf.gii) ────────────────────────────────────────
 
-def _load_gifti_surface(path: Path) -> Dict[str, Any]:
+
+def _load_gifti_surface(path: Path) -> dict[str, Any]:
     """Load a GIFTI surface file (.surf.gii)."""
     nib = _require_nibabel()
     img = nib.load(str(path))
@@ -412,7 +403,7 @@ def _load_gifti_surface(path: Path) -> Dict[str, Any]:
     }
 
 
-def load_gifti_surface(path: PathLike) -> Tuple[Vertices, Faces]:
+def load_gifti_surface(path: PathLike) -> tuple[Vertices, Faces]:
     """Load a GIfTI surface file.
 
     Parameters
@@ -431,21 +422,20 @@ def load_gifti_surface(path: PathLike) -> Tuple[Vertices, Faces]:
 
 # ── GIfTI functional / shape (.func.gii, .shape.gii) ─────────────────
 
-def _load_gifti_func(path: Path) -> Dict[str, Any]:
+
+def _load_gifti_func(path: Path) -> dict[str, Any]:
     """Load a GIFTI functional/metric file (.func.gii, .shape.gii)."""
     nib = _require_nibabel()
     img = nib.load(str(path))
     # May contain one or more data arrays (e.g. multi-frame).
-    arrays = [
-        np.asarray(da.data, dtype=np.float64) for da in img.darrays
-    ]
+    arrays = [np.asarray(da.data, dtype=np.float64) for da in img.darrays]
     if len(arrays) == 1:
         return {"scalars": arrays[0]}
     # Stack frames → (N, T) descriptor matrix.
     return {"scalars": np.column_stack(arrays)}
 
 
-def load_gifti_func(path: PathLike) -> Union[ScalarMap, DescriptorMatrix]:
+def load_gifti_func(path: PathLike) -> ScalarMap | DescriptorMatrix:
     """Load a GIfTI functional / shape overlay.
 
     Parameters
@@ -463,23 +453,21 @@ def load_gifti_func(path: PathLike) -> Union[ScalarMap, DescriptorMatrix]:
 
 # ── GIfTI label (.label.gii) ─────────────────────────────────────────
 
-def _load_gifti_label(path: Path) -> Dict[str, Any]:
+
+def _load_gifti_label(path: Path) -> dict[str, Any]:
     """Load a GIFTI label file (.label.gii)."""
     nib = _require_nibabel()
     img = nib.load(str(path))
     labels = np.asarray(img.darrays[0].data, dtype=np.int32)
     # Extract label table if present.
-    names: List[str] = []
+    names: list[str] = []
     lt = img.labeltable
     if lt is not None and hasattr(lt, "labels"):
-        names = [
-            lbl.label if hasattr(lbl, "label") else str(lbl)
-            for lbl in lt.labels
-        ]
+        names = [lbl.label if hasattr(lbl, "label") else str(lbl) for lbl in lt.labels]
     return {"labels": labels, "names": names}
 
 
-def load_gifti_label(path: PathLike) -> Tuple[LabelArray, List[str]]:
+def load_gifti_label(path: PathLike) -> tuple[LabelArray, list[str]]:
     """Load a GIfTI label overlay.
 
     Parameters
@@ -498,7 +486,8 @@ def load_gifti_label(path: PathLike) -> Tuple[LabelArray, List[str]]:
 
 # ── NIfTI / MGZ volume ────────────────────────────────────────────────
 
-def _load_nifti(path: Path) -> Dict[str, Any]:
+
+def _load_nifti(path: Path) -> dict[str, Any]:
     """Load a NIfTI volume file (.nii, .nii.gz)."""
     nib = _require_nibabel()
     img = nib.load(str(path))
@@ -509,7 +498,7 @@ def _load_nifti(path: Path) -> Dict[str, Any]:
     }
 
 
-def load_nifti(path: PathLike) -> Tuple[np.ndarray, np.ndarray]:
+def load_nifti(path: PathLike) -> tuple[np.ndarray, np.ndarray]:
     """Load a NIfTI or MGZ volume.
 
     Parameters
@@ -530,18 +519,38 @@ def load_nifti(path: PathLike) -> Tuple[np.ndarray, np.ndarray]:
 
 # ── Generic mesh (.ply, .obj, .stl, .vtk) ────────────────────────────
 
-def _load_generic_mesh(path: Path) -> Dict[str, Any]:
-    """Load a generic mesh file via trimesh (.ply, .obj, .stl, .off)."""
-    trimesh = _require_trimesh()
-    mesh = trimesh.load(str(path), process=False)
-    return {
-        "vertices": np.asarray(mesh.vertices, dtype=np.float64),
-        "faces": np.asarray(mesh.faces, dtype=np.int64),
-    }
+
+def _load_generic_mesh(path: Path) -> dict[str, Any]:
+    """Load a generic mesh file (.ply, .obj, .stl, .vtk, .vtp).
+
+    Uses PyVista — a core dependency, VTK-backed — which reads all of
+    these formats natively.  The mesh is triangulated on load, so the
+    returned ``faces`` array is always ``(F, 3)`` even if the source
+    stored quads or triangle strips.
+    """
+    import pyvista as pv
+
+    mesh = pv.read(str(path))
+    # Non-PolyData (e.g. UnstructuredGrid from some .vtk files) → surface.
+    if not isinstance(mesh, pv.PolyData):
+        mesh = mesh.extract_surface()
+    mesh = mesh.triangulate()
+
+    verts = np.asarray(mesh.points, dtype=np.float64)
+    faces_flat = np.asarray(mesh.faces, dtype=np.int64)
+    if faces_flat.size == 0:
+        faces = np.empty((0, 3), dtype=np.int64)
+    else:
+        # PyVista packs faces as [3, i, j, k, 3, i, j, k, ...].
+        faces = faces_flat.reshape(-1, 4)[:, 1:]
+    return {"vertices": verts, "faces": faces}
 
 
-def load_mesh(path: PathLike) -> Tuple[Vertices, Faces]:
-    """Load a mesh from a generic format (.ply, .obj, .stl, .vtk).
+def load_mesh(path: PathLike) -> tuple[Vertices, Faces]:
+    """Load a mesh from a generic format (.ply, .obj, .stl, .vtk, .vtp).
+
+    Backed by PyVista, so every listed format works with a default
+    install (no optional dependency required).
 
     Parameters
     ----------
@@ -559,10 +568,11 @@ def load_mesh(path: PathLike) -> Tuple[Vertices, Faces]:
 
 # ── HDF5 (.h5) ───────────────────────────────────────────────────────
 
-def _load_hdf5(path: Path) -> Dict[str, Any]:
+
+def _load_hdf5(path: Path) -> dict[str, Any]:
     """Load data from an HDF5 file (.h5, .hdf5)."""
     h5py = _require_h5py()
-    result: Dict[str, Any] = {}
+    result: dict[str, Any] = {}
     with h5py.File(str(path), "r") as f:
         for key in f.keys():
             ds = f[key]
@@ -570,15 +580,14 @@ def _load_hdf5(path: Path) -> Dict[str, Any]:
                 result[key] = np.asarray(ds)
             else:
                 # Group — recurse one level.
-                result[key] = {
-                    k: np.asarray(v) for k, v in ds.items()
-                }
+                result[key] = {k: np.asarray(v) for k, v in ds.items()}
     return result
 
 
 # ── NumPy archive (.npz) ─────────────────────────────────────────────
 
-def _load_npz(path: Path) -> Dict[str, Any]:
+
+def _load_npz(path: Path) -> dict[str, Any]:
     """Load data from a NumPy compressed archive (.npz)."""
     data = np.load(str(path), allow_pickle=False)
     return dict(data)
@@ -588,6 +597,7 @@ def _load_npz(path: Path) -> Dict[str, Any]:
 # §4  VOLUMETRIC LABEL → POINT CLOUD
 # ======================================================================
 
+
 def labels_to_pointcloud(
     label_volume: np.ndarray,
     affine: np.ndarray,
@@ -595,7 +605,7 @@ def labels_to_pointcloud(
     *,
     jitter: bool = False,
     jitter_scale: float = 0.25,
-    seed: Optional[int] = None,
+    seed: int | None = None,
 ) -> Points:
     """Extract a point cloud from a volumetric segmentation.
 
@@ -645,9 +655,7 @@ def labels_to_pointcloud(
     affine = np.asarray(affine, dtype=np.float64)
 
     if label_volume.ndim != 3:
-        raise ValueError(
-            f"Expected 3D volume, got shape {label_volume.shape}"
-        )
+        raise ValueError(f"Expected 3D volume, got shape {label_volume.shape}")
 
     mask = label_volume == label_id
     if not mask.any():
@@ -665,12 +673,10 @@ def labels_to_pointcloud(
 
     # Apply affine: world = affine @ [i, j, k, 1]ᵀ
     ones = np.ones((ijk.shape[0], 1), dtype=np.float64)
-    ijk_h = np.hstack([ijk, ones])                     # (N, 4)
-    xyz = (affine @ ijk_h.T).T[:, :3]                  # (N, 3)
+    ijk_h = np.hstack([ijk, ones])  # (N, 4)
+    xyz = (affine @ ijk_h.T).T[:, :3]  # (N, 3)
 
-    logger.info(
-        "Extracted %d points for label %d", xyz.shape[0], label_id
-    )
+    logger.info("Extracted %d points for label %d", xyz.shape[0], label_id)
     return xyz
 
 
@@ -678,11 +684,12 @@ def labels_to_pointcloud(
 # §5  PARCELLATION UTILITIES
 # ======================================================================
 
+
 def extract_submesh(
     vertices: Vertices,
     faces: Faces,
     vertex_mask: np.ndarray,
-) -> Tuple[Vertices, Faces]:
+) -> tuple[Vertices, Faces]:
     """Extract the sub-mesh defined by a vertex mask.
 
     Parameters
@@ -703,22 +710,19 @@ def extract_submesh(
     """
     vertex_mask = np.asarray(vertex_mask, dtype=bool)
     if vertex_mask.shape[0] != vertices.shape[0]:
-        raise ValueError(
-            f"Mask length {vertex_mask.shape[0]} != "
-            f"n_vertices {vertices.shape[0]}"
-        )
+        raise ValueError(f"Mask length {vertex_mask.shape[0]} != n_vertices {vertices.shape[0]}")
 
     # Only keep faces where ALL three vertices are in the mask.
-    face_mask = vertex_mask[faces].all(axis=1)          # (F,) bool
-    kept_faces = faces[face_mask]                        # (G, 3)
+    face_mask = vertex_mask[faces].all(axis=1)  # (F,) bool
+    kept_faces = faces[face_mask]  # (G, 3)
 
     # Build old→new index map.
     old_to_new = np.full(vertices.shape[0], -1, dtype=np.int64)
     new_indices = np.where(vertex_mask)[0]
     old_to_new[new_indices] = np.arange(new_indices.size, dtype=np.int64)
 
-    sub_vertices = vertices[new_indices]                 # (M, 3)
-    sub_faces = old_to_new[kept_faces]                   # (G, 3)
+    sub_vertices = vertices[new_indices]  # (M, 3)
+    sub_faces = old_to_new[kept_faces]  # (G, 3)
 
     # Sanity: no unmapped indices.
     assert (sub_faces >= 0).all(), "Bug in extract_submesh: unmapped index"
@@ -731,8 +735,8 @@ def apply_parcellation(
     faces: Faces,
     labels: LabelArray,
     *,
-    ignore_labels: Optional[List[int]] = None,
-) -> Dict[int, Tuple[Vertices, Faces]]:
+    ignore_labels: list[int] | None = None,
+) -> dict[int, tuple[Vertices, Faces]]:
     """Split a surface into sub-meshes according to a parcellation.
 
     Given a cortical mesh and a per-vertex label array (e.g. from a
@@ -775,22 +779,17 @@ def apply_parcellation(
     """
     labels = np.asarray(labels)
     if labels.shape[0] != vertices.shape[0]:
-        raise ValueError(
-            f"Label length {labels.shape[0]} != "
-            f"n_vertices {vertices.shape[0]}"
-        )
+        raise ValueError(f"Label length {labels.shape[0]} != n_vertices {vertices.shape[0]}")
 
     ignore = set(ignore_labels or [])
     unique_labels = sorted(set(np.unique(labels).tolist()) - ignore)
 
-    parcels: Dict[int, Tuple[Vertices, Faces]] = {}
+    parcels: dict[int, tuple[Vertices, Faces]] = {}
     for lab in unique_labels:
         mask = labels == lab
         n_verts = mask.sum()
         if n_verts < 3:
-            logger.warning(
-                "Label %d has only %d vertices — skipping.", lab, n_verts
-            )
+            logger.warning("Label %d has only %d vertices — skipping.", lab, n_verts)
             continue
         sub_v, sub_f = extract_submesh(vertices, faces, mask)
         if sub_f.shape[0] == 0:
@@ -803,7 +802,8 @@ def apply_parcellation(
 
     logger.info(
         "Parcellated surface into %d regions (%d labels ignored)",
-        len(parcels), len(ignore),
+        len(parcels),
+        len(ignore),
     )
     return parcels
 
@@ -814,7 +814,7 @@ def apply_parcellation(
 
 # ── Predefined lobe/network groupings ────────────────────────────────
 
-DESIKAN_LOBE_MAP: Dict[str, str] = {
+DESIKAN_LOBE_MAP: dict[str, str] = {
     # Frontal
     "superiorfrontal": "frontal",
     "rostralmiddlefrontal": "frontal",
@@ -869,13 +869,13 @@ Examples
 ... )
 """
 
-SCHAEFER_NETWORK_MAP: Dict[str, str] = {
-    "Vis":     "Visual",
-    "SomMot":  "Somatomotor",
+SCHAEFER_NETWORK_MAP: dict[str, str] = {
+    "Vis": "Visual",
+    "SomMot": "Somatomotor",
     "DorsAttn": "DorsalAttention",
     "SalVentAttn": "SalVentAttn",
-    "Limbic":  "Limbic",
-    "Cont":    "Control",
+    "Limbic": "Limbic",
+    "Cont": "Control",
     "Default": "Default",
     "TempPar": "TempPar",
 }
@@ -898,12 +898,12 @@ Examples
 
 def remap_parcellation(
     labels: np.ndarray,
-    names: Sequence[Union[str, bytes]],
-    mapping: Dict[str, str],
+    names: Sequence[str | bytes],
+    mapping: dict[str, str],
     *,
     match: Literal["exact", "contains"] = "exact",
     unmapped: str = "unmapped",
-) -> Tuple[np.ndarray, Dict[int, str]]:
+) -> tuple[np.ndarray, dict[int, str]]:
     """Remap per-vertex parcellation labels to a coarser grouping.
 
     Takes the label array and region names from a FreeSurfer ``.annot``
@@ -963,12 +963,12 @@ def remap_parcellation(
     labels = np.asarray(labels, dtype=np.int64)
 
     # Decode bytes names.
-    decoded: List[str] = []
+    decoded: list[str] = []
     for n in names:
         decoded.append(n.decode("utf-8") if isinstance(n, bytes) else str(n))
 
     # Build old-label → group-name map.
-    label_to_group: Dict[int, str] = {}
+    label_to_group: dict[int, str] = {}
     mapping_lower = {k.lower().strip(): v for k, v in mapping.items()}
 
     for idx, name in enumerate(decoded):
@@ -990,10 +990,8 @@ def remap_parcellation(
     # Ensure "unmapped" is index 0.
     if unmapped in unique_groups:
         unique_groups.remove(unmapped)
-        unique_groups = [unmapped] + unique_groups
-    group_to_int: Dict[str, int] = {
-        g: i for i, g in enumerate(unique_groups)
-    }
+        unique_groups = [unmapped, *unique_groups]
+    group_to_int: dict[str, int] = {g: i for i, g in enumerate(unique_groups)}
 
     new_labels = np.array(
         [group_to_int[label_to_group.get(l, unmapped)] for l in labels],
@@ -1014,10 +1012,10 @@ def aggregate_by_parcellation(
     data: np.ndarray,
     labels: np.ndarray,
     *,
-    stat: Union[str, Callable] = "mean",
-    ignore_labels: Optional[List[int]] = None,
-    label_names: Optional[Dict[int, str]] = None,
-) -> "pd.DataFrame":
+    stat: str | Callable = "mean",
+    ignore_labels: list[int] | None = None,
+    label_names: dict[int, str] | None = None,
+) -> pd.DataFrame:
     """Aggregate vertex-wise data per parcellation region.
 
     Compute summary statistics of a vertex-wise array (e.g. thickness,
@@ -1085,15 +1083,13 @@ def aggregate_by_parcellation(
         col_names = [f"d{i}" for i in range(data.shape[1])]
 
     if data.shape[0] != labels.shape[0]:
-        raise ValueError(
-            f"data rows {data.shape[0]} != labels length {labels.shape[0]}"
-        )
+        raise ValueError(f"data rows {data.shape[0]} != labels length {labels.shape[0]}")
 
     ignore = set(ignore_labels or [])
     unique_labels = sorted(set(np.unique(labels).tolist()) - ignore)
 
     # Resolve aggregation function.
-    _stat_funcs: Dict[str, Callable] = {
+    _stat_funcs: dict[str, Callable] = {
         "mean": np.nanmean,
         "median": np.nanmedian,
         "std": np.nanstd,
@@ -1102,15 +1098,13 @@ def aggregate_by_parcellation(
         "sum": np.nansum,
         "count": lambda x, axis=0: np.sum(~np.isnan(x), axis=axis),
         "iqr": lambda x, axis=0: (
-            np.nanpercentile(x, 75, axis=axis)
-            - np.nanpercentile(x, 25, axis=axis)
+            np.nanpercentile(x, 75, axis=axis) - np.nanpercentile(x, 25, axis=axis)
         ),
     }
     if isinstance(stat, str):
         if stat not in _stat_funcs:
             raise ValueError(
-                f"Unknown stat '{stat}'. Use one of {list(_stat_funcs.keys())} "
-                f"or pass a callable."
+                f"Unknown stat '{stat}'. Use one of {list(_stat_funcs.keys())} or pass a callable."
             )
         func = _stat_funcs[stat]
     else:
@@ -1122,9 +1116,9 @@ def aggregate_by_parcellation(
         region_data = data[mask]
         agg = func(region_data, axis=0)
         agg = np.atleast_1d(agg)
-        rows.append([lab] + agg.tolist())
+        rows.append([lab, *agg.tolist()])
 
-    df = pd.DataFrame(rows, columns=["label"] + col_names)
+    df = pd.DataFrame(rows, columns=["label", *col_names])
 
     if label_names is not None:
         df["region"] = df["label"].map(label_names).fillna("unknown")
@@ -1139,30 +1133,30 @@ def aggregate_by_parcellation(
 # §6  __all__
 # ======================================================================
 
-__all__: List[str] = [
-    # Auto-detection
-    "load",
-    "detect_format",
-    # FreeSurfer
-    "load_freesurfer_surface",
-    "load_freesurfer_annot",
-    "load_freesurfer_morph",
-    # GIfTI
-    "load_gifti_surface",
-    "load_gifti_func",
-    "load_gifti_label",
-    # NIfTI / MGZ
-    "load_nifti",
-    # Generic mesh
-    "load_mesh",
-    # Volumetric → point cloud
-    "labels_to_pointcloud",
-    # Parcellation
-    "extract_submesh",
-    "apply_parcellation",
-    # Remapping & aggregation
-    "remap_parcellation",
-    "aggregate_by_parcellation",
+__all__: list[str] = [
     "DESIKAN_LOBE_MAP",
     "SCHAEFER_NETWORK_MAP",
+    "aggregate_by_parcellation",
+    "apply_parcellation",
+    "detect_format",
+    # Parcellation
+    "extract_submesh",
+    # Volumetric → point cloud
+    "labels_to_pointcloud",
+    # Auto-detection
+    "load",
+    "load_freesurfer_annot",
+    "load_freesurfer_morph",
+    # FreeSurfer
+    "load_freesurfer_surface",
+    "load_gifti_func",
+    "load_gifti_label",
+    # GIfTI
+    "load_gifti_surface",
+    # Generic mesh
+    "load_mesh",
+    # NIfTI / MGZ
+    "load_nifti",
+    # Remapping & aggregation
+    "remap_parcellation",
 ]

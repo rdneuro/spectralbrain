@@ -26,35 +26,57 @@ wald, vonmises, weibull.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import (
-    Any, Callable, Dict, List, Literal, Optional,
-    Sequence, Tuple, Union,
+    Any,
+    Literal,
 )
 
 import numpy as np
 from scipy import stats as sp_stats
 
 from spectralbrain.runtime import (
-    DescriptorMatrix, Faces, GlobalDescriptor, Points,
-    ScalarMap, Vertices, get_logger, progress_simple,
+    get_logger,
+    progress_simple,
 )
 
 logger = get_logger(__name__)
 
 DistributionName = Literal[
-    "normal", "beta", "gamma", "cauchy", "dirichlet",
-    "exponential", "halfcauchy", "halfnormal", "poisson",
-    "inversegamma", "laplace", "kumaraswamy", "studentt",
-    "negativebinomial", "binomial", "logistic", "mixture",
-    "pareto", "uniform", "wald", "vonmises", "weibull",
+    "normal",
+    "beta",
+    "gamma",
+    "cauchy",
+    "dirichlet",
+    "exponential",
+    "halfcauchy",
+    "halfnormal",
+    "poisson",
+    "inversegamma",
+    "laplace",
+    "kumaraswamy",
+    "studentt",
+    "negativebinomial",
+    "binomial",
+    "logistic",
+    "mixture",
+    "pareto",
+    "uniform",
+    "wald",
+    "vonmises",
+    "weibull",
 ]
 
 
 # ==== DISTRIBUTION SAMPLER ====
 
+
 def _sample_distribution(
-    distribution: DistributionName, size: Tuple[int, ...], *,
-    rng: np.random.Generator, params: Optional[Dict[str, Any]] = None,
+    distribution: DistributionName,
+    size: tuple[int, ...],
+    *,
+    rng: np.random.Generator,
+    params: dict[str, Any] | None = None,
 ) -> np.ndarray:
     """Draw samples from one of 22 parametric distributions.
 
@@ -87,7 +109,9 @@ def _sample_distribution(
     elif distribution == "gamma":
         return rng.gamma(p.get("shape", 2), p.get("scale", 1), size)
     elif distribution == "cauchy":
-        return sp_stats.cauchy.rvs(loc=p.get("loc", 0), scale=p.get("scale", 1), size=size, random_state=rng)
+        return sp_stats.cauchy.rvs(
+            loc=p.get("loc", 0), scale=p.get("scale", 1), size=size, random_state=rng
+        )
     elif distribution == "dirichlet":
         alpha = p.get("alpha", np.ones(size[-1]) if len(size) > 1 else np.ones(3))
         n = int(np.prod(size[:-1])) if len(size) > 1 else size[0]
@@ -95,7 +119,9 @@ def _sample_distribution(
     elif distribution == "exponential":
         return rng.exponential(p.get("scale", 1), size)
     elif distribution == "halfcauchy":
-        return np.abs(sp_stats.cauchy.rvs(loc=0, scale=p.get("scale", 1), size=size, random_state=rng))
+        return np.abs(
+            sp_stats.cauchy.rvs(loc=0, scale=p.get("scale", 1), size=size, random_state=rng)
+        )
     elif distribution == "halfnormal":
         return np.abs(rng.normal(0, p.get("scale", 1), size))
     elif distribution == "poisson":
@@ -109,7 +135,13 @@ def _sample_distribution(
         u = rng.uniform(0, 1, size)
         return (1 - (1 - u) ** (1 / b)) ** (1 / a)
     elif distribution == "studentt":
-        return sp_stats.t.rvs(p.get("df", 5), loc=p.get("loc", 0), scale=p.get("scale", 1), size=size, random_state=rng)
+        return sp_stats.t.rvs(
+            p.get("df", 5),
+            loc=p.get("loc", 0),
+            scale=p.get("scale", 1),
+            size=size,
+            random_state=rng,
+        )
     elif distribution == "negativebinomial":
         return rng.negative_binomial(p.get("n", 5), p.get("p", 0.5), size).astype(np.float64)
     elif distribution == "binomial":
@@ -136,7 +168,9 @@ def _sample_distribution(
     raise ValueError(f"Unknown distribution: {distribution!r}")
 
 
-def _match_distribution(reference: np.ndarray, size: Tuple[int, ...], rng: np.random.Generator) -> np.ndarray:
+def _match_distribution(
+    reference: np.ndarray, size: tuple[int, ...], rng: np.random.Generator
+) -> np.ndarray:
     """Generate samples matching an empirical reference distribution.
 
     Uses bootstrap resampling with added jitter (5% of reference std)
@@ -165,13 +199,17 @@ def _match_distribution(reference: np.ndarray, size: Tuple[int, ...], rng: np.ra
 
 # ==== §1 BOOTSTRAP ====
 
+
 def bootstrap_ci(
-    data: np.ndarray, statistic: Callable[[np.ndarray], float], *,
-    n_bootstrap: int = 10000, ci: float = 0.95,
+    data: np.ndarray,
+    statistic: Callable[[np.ndarray], float],
+    *,
+    n_bootstrap: int = 10000,
+    ci: float = 0.95,
     method: Literal["percentile", "bca"] = "percentile",
-    seed: Optional[int] = None,
+    seed: int | None = None,
     n_jobs: int = 1,
-) -> Tuple[float, float, float]:
+) -> tuple[float, float, float]:
     """Bootstrap confidence interval for a scalar statistic.
 
     Parameters
@@ -205,26 +243,48 @@ def bootstrap_ci(
     rng = np.random.default_rng(seed)
     n = len(data)
     obs = statistic(data)
-    boot = np.array([statistic(data[rng.choice(n, n, replace=True)]) for _ in range(n_bootstrap)])
+
+    # Per-replicate child seeds → bootstrap is identical for any n_jobs.
+    child = rng.bit_generator._seed_seq.spawn(n_bootstrap)
+
+    def _one(ss: np.random.SeedSequence) -> float:
+        r = np.random.default_rng(ss)
+        return statistic(data[r.choice(n, n, replace=True)])
+
+    if n_jobs == 1:
+        boot = np.array([_one(ss) for ss in child])
+    else:
+        from spectralbrain.backends.cpu import parallel_map
+
+        boot = np.array(parallel_map(_one, child, n_jobs=n_jobs, description="Bootstrap"))
+
     alpha = (1 - ci) / 2
     if method == "percentile":
-        return obs, float(np.percentile(boot, 100*alpha)), float(np.percentile(boot, 100*(1-alpha)))
+        return (
+            obs,
+            float(np.percentile(boot, 100 * alpha)),
+            float(np.percentile(boot, 100 * (1 - alpha))),
+        )
     elif method == "bca":
         z0 = sp_stats.norm.ppf(np.mean(boot < obs))
         jk = np.array([statistic(np.delete(data, i)) for i in range(n)])
         jm = jk.mean()
-        a = np.sum((jm - jk)**3) / (6 * np.sum((jm - jk)**2)**1.5 + 1e-30)
+        a = np.sum((jm - jk) ** 3) / (6 * np.sum((jm - jk) ** 2) ** 1.5 + 1e-30)
         zl, zh = sp_stats.norm.ppf(alpha), sp_stats.norm.ppf(1 - alpha)
-        pl = sp_stats.norm.cdf(z0 + (z0 + zl) / (1 - a*(z0 + zl)))
-        ph = sp_stats.norm.cdf(z0 + (z0 + zh) / (1 - a*(z0 + zh)))
-        return obs, float(np.percentile(boot, 100*pl)), float(np.percentile(boot, 100*ph))
+        pl = sp_stats.norm.cdf(z0 + (z0 + zl) / (1 - a * (z0 + zl)))
+        ph = sp_stats.norm.cdf(z0 + (z0 + zh) / (1 - a * (z0 + zh)))
+        return obs, float(np.percentile(boot, 100 * pl)), float(np.percentile(boot, 100 * ph))
     raise ValueError(f"Unknown method: {method!r}")
 
 
 def bootstrap_paired_difference(
-    a: np.ndarray, b: np.ndarray, *, n_bootstrap: int = 10000,
-    ci: float = 0.95, seed: Optional[int] = None,
-) -> Tuple[float, float, float]:
+    a: np.ndarray,
+    b: np.ndarray,
+    *,
+    n_bootstrap: int = 10000,
+    ci: float = 0.95,
+    seed: int | None = None,
+) -> tuple[float, float, float]:
     """Bootstrap confidence interval for paired mean difference.
 
     Computes the CI of ``mean(a - b)`` via bootstrap resampling
@@ -248,15 +308,21 @@ def bootstrap_paired_difference(
     ci_low, ci_high : float
         Confidence interval bounds.
     """
-    return bootstrap_ci(np.asarray(a) - np.asarray(b), np.mean, n_bootstrap=n_bootstrap, ci=ci, seed=seed)
+    return bootstrap_ci(
+        np.asarray(a) - np.asarray(b), np.mean, n_bootstrap=n_bootstrap, ci=ci, seed=seed
+    )
 
 
 # ==== §2 NULL MODELS ====
 
+
 def null_eigenvalue_permutation(eigenvalues, eigenvectors, *, n_surrogates=1000, seed=None):
     """Null 1: permute eigenvalues, keep eigenvectors. Tests spectral ordering."""
     rng = np.random.default_rng(seed)
-    return [(eigenvalues[rng.permutation(len(eigenvalues))], eigenvectors.copy()) for _ in range(n_surrogates)]
+    return [
+        (eigenvalues[rng.permutation(len(eigenvalues))], eigenvectors.copy())
+        for _ in range(n_surrogates)
+    ]
 
 
 def null_phase_randomisation(descriptor, eigenvectors, *, n_surrogates=1000, seed=None):
@@ -267,26 +333,43 @@ def null_phase_randomisation(descriptor, eigenvectors, *, n_surrogates=1000, see
     amps = np.abs(coeffs)
     surrogates = []
     for _ in range(n_surrogates):
-        phases = rng.uniform(0, 2*np.pi, coeffs.shape)
+        phases = rng.uniform(0, 2 * np.pi, coeffs.shape)
         surrogates.append((eigenvectors @ (amps * np.cos(phases))).squeeze())
     return surrogates
 
 
-def null_spin_permutation(descriptor, sphere_coords, *, n_surrogates=1000, seed=None):
-    """Null 3: spin permutation (Alexander-Bloch 2018). Tests beyond spatial autocorrelation."""
+def null_spin_permutation(descriptor, sphere_coords, *, n_surrogates=1000, seed=None, n_jobs=1):
+    """Null 3: spin permutation (Alexander-Bloch 2018). Tests beyond spatial autocorrelation.
+
+    Each spin is keyed to an independent, reproducible child RNG, so results
+    are identical for ``n_jobs=1`` (sequential) and ``n_jobs=-1`` (all cores).
+    The per-spin nearest-neighbour query over all vertices is the cost that
+    parallelism amortises.
+    """
     from scipy.spatial import cKDTree
     from scipy.spatial.transform import Rotation
-    rng = np.random.default_rng(seed)
+
     tree = cKDTree(sphere_coords)
     desc = np.asarray(descriptor)
-    surrogates = []
-    with progress_simple("Spin permutation", total=n_surrogates) as tick:
-        for _ in range(n_surrogates):
-            rot = Rotation.random(random_state=rng)
-            _, nearest = tree.query(rot.apply(sphere_coords))
-            surrogates.append(desc[nearest])
-            tick(1)
-    return surrogates
+    child_seeds = np.random.SeedSequence(seed).spawn(n_surrogates)
+
+    def _one_spin(child_seed: np.random.SeedSequence) -> np.ndarray:
+        rng = np.random.default_rng(child_seed)
+        rot = Rotation.random(random_state=rng)
+        _, nearest = tree.query(rot.apply(sphere_coords))
+        return desc[nearest]
+
+    if n_jobs == 1:
+        surrogates = []
+        with progress_simple("Spin permutation", total=n_surrogates) as tick:
+            for cs in child_seeds:
+                surrogates.append(_one_spin(cs))
+                tick(1)
+        return surrogates
+
+    from spectralbrain.backends.cpu import parallel_map
+
+    return parallel_map(_one_spin, child_seeds, n_jobs=n_jobs, description="Spin permutation")
 
 
 def null_subject_permutation(descriptors, labels, *, n_surrogates=5000, seed=None):
@@ -295,29 +378,50 @@ def null_subject_permutation(descriptors, labels, *, n_surrogates=5000, seed=Non
     return [rng.permutation(labels) for _ in range(n_surrogates)]
 
 
-def null_edge_rewiring(connectome, *, n_surrogates=1000, n_swaps_per_edge=10, seed=None):
-    """Null 5: degree-preserving edge rewiring (Maslov & Sneppen 2002). Tests network topology."""
-    rng = np.random.default_rng(seed)
+def null_edge_rewiring(connectome, *, n_surrogates=1000, n_swaps_per_edge=10, seed=None, n_jobs=1):
+    """Null 5: degree-preserving edge rewiring (Maslov & Sneppen 2002). Tests network topology.
+
+    Each surrogate is keyed to an independent, reproducible child RNG via
+    :class:`numpy.random.SeedSequence`, so results are **identical whether
+    run sequentially (``n_jobs=1``) or in parallel** (``n_jobs=-1`` uses all
+    cores). Rewiring is the expensive null (an inner swap loop per
+    surrogate), so parallelism gives a near-linear speedup.
+    """
     C = np.asarray(connectome, dtype=np.float64)
-    R = C.shape[0]
-    rows, cols = np.triu_indices(R, k=1)
+    rows, cols = np.triu_indices(C.shape[0], k=1)
     weights = C[rows, cols]
     nz = weights > 0
     er, ec, ew = rows[nz].copy(), cols[nz].copy(), weights[nz].copy()
     ne = len(er)
-    surrogates = []
-    with progress_simple("Edge rewiring", total=n_surrogates) as tick:
-        for _ in range(n_surrogates):
-            r, c, w = er.copy(), ec.copy(), ew.copy()
-            for _ in range(ne * n_swaps_per_edge):
-                if ne < 2: break
-                e1, e2 = rng.choice(ne, 2, replace=False)
-                if rng.random() < 0.5: r[e1], r[e2] = r[e2], r[e1]
-                else: c[e1], c[e2] = c[e2], c[e1]
-            M = np.zeros_like(C); M[r, c] = w; M += M.T
-            surrogates.append(M)
-            tick(1)
-    return surrogates
+    child_seeds = np.random.SeedSequence(seed).spawn(n_surrogates)
+
+    def _one_surrogate(child_seed: np.random.SeedSequence) -> np.ndarray:
+        rng = np.random.default_rng(child_seed)
+        r, c, w = er.copy(), ec.copy(), ew.copy()
+        for _ in range(ne * n_swaps_per_edge):
+            if ne < 2:
+                break
+            e1, e2 = rng.choice(ne, 2, replace=False)
+            if rng.random() < 0.5:
+                r[e1], r[e2] = r[e2], r[e1]
+            else:
+                c[e1], c[e2] = c[e2], c[e1]
+        M = np.zeros_like(C)
+        M[r, c] = w
+        M += M.T
+        return M
+
+    if n_jobs == 1:
+        surrogates = []
+        with progress_simple("Edge rewiring", total=n_surrogates) as tick:
+            for cs in child_seeds:
+                surrogates.append(_one_surrogate(cs))
+                tick(1)
+        return surrogates
+
+    from spectralbrain.backends.cpu import parallel_map
+
+    return parallel_map(_one_surrogate, child_seeds, n_jobs=n_jobs, description="Edge rewiring")
 
 
 def null_parametric(descriptor, *, n_surrogates=1000, seed=None):
@@ -329,6 +433,7 @@ def null_parametric(descriptor, *, n_surrogates=1000, seed=None):
 
 
 # ==== §3 SYNTHETIC DATA GENERATORS ====
+
 
 class SyntheticDescriptors:
     """Generate synthetic spectral descriptor matrices.
@@ -347,6 +452,7 @@ class SyntheticDescriptors:
     >>> gen = SyntheticDescriptors(distribution="gamma", dist_params={"shape": 2})
     >>> data = gen.generate(n_subjects=50, n_vertices=1000, n_scales=20)
     """
+
     def __init__(self, reference=None, distribution=None, dist_params=None, seed=None):
         """Initialise the descriptor generator.
 
@@ -389,6 +495,7 @@ class SyntheticMesh:
     reference_vertices : ndarray, optional
     distribution, dist_params, seed : as above.
     """
+
     def __init__(self, reference_vertices=None, distribution=None, dist_params=None, seed=None):
         """Initialise the mesh generator.
 
@@ -412,8 +519,15 @@ class SyntheticMesh:
         """Apply noise to vertices using the configured distribution."""
         if self.reference is not None:
             ref_std = self.reference.std(axis=0).mean()
-            return verts + _match_distribution(self.reference - self.reference.mean(axis=0), verts.shape, self.rng) * (scale * ref_std)
-        return verts + _sample_distribution(self.distribution, verts.shape, rng=self.rng, params={**self.dist_params, "scale": scale})
+            return verts + _match_distribution(
+                self.reference - self.reference.mean(axis=0), verts.shape, self.rng
+            ) * (scale * ref_std)
+        return verts + _sample_distribution(
+            self.distribution,
+            verts.shape,
+            rng=self.rng,
+            params={**self.dist_params, "scale": scale},
+        )
 
     def sphere(self, n_lat=30, n_lon=60, radius=50.0, noise=0.0):
         """Generate a UV-sphere mesh.
@@ -487,6 +601,7 @@ class SyntheticPointCloud:
     reference : ndarray, optional
     distribution, dist_params, seed : as above.
     """
+
     def __init__(self, reference=None, distribution=None, dist_params=None, seed=None):
         """Initialise the point cloud generator.
 
@@ -544,7 +659,7 @@ class SyntheticPointCloud:
             pts += self._noise_3d(n_points) * noise
         return pts
 
-    def blob(self, n_points=1000, center=(0,0,0), scale=(10,10,10)):
+    def blob(self, n_points=1000, center=(0, 0, 0), scale=(10, 10, 10)):
         """Generate a Gaussian blob point cloud.
 
         Parameters
@@ -591,17 +706,25 @@ class SyntheticPointCloud:
         -------
         ndarray, shape (n_points, 3)
         """
-        if self.reference is None: raise ValueError("No reference data.")
-        return _match_distribution(self.reference, (n_points or self.reference.shape[0], 3), self.rng)
+        if self.reference is None:
+            raise ValueError("No reference data.")
+        return _match_distribution(
+            self.reference, (n_points or self.reference.shape[0], 3), self.rng
+        )
 
     def _noise_3d(self, n):
         """Generate 3D noise samples using the configured distribution."""
         if self.reference is not None:
-            return _match_distribution(self.reference - self.reference.mean(axis=0), (n, 3), self.rng)
-        return _sample_distribution(self.distribution, (n, 3), rng=self.rng, params={**self.dist_params, "scale": 1})
+            return _match_distribution(
+                self.reference - self.reference.mean(axis=0), (n, 3), self.rng
+            )
+        return _sample_distribution(
+            self.distribution, (n, 3), rng=self.rng, params={**self.dist_params, "scale": 1}
+        )
 
 
 # ==== Geometry helpers ====
+
 
 def _uv_sphere(n_lat, n_lon, radius):
     """Build a UV-sphere mesh.
@@ -623,15 +746,25 @@ def _uv_sphere(n_lat, n_lon, radius):
         theta = np.pi * i / n_lat
         for j in range(n_lon):
             phi = 2 * np.pi * j / n_lon
-            verts.append([radius*np.sin(theta)*np.cos(phi), radius*np.sin(theta)*np.sin(phi), radius*np.cos(theta)])
+            verts.append(
+                [
+                    radius * np.sin(theta) * np.cos(phi),
+                    radius * np.sin(theta) * np.sin(phi),
+                    radius * np.cos(theta),
+                ]
+            )
     verts = np.array(verts, dtype=np.float64)
     faces = []
     for i in range(n_lat):
         for j in range(n_lon):
-            v0 = i*n_lon + j; v1 = i*n_lon + (j+1)%n_lon
-            v2 = (i+1)*n_lon + j; v3 = (i+1)*n_lon + (j+1)%n_lon
-            faces.append([v0, v1, v2]); faces.append([v1, v3, v2])
+            v0 = i * n_lon + j
+            v1 = i * n_lon + (j + 1) % n_lon
+            v2 = (i + 1) * n_lon + j
+            v3 = (i + 1) * n_lon + (j + 1) % n_lon
+            faces.append([v0, v1, v2])
+            faces.append([v1, v3, v2])
     return verts, np.array(faces, dtype=np.int64)
+
 
 def _torus(R, r, n_major, n_minor):
     """Build a torus mesh.
@@ -652,18 +785,28 @@ def _torus(R, r, n_major, n_minor):
     """
     verts = []
     for i in range(n_major):
-        theta = 2*np.pi*i/n_major
+        theta = 2 * np.pi * i / n_major
         for j in range(n_minor):
-            phi = 2*np.pi*j/n_minor
-            verts.append([(R+r*np.cos(phi))*np.cos(theta), (R+r*np.cos(phi))*np.sin(theta), r*np.sin(phi)])
+            phi = 2 * np.pi * j / n_minor
+            verts.append(
+                [
+                    (R + r * np.cos(phi)) * np.cos(theta),
+                    (R + r * np.cos(phi)) * np.sin(theta),
+                    r * np.sin(phi),
+                ]
+            )
     verts = np.array(verts, dtype=np.float64)
     faces = []
     for i in range(n_major):
         for j in range(n_minor):
-            v0 = i*n_minor+j; v1 = i*n_minor+(j+1)%n_minor
-            v2 = ((i+1)%n_major)*n_minor+j; v3 = ((i+1)%n_major)*n_minor+(j+1)%n_minor
-            faces.append([v0,v1,v2]); faces.append([v1,v3,v2])
+            v0 = i * n_minor + j
+            v1 = i * n_minor + (j + 1) % n_minor
+            v2 = ((i + 1) % n_major) * n_minor + j
+            v3 = ((i + 1) % n_major) * n_minor + (j + 1) % n_minor
+            faces.append([v0, v1, v2])
+            faces.append([v1, v3, v2])
     return verts, np.array(faces, dtype=np.int64)
+
 
 def _random_sphere_points(n, radius, rng):
     """Sample *n* uniformly distributed points on a sphere surface.
@@ -684,15 +827,21 @@ def _random_sphere_points(n, radius, rng):
     ndarray, shape (n, 3)
     """
     z = rng.uniform(-1, 1, n)
-    phi = rng.uniform(0, 2*np.pi, n)
+    phi = rng.uniform(0, 2 * np.pi, n)
     r_xy = np.sqrt(1 - z**2)
-    return radius * np.column_stack([r_xy*np.cos(phi), r_xy*np.sin(phi), z])
+    return radius * np.column_stack([r_xy * np.cos(phi), r_xy * np.sin(phi), z])
 
 
 __all__ = [
-    "bootstrap_ci", "bootstrap_paired_difference",
-    "null_eigenvalue_permutation", "null_phase_randomisation",
-    "null_spin_permutation", "null_subject_permutation",
-    "null_edge_rewiring", "null_parametric",
-    "SyntheticDescriptors", "SyntheticMesh", "SyntheticPointCloud",
+    "SyntheticDescriptors",
+    "SyntheticMesh",
+    "SyntheticPointCloud",
+    "bootstrap_ci",
+    "bootstrap_paired_difference",
+    "null_edge_rewiring",
+    "null_eigenvalue_permutation",
+    "null_parametric",
+    "null_phase_randomisation",
+    "null_spin_permutation",
+    "null_subject_permutation",
 ]

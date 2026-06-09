@@ -24,7 +24,8 @@ pipelines.
 
 from __future__ import annotations
 
-from typing import Callable, List, Literal, Optional, Tuple
+from collections.abc import Callable
+from typing import Literal
 
 import numpy as np
 import scipy.sparse as sp
@@ -34,8 +35,6 @@ from spectralbrain.runtime import (
     DescriptorMatrix,
     Faces,
     MassMatrix,
-    Normals,
-    ScalarMap,
     SparseMatrix,
     Vertices,
     get_logger,
@@ -49,14 +48,15 @@ logger = get_logger(__name__)
 # §1  ANISOTROPIC LAPLACIAN CONSTRUCTION
 # ======================================================================
 
+
 def anisotropic_laplacian(
     vertices: Vertices,
     faces: Faces,
     *,
     anisotropy: float = 1.0,
     direction: Literal["max_curvature", "min_curvature", "custom"] = "max_curvature",
-    custom_directions: Optional[np.ndarray] = None,
-) -> Tuple[SparseMatrix, MassMatrix]:
+    custom_directions: np.ndarray | None = None,
+) -> tuple[SparseMatrix, MassMatrix]:
     """Build an anisotropic Laplacian weighted by curvature direction.
 
     Modifies the cotangent Laplacian by scaling diffusion along the
@@ -87,7 +87,7 @@ def anisotropic_laplacian(
     L : SparseMatrix, shape (N, N)
     M : MassMatrix, shape (N, N)
     """
-    from spectralbrain.core.meshes import _cotangent_laplacian, _vertex_normals
+    from spectralbrain.core.meshes import _cotangent_laplacian
 
     N = vertices.shape[0]
 
@@ -103,7 +103,8 @@ def anisotropic_laplacian(
     # Estimate per-vertex directions.
     if direction in ("max_curvature", "min_curvature"):
         dirs = _estimate_curvature_directions(
-            vertices, faces,
+            vertices,
+            faces,
             which="max" if direction == "max_curvature" else "min",
         )
     else:
@@ -122,13 +123,13 @@ def anisotropic_laplacian(
     r_off = rows[off_diag]
     c_off = cols[off_diag]
 
-    edge_vecs = vertices[c_off] - vertices[r_off]          # (E, 3)
+    edge_vecs = vertices[c_off] - vertices[r_off]  # (E, 3)
     edge_len = np.linalg.norm(edge_vecs, axis=1, keepdims=True)
     edge_unit = edge_vecs / np.clip(edge_len, 1e-12, None)
 
     # Directional bias at source vertex.
-    dir_at_src = dirs[r_off]                                # (E, 3)
-    cos_sq = np.sum(dir_at_src * edge_unit, axis=1) ** 2   # (E,)
+    dir_at_src = dirs[r_off]  # (E, 3)
+    cos_sq = np.sum(dir_at_src * edge_unit, axis=1) ** 2  # (E,)
 
     # Scale off-diagonal weights.
     scale = 1.0 + anisotropy * cos_sq
@@ -143,7 +144,8 @@ def anisotropic_laplacian(
 
     logger.info(
         "Anisotropic Laplacian: α=%.2f, direction=%s",
-        anisotropy, direction,
+        anisotropy,
+        direction,
     )
     return L_aniso, M
 
@@ -169,12 +171,12 @@ def _estimate_curvature_directions(
     directions = np.zeros((N, 3), dtype=np.float64)
 
     for i in range(N):
-        nbrs = vertices[indices[i]]                         # (k, 3)
+        nbrs = vertices[indices[i]]  # (k, 3)
         n_i = normals[i]
 
         # Project onto tangent plane.
         centered = nbrs - vertices[i]
-        proj = centered - np.outer(centered @ n_i, n_i)     # (k, 3)
+        proj = centered - np.outer(centered @ n_i, n_i)  # (k, 3)
 
         # PCA of projected neighbours.
         if np.linalg.norm(proj) < 1e-12:
@@ -182,12 +184,12 @@ def _estimate_curvature_directions(
             continue
 
         cov = proj.T @ proj
-        eigvals, eigvecs = np.linalg.eigh(cov)
+        _eigvals, eigvecs = np.linalg.eigh(cov)
 
         if which == "max":
-            directions[i] = eigvecs[:, -1]                   # largest variance
+            directions[i] = eigvecs[:, -1]  # largest variance
         else:
-            directions[i] = eigvecs[:, 0]                    # smallest variance
+            directions[i] = eigvecs[:, 0]  # smallest variance
 
     # Normalise.
     norms = np.linalg.norm(directions, axis=1, keepdims=True)
@@ -198,6 +200,7 @@ def _estimate_curvature_directions(
 # ======================================================================
 # §2  ANISOTROPIC DESCRIPTORS
 # ======================================================================
+
 
 def compute_anisotropic_hks(
     vertices: Vertices,
@@ -230,7 +233,10 @@ def compute_anisotropic_hks(
     from spectralbrain.spectral.descriptors import compute_hks
 
     L, M = anisotropic_laplacian(
-        vertices, faces, anisotropy=anisotropy, direction=direction,
+        vertices,
+        faces,
+        anisotropy=anisotropy,
+        direction=direction,
     )
     be = NumpyBackend()
     evals, evecs = be.eigsh(L, M, k=k)
@@ -265,7 +271,10 @@ def compute_anisotropic_wks(
     from spectralbrain.spectral.descriptors import compute_wks
 
     L, M = anisotropic_laplacian(
-        vertices, faces, anisotropy=anisotropy, direction=direction,
+        vertices,
+        faces,
+        anisotropy=anisotropy,
+        direction=direction,
     )
     be = NumpyBackend()
     evals, evecs = be.eigsh(L, M, k=k)
@@ -281,7 +290,7 @@ def compute_asmwd(
     n_scales: int = 5,
     n_directions: int = 4,
     anisotropy: float = 0.5,
-    kernel: Callable = None,
+    kernel: Callable | None = None,
 ) -> DescriptorMatrix:
     """Anisotropic Spectral Manifold Wavelet Descriptor (ASMWD).
 
@@ -324,7 +333,7 @@ def compute_asmwd(
     dir_max = _estimate_curvature_directions(vertices, faces, "max")
     dir_min = _estimate_curvature_directions(vertices, faces, "min")
 
-    all_descs: List[np.ndarray] = []
+    all_descs: list[np.ndarray] = []
     be = NumpyBackend()
 
     with progress_simple("ASMWD directions", total=n_directions) as tick:
@@ -336,7 +345,8 @@ def compute_asmwd(
             custom_dir /= np.clip(norms, 1e-12, None)
 
             L, M = anisotropic_laplacian(
-                vertices, faces,
+                vertices,
+                faces,
                 anisotropy=anisotropy,
                 direction="custom",
                 custom_directions=custom_dir,
@@ -347,12 +357,12 @@ def compute_asmwd(
             all_descs.append(desc)
             tick(1)
 
-    return np.hstack(all_descs)                             # (N, n_dir × n_scales)
+    return np.hstack(all_descs)  # (N, n_dir × n_scales)
 
 
 # ======================================================================
 
-__all__: List[str] = [
+__all__: list[str] = [
     "anisotropic_laplacian",
     "compute_anisotropic_hks",
     "compute_anisotropic_wks",

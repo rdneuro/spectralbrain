@@ -23,7 +23,7 @@ Implemented descriptors
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple, Union
+from typing import Literal
 
 import numpy as np
 
@@ -42,6 +42,7 @@ logger = get_logger(__name__)
 # ======================================================================
 # §1  ShapeDNA  (Reuter, Wolter & Peinecke, 2006)
 # ======================================================================
+
 
 def compute_shapedna(
     decomp: SpectralDecomposition,
@@ -90,9 +91,7 @@ def compute_shapedna(
             raise ValueError("Surface area required for area normalisation.")
         dna = dna * decomp.surface_area
     elif normalize == "volume":
-        raise NotImplementedError(
-            "Volume normalisation requires volumetric eigendecomposition."
-        )
+        raise NotImplementedError("Volume normalisation requires volumetric eigendecomposition.")
     elif normalize == "fiedler":
         if dna[0] <= 0:
             raise ValueError("Fiedler value is zero.")
@@ -106,6 +105,7 @@ def compute_shapedna(
 # ======================================================================
 # §2  HKS — Heat Kernel Signature  (Sun, Ovsjanikov & Guibas, 2009)
 # ======================================================================
+
 
 def _auto_hks_times(
     eigenvalues: np.ndarray,
@@ -131,7 +131,7 @@ def _auto_hks_times(
 
 def compute_hks(
     decomp: SpectralDecomposition,
-    t_values: Optional[np.ndarray] = None,
+    t_values: np.ndarray | None = None,
     *,
     n_times: int = 100,
     normalize: bool = False,
@@ -168,21 +168,21 @@ def compute_hks(
     informative multi-scale signature based on heat diffusion.
     *SGP 2009*.
     """
-    evals = decomp.eigenvalues                             # (k,)
-    evecs = decomp.eigenvectors                            # (N, k)
+    evals = decomp.eigenvalues  # (k,)
+    evecs = decomp.eigenvectors  # (N, k)
 
     if t_values is None:
         t_values = _auto_hks_times(evals, n_times)
     t_values = np.asarray(t_values, dtype=np.float64)
 
     # Φ² : (N, k) — squared eigenfunctions.
-    phi_sq = evecs ** 2                                    # (N, k)
+    phi_sq = evecs**2  # (N, k)
 
     # exp(-λ·t) : (T, k)
-    exp_lt = np.exp(-evals[None, :] * t_values[:, None])   # (T, k)
+    exp_lt = np.exp(-evals[None, :] * t_values[:, None])  # (T, k)
 
     # HKS = Φ² @ exp(-λ·t)ᵀ : (N, T)
-    hks = phi_sq @ exp_lt.T                                # (N, T)
+    hks = phi_sq @ exp_lt.T  # (N, T)
 
     if normalize:
         norms = np.linalg.norm(hks, axis=0, keepdims=True)
@@ -190,7 +190,10 @@ def compute_hks(
 
     logger.debug(
         "HKS: N=%d, T=%d, t∈[%.2e, %.2e]",
-        hks.shape[0], hks.shape[1], t_values[0], t_values[-1],
+        hks.shape[0],
+        hks.shape[1],
+        t_values[0],
+        t_values[-1],
     )
     return hks
 
@@ -198,6 +201,7 @@ def compute_hks(
 # ======================================================================
 # §3  SI-HKS — Scale-Invariant HKS  (Bronstein & Kokkinos, 2010)
 # ======================================================================
+
 
 def compute_si_hks(
     decomp: SpectralDecomposition,
@@ -244,7 +248,6 @@ def compute_si_hks(
     for non-rigid shape recognition. *CVPR 2010*.
     """
     evals = decomp.eigenvalues
-    evecs = decomp.eigenvectors
 
     # Log-spaced time values.
     t_vals = _auto_hks_times(evals, n_times)
@@ -253,21 +256,23 @@ def compute_si_hks(
     hks = compute_hks(decomp, t_values=t_vals, normalize=False)  # (N, T)
 
     # Take log to linearise the amplitude scaling.
-    hks_log = np.log(np.clip(hks, 1e-30, None))            # (N, T)
+    hks_log = np.log(np.clip(hks, 1e-30, None))  # (N, T)
 
     # Derivative w.r.t. log-time (finite differences).
-    dhks = np.diff(hks_log, axis=1)                         # (N, T-1)
+    dhks = np.diff(hks_log, axis=1)  # (N, T-1)
 
     # DFT along the time axis per vertex.
-    fft_coeffs = np.fft.rfft(dhks, axis=1)                  # (N, T//2+1)
+    fft_coeffs = np.fft.rfft(dhks, axis=1)  # (N, T//2+1)
 
     # Modulus of first n_frequencies (skip DC).
     n_freq = min(n_frequencies, fft_coeffs.shape[1] - 1)
-    si_hks = np.abs(fft_coeffs[:, 1:1 + n_freq])            # (N, n_freq)
+    si_hks = np.abs(fft_coeffs[:, 1 : 1 + n_freq])  # (N, n_freq)
 
     logger.debug(
         "SI-HKS: N=%d, %d frequencies from %d time samples",
-        si_hks.shape[0], n_freq, n_times,
+        si_hks.shape[0],
+        n_freq,
+        n_times,
     )
     return si_hks
 
@@ -276,10 +281,11 @@ def compute_si_hks(
 # §4  WKS — Wave Kernel Signature  (Aubry, Schlickewei & Cremers, 2011)
 # ======================================================================
 
+
 def _auto_wks_params(
     eigenvalues: np.ndarray,
     n_energies: int,
-) -> Tuple[np.ndarray, float]:
+) -> tuple[np.ndarray, float]:
     """Auto-compute energy levels and bandwidth for WKS."""
     lam = eigenvalues[eigenvalues > 1e-10]
     if len(lam) < 2:
@@ -308,10 +314,10 @@ def _auto_wks_params(
 
 def compute_wks(
     decomp: SpectralDecomposition,
-    e_values: Optional[np.ndarray] = None,
+    e_values: np.ndarray | None = None,
     *,
     n_energies: int = 100,
-    sigma: Optional[float] = None,
+    sigma: float | None = None,
     normalize: bool = True,
 ) -> DescriptorMatrix:
     """Wave Kernel Signature — band-pass per-vertex descriptor.
@@ -355,13 +361,13 @@ def compute_wks(
     """
     evals = decomp.eigenvalues
     evecs = decomp.eigenvectors
-    N, k = evecs.shape
+    N, _k = evecs.shape
 
     # Skip the zero eigenvalue.
     nz = evals > 1e-10
     evals_nz = evals[nz]
     evecs_nz = evecs[:, nz]
-    log_lam = np.log(evals_nz)                             # (k',)
+    log_lam = np.log(evals_nz)  # (k',)
 
     if e_values is None or sigma is None:
         auto_e, auto_sigma = _auto_wks_params(evals, n_energies)
@@ -375,17 +381,17 @@ def compute_wks(
 
     # Gaussian filter weights: (E, k')
     #   g[j, i] = exp(-(e_j - log λ_i)² / (2σ²))
-    diff = e_values[:, None] - log_lam[None, :]            # (E, k')
-    gauss = np.exp(-diff ** 2 / (2 * sigma ** 2))          # (E, k')
+    diff = e_values[:, None] - log_lam[None, :]  # (E, k')
+    gauss = np.exp(-(diff**2) / (2 * sigma**2))  # (E, k')
 
     # Normalisation C_e: sum of weights per energy level.
-    C = gauss.sum(axis=1, keepdims=True)                   # (E, 1)
+    C = gauss.sum(axis=1, keepdims=True)  # (E, 1)
     C = np.clip(C, 1e-30, None)
-    gauss_norm = gauss / C                                 # (E, k')
+    gauss_norm = gauss / C  # (E, k')
 
     # WKS = Φ² @ gauss_normᵀ : (N, E)
-    phi_sq = evecs_nz ** 2                                 # (N, k')
-    wks = phi_sq @ gauss_norm.T                            # (N, E)
+    phi_sq = evecs_nz**2  # (N, k')
+    wks = phi_sq @ gauss_norm.T  # (N, E)
 
     if normalize:
         norms = np.linalg.norm(wks, axis=0, keepdims=True)
@@ -393,7 +399,11 @@ def compute_wks(
 
     logger.debug(
         "WKS: N=%d, E=%d, σ=%.4f, e∈[%.2f, %.2f]",
-        N, E, sigma, e_values[0], e_values[-1],
+        N,
+        E,
+        sigma,
+        e_values[0],
+        e_values[-1],
     )
     return wks
 
@@ -401,6 +411,7 @@ def compute_wks(
 # ======================================================================
 # §5  GPS — Global Point Signature  (Rustamov, 2007)
 # ======================================================================
+
 
 def compute_gps(
     decomp: SpectralDecomposition,
@@ -454,7 +465,7 @@ def compute_gps(
     # Avoid division by zero for near-zero eigenvalues.
     inv_sqrt_lam = 1.0 / np.sqrt(np.clip(evals_sel, 1e-10, None))
 
-    gps = evecs_sel * inv_sqrt_lam[None, :]                # (N, d)
+    gps = evecs_sel * inv_sqrt_lam[None, :]  # (N, d)
 
     logger.debug("GPS: N=%d, d=%d", gps.shape[0], gps.shape[1])
     return gps
@@ -464,9 +475,10 @@ def compute_gps(
 # §6  Bates Symmetric Polynomial Signatures  (Bates et al., 2011)
 # ======================================================================
 
+
 def compute_bates_signatures(
     decomp: SpectralDecomposition,
-    t_values: Optional[np.ndarray] = None,
+    t_values: np.ndarray | None = None,
     *,
     n_times: int = 10,
     order: int = 2,
@@ -515,45 +527,48 @@ def compute_bates_signatures(
     """
     evals = decomp.eigenvalues
     evecs = decomp.eigenvectors
-    N, k = evecs.shape
+    N, _k = evecs.shape
 
     if t_values is None:
         t_values = _auto_hks_times(evals, n_times)
     t_values = np.asarray(t_values, dtype=np.float64)
     T = len(t_values)
 
-    results: List[np.ndarray] = []
+    results: list[np.ndarray] = []
 
     with progress_simple("Bates SP signatures", total=T) as tick:
-        for ti, t in enumerate(t_values):
+        for _ti, t in enumerate(t_values):
             # Weighted eigenfunctions: w_j(x) = exp(-λ_j·t) · φ_j(x)
-            weights = np.exp(-evals * t)                    # (k,)
-            w = evecs * weights[None, :]                    # (N, k)
+            weights = np.exp(-evals * t)  # (k,)
+            w = evecs * weights[None, :]  # (N, k)
 
             # e_1 = Σ w_j (equivalent to HKS diagonal)
-            e1 = w.sum(axis=1)                              # (N,)
+            e1 = w.sum(axis=1)  # (N,)
             results.append(e1)
 
             if order >= 2:
                 # e_2 = (e_1² − Σ w_j²) / 2  (Newton's identity)
-                sum_sq = np.sum(w ** 2, axis=1)             # (N,)
-                e2 = (e1 ** 2 - sum_sq) / 2.0               # (N,)
+                sum_sq = np.sum(w**2, axis=1)  # (N,)
+                e2 = (e1**2 - sum_sq) / 2.0  # (N,)
                 results.append(e2)
 
             if order >= 3:
                 # e_3 = (e_1³ − 3·e_1·Σw² + 2·Σw³) / 6
-                sum_cu = np.sum(w ** 3, axis=1)             # (N,)
-                e3 = (e1 ** 3 - 3 * e1 * sum_sq + 2 * sum_cu) / 6.0
+                sum_cu = np.sum(w**3, axis=1)  # (N,)
+                e3 = (e1**3 - 3 * e1 * sum_sq + 2 * sum_cu) / 6.0
                 results.append(e3)
 
             tick(1)
 
     # Stack: (N, order × T) — columns alternate [e1_t0, e2_t0, e1_t1, e2_t1, ...]
-    sig = np.column_stack(results)                          # (N, order*T)
+    sig = np.column_stack(results)  # (N, order*T)
 
     logger.debug(
         "Bates SP: N=%d, order=%d, T=%d → dim=%d",
-        N, order, T, sig.shape[1],
+        N,
+        order,
+        T,
+        sig.shape[1],
     )
     return sig
 
@@ -561,6 +576,7 @@ def compute_bates_signatures(
 # ======================================================================
 # §7  BKS — Biharmonic Kernel Signature  (Lipman et al., 2010)
 # ======================================================================
+
 
 def compute_bks(
     decomp: SpectralDecomposition,
@@ -601,8 +617,8 @@ def compute_bks(
     evals_nz = evals[nz]
     evecs_nz = evecs[:, nz]
 
-    inv_lam_sq = 1.0 / (evals_nz ** 2)                    # (k',)
-    bks = np.sum(evecs_nz ** 2 * inv_lam_sq[None, :], axis=1)  # (N,)
+    inv_lam_sq = 1.0 / (evals_nz**2)  # (k',)
+    bks = np.sum(evecs_nz**2 * inv_lam_sq[None, :], axis=1)  # (N,)
 
     logger.debug("BKS: N=%d, k'=%d non-zero eigenvalues", bks.shape[0], nz.sum())
     return bks
@@ -612,10 +628,11 @@ def compute_bks(
 # §8  IBKS — Improved Biharmonic Kernel Signature  (Zhang et al., 2024)
 # ======================================================================
 
+
 def compute_ibks(
     decomp: SpectralDecomposition,
     *,
-    gaussian_curvature: Optional[ScalarMap] = None,
+    gaussian_curvature: ScalarMap | None = None,
     alpha: float = 0.1,
     k_neighbours: int = 10,
 ) -> ScalarMap:
@@ -665,21 +682,20 @@ def compute_ibks(
         nz = evals > 1e-10
         # Weighted variance of eigenfunctions as curvature proxy.
         weights = evals[nz][:10] if nz.sum() >= 10 else evals[nz]
-        K_abs = np.sqrt(
-            np.sum((evecs[:, nz][:, :len(weights)] ** 2) * weights[None, :], axis=1)
-        )
+        K_abs = np.sqrt(np.sum((evecs[:, nz][:, : len(weights)] ** 2) * weights[None, :], axis=1))
 
     # Neighbourhood aggregation via kNN on eigenvector embedding.
     from spectralbrain.core.base import knn_search
+
     # Use the first few eigenvectors as embedding for neighbourhood.
     n_emb = min(10, decomp.n_eigenvalues)
     emb = decomp.eigenvectors[:, :n_emb]
     _, indices = knn_search(emb, k=k_neighbours)
 
     # Aggregate: mean of curvature-weighted BKS in neighbourhood.
-    nbr_bks = bks[indices]                                 # (N, k)
-    nbr_K = K_abs[indices]                                 # (N, k)
-    curvature_term = np.mean(nbr_K * nbr_bks, axis=1)     # (N,)
+    nbr_bks = bks[indices]  # (N, k)
+    nbr_K = K_abs[indices]  # (N, k)
+    curvature_term = np.mean(nbr_K * nbr_bks, axis=1)  # (N,)
 
     ibks = bks + alpha * curvature_term
 
@@ -691,6 +707,7 @@ def compute_ibks(
 # §9  CONVENIENCE: compute all descriptors at once
 # ======================================================================
 
+
 def compute_all_descriptors(
     decomp: SpectralDecomposition,
     *,
@@ -699,8 +716,8 @@ def compute_all_descriptors(
     si_hks_n_freq: int = 8,
     bates_order: int = 2,
     bates_n_times: int = 10,
-    gaussian_curvature: Optional[ScalarMap] = None,
-) -> Dict[str, Union[GlobalDescriptor, DescriptorMatrix, ScalarMap]]:
+    gaussian_curvature: ScalarMap | None = None,
+) -> dict[str, GlobalDescriptor | DescriptorMatrix | ScalarMap]:
     """Compute all 8 spectral descriptors from one decomposition.
 
     Efficient because the eigendecomposition (the expensive step)
@@ -725,10 +742,11 @@ def compute_all_descriptors(
     """
     logger.info(
         "Computing all descriptors for %d vertices, k=%d",
-        decomp.n_vertices, decomp.n_eigenvalues,
+        decomp.n_vertices,
+        decomp.n_eigenvalues,
     )
 
-    results: Dict[str, Union[GlobalDescriptor, DescriptorMatrix, ScalarMap]] = {}
+    results: dict[str, GlobalDescriptor | DescriptorMatrix | ScalarMap] = {}
 
     results["shapedna"] = compute_shapedna(decomp, normalize="area")
     results["hks"] = compute_hks(decomp, n_times=hks_n_times)
@@ -736,11 +754,14 @@ def compute_all_descriptors(
     results["wks"] = compute_wks(decomp, n_energies=wks_n_energies)
     results["gps"] = compute_gps(decomp)
     results["bates_sp"] = compute_bates_signatures(
-        decomp, order=bates_order, n_times=bates_n_times,
+        decomp,
+        order=bates_order,
+        n_times=bates_n_times,
     )
     results["bks"] = compute_bks(decomp)
     results["ibks"] = compute_ibks(
-        decomp, gaussian_curvature=gaussian_curvature,
+        decomp,
+        gaussian_curvature=gaussian_curvature,
     )
 
     logger.info(
@@ -754,14 +775,14 @@ def compute_all_descriptors(
 # §10  __all__
 # ======================================================================
 
-__all__: List[str] = [
-    "compute_shapedna",
-    "compute_hks",
-    "compute_si_hks",
-    "compute_wks",
-    "compute_gps",
+__all__: list[str] = [
+    "compute_all_descriptors",
     "compute_bates_signatures",
     "compute_bks",
+    "compute_gps",
+    "compute_hks",
     "compute_ibks",
-    "compute_all_descriptors",
+    "compute_shapedna",
+    "compute_si_hks",
+    "compute_wks",
 ]

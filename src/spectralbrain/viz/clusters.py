@@ -47,14 +47,13 @@ from __future__ import annotations
 import os
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple, Union
+from typing import Any, Literal
 
-import numpy as np
-import matplotlib as mpl
-import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
-from matplotlib.figure import Figure
+import matplotlib.pyplot as plt
+import numpy as np
 from matplotlib.axes import Axes
+from matplotlib.figure import Figure
 
 from spectralbrain.runtime import PathLike, get_logger
 
@@ -64,51 +63,52 @@ logger = get_logger(__name__)
 # Constants
 # ──────────────────────────────────────────────────────────────────────
 
-_DEFAULT_SIZE: Tuple[int, int] = (1600, 1200)
+_DEFAULT_SIZE: tuple[int, int] = (1600, 1200)
 _DEFAULT_SCALE: int = 2
 _DEFAULT_BG: str = "white"
 DPI: int = 600
 
 # Qualitative palette for cluster labels — optimised for
 # colorblind safety (Paul Tol's muted scheme + extensions)
-CLUSTER_COLORS: List[str] = [
-    "#4477AA",   # blue
-    "#EE6677",   # rose
-    "#228833",   # green
-    "#CCBB44",   # sand
-    "#66CCEE",   # cyan
-    "#AA3377",   # purple
-    "#EE8866",   # orange
-    "#44AA99",   # teal
-    "#332288",   # indigo
-    "#CC6677",   # wine
-    "#882255",   # plum
-    "#117733",   # forest
-    "#999933",   # olive
-    "#DDCC77",   # wheat
+CLUSTER_COLORS: list[str] = [
+    "#4477AA",  # blue
+    "#EE6677",  # rose
+    "#228833",  # green
+    "#CCBB44",  # sand
+    "#66CCEE",  # cyan
+    "#AA3377",  # purple
+    "#EE8866",  # orange
+    "#44AA99",  # teal
+    "#332288",  # indigo
+    "#CC6677",  # wine
+    "#882255",  # plum
+    "#117733",  # forest
+    "#999933",  # olive
+    "#DDCC77",  # wheat
 ]
 
 # Standard 3-pose views for brain structures
-VIEWS_3POSE: List[str] = ["left_lateral", "anterior", "superior"]
+VIEWS_3POSE: list[str] = ["left_lateral", "anterior", "superior"]
 
 # Camera presets — identical to geometry/meshes.py for consistency
-CAMERA_PRESETS: Dict[str, Dict[str, Any]] = {
-    "anterior":      {"azimuth": 0,   "elevation": 0},
-    "posterior":      {"azimuth": 180, "elevation": 0},
-    "left_lateral":   {"azimuth": -90, "elevation": 0},
-    "right_lateral":  {"azimuth": 90,  "elevation": 0},
-    "superior":       {"azimuth": 0,   "elevation": 90},
-    "inferior":       {"azimuth": 0,   "elevation": -90},
-    "left_medial":    {"azimuth": 90,  "elevation": 0},
-    "right_medial":   {"azimuth": -90, "elevation": 0},
-    "oblique_left":   {"azimuth": -45, "elevation": 30},
-    "oblique_right":  {"azimuth": 45,  "elevation": 30},
+CAMERA_PRESETS: dict[str, dict[str, Any]] = {
+    "anterior": {"azimuth": 0, "elevation": 0},
+    "posterior": {"azimuth": 180, "elevation": 0},
+    "left_lateral": {"azimuth": -90, "elevation": 0},
+    "right_lateral": {"azimuth": 90, "elevation": 0},
+    "superior": {"azimuth": 0, "elevation": 90},
+    "inferior": {"azimuth": 0, "elevation": -90},
+    "left_medial": {"azimuth": 90, "elevation": 0},
+    "right_medial": {"azimuth": -90, "elevation": 0},
+    "oblique_left": {"azimuth": -45, "elevation": 30},
+    "oblique_right": {"azimuth": 45, "elevation": 30},
 }
 
 
 # ──────────────────────────────────────────────────────────────────────
 # Lazy imports & helpers
 # ──────────────────────────────────────────────────────────────────────
+
 
 def _ensure_offscreen() -> None:
     """Set vedo to offscreen rendering mode."""
@@ -120,6 +120,7 @@ def _get_vedo():
     _ensure_offscreen()
     try:
         import vedo
+
         try:
             vedo.start_xvfb()
         except Exception:
@@ -127,8 +128,7 @@ def _get_vedo():
         return vedo
     except ImportError:
         raise ImportError(
-            "vedo is required for 3D cluster visualization.  "
-            "Install with: pip install vedo"
+            "vedo is required for 3D cluster visualization.  Install with: pip install vedo"
         )
 
 
@@ -156,8 +156,11 @@ def _save_screenshot(plotter, save, *, scale=_DEFAULT_SCALE):
 
 def _cluster_cmap(n_clusters: int):
     """Build a ListedColormap from the cluster palette."""
-    colors = CLUSTER_COLORS[:n_clusters] if n_clusters <= len(CLUSTER_COLORS) \
+    colors = (
+        CLUSTER_COLORS[:n_clusters]
+        if n_clusters <= len(CLUSTER_COLORS)
         else (CLUSTER_COLORS * ((n_clusters // len(CLUSTER_COLORS)) + 1))[:n_clusters]
+    )
     return mcolors.ListedColormap(colors)
 
 
@@ -165,27 +168,31 @@ def _apply_style():
     """Apply SpectralBrain publication style."""
     try:
         import scienceplots  # noqa: F401
+
         plt.style.use(["science", "no-latex"])
     except ImportError:
         pass
-    plt.rcParams.update({
-        "savefig.dpi": DPI, "figure.dpi": 150,
-        "axes.spines.top": False, "axes.spines.right": False,
-        "legend.frameon": False, "font.size": 9,
-    })
+    plt.rcParams.update(
+        {
+            "savefig.dpi": DPI,
+            "figure.dpi": 150,
+            "axes.spines.top": False,
+            "axes.spines.right": False,
+            "legend.frameon": False,
+            "font.size": 9,
+        }
+    )
 
 
-def _savefig(fig: Figure, save: Optional[PathLike]) -> None:
+def _savefig(fig: Figure, save: PathLike | None) -> None:
     """Save matplotlib figure in PNG + PDF."""
     if save is not None:
         p = Path(save)
         p.parent.mkdir(parents=True, exist_ok=True)
-        fig.savefig(str(p), dpi=DPI, bbox_inches="tight",
-                    facecolor="white", transparent=False)
+        fig.savefig(str(p), dpi=DPI, bbox_inches="tight", facecolor="white", transparent=False)
         # also save PDF if extension is png
         if p.suffix.lower() == ".png":
-            fig.savefig(str(p.with_suffix(".pdf")),
-                        bbox_inches="tight", facecolor="white")
+            fig.savefig(str(p.with_suffix(".pdf")), bbox_inches="tight", facecolor="white")
         logger.info("Saved figure → %s", p)
 
 
@@ -193,21 +200,22 @@ def _savefig(fig: Figure, save: Optional[PathLike]) -> None:
 # §1  3D CLUSTER MAP — mesh coloured by labels, 3-pose panel
 # ======================================================================
 
+
 def plot_cluster_map(
     vertices: np.ndarray,
     faces: np.ndarray,
     labels: np.ndarray,
     *,
-    views: Optional[List[str]] = None,
+    views: list[str] | None = None,
     noise_color: str = "lightgray",
     lighting: str = "default",
     show_scalarbar: bool = True,
-    title: Optional[str] = None,
+    title: str | None = None,
     bg: str = _DEFAULT_BG,
-    size: Optional[Tuple[int, int]] = None,
+    size: tuple[int, int] | None = None,
     scale: int = _DEFAULT_SCALE,
-    save: Optional[PathLike] = None,
-) -> Tuple[Path, Dict[str, Any]]:
+    save: PathLike | None = None,
+) -> tuple[Path, dict[str, Any]]:
     """Render mesh coloured by cluster labels in a multi-view panel.
 
     Each cluster gets a distinct colour from the colorblind-safe
@@ -259,7 +267,10 @@ def plot_cluster_map(
     rgba_u8 = (rgba * 255).astype(np.uint8)
 
     plt = vedo.Plotter(
-        shape=(1, n_views), offscreen=True, size=size, bg=bg,
+        shape=(1, n_views),
+        offscreen=True,
+        size=size,
+        bg=bg,
     )
 
     for vi, view_name in enumerate(views):
@@ -272,7 +283,8 @@ def plot_cluster_map(
         plt.at(vi).show(
             mesh,
             title=view_name.replace("_", " ").title() if not title else title,
-            viewup="z", zoom=1.1,
+            viewup="z",
+            zoom=1.1,
             **{k: v for k, v in preset.items() if k in ("azimuth", "elevation")},
         )
 
@@ -280,8 +292,9 @@ def plot_cluster_map(
         "n_clusters": n_clusters,
         "n_noise": int((labels < 0).sum()),
         "views": views,
-        "cluster_colors": {lab: CLUSTER_COLORS[i % len(CLUSTER_COLORS)]
-                           for i, lab in enumerate(unique_labels)},
+        "cluster_colors": {
+            lab: CLUSTER_COLORS[i % len(CLUSTER_COLORS)] for i, lab in enumerate(unique_labels)
+        },
     }
     out = _save_screenshot(plt, save, scale=scale)
     return out, meta
@@ -291,6 +304,7 @@ def plot_cluster_map(
 # §2  CLUSTER BOUNDARIES — mesh with highlighted boundary edges
 # ======================================================================
 
+
 def plot_cluster_boundaries(
     vertices: np.ndarray,
     faces: np.ndarray,
@@ -299,13 +313,13 @@ def plot_cluster_boundaries(
     mesh_color: str = "ivory",
     mesh_alpha: float = 0.6,
     boundary_width: float = 3.0,
-    views: Optional[List[str]] = None,
+    views: list[str] | None = None,
     lighting: str = "default",
     bg: str = _DEFAULT_BG,
-    size: Optional[Tuple[int, int]] = None,
+    size: tuple[int, int] | None = None,
     scale: int = _DEFAULT_SCALE,
-    save: Optional[PathLike] = None,
-) -> Tuple[Path, Dict[str, Any]]:
+    save: PathLike | None = None,
+) -> tuple[Path, dict[str, Any]]:
     """Render mesh with cluster boundaries as coloured lines.
 
     Identifies edges where adjacent triangles have different cluster
@@ -366,7 +380,10 @@ def plot_cluster_boundaries(
         lines = None
 
     plt_obj = vedo.Plotter(
-        shape=(1, n_views), offscreen=True, size=size, bg=bg,
+        shape=(1, n_views),
+        offscreen=True,
+        size=size,
+        bg=bg,
     )
 
     for vi, view_name in enumerate(views):
@@ -381,7 +398,8 @@ def plot_cluster_boundaries(
         plt_obj.at(vi).show(
             *actors,
             title=view_name.replace("_", " ").title(),
-            viewup="z", zoom=1.1,
+            viewup="z",
+            zoom=1.1,
             **{k: v for k, v in preset.items() if k in ("azimuth", "elevation")},
         )
 
@@ -394,19 +412,20 @@ def plot_cluster_boundaries(
 # §3  MULTI-METHOD COMPARISON — side-by-side cluster maps
 # ======================================================================
 
+
 def plot_method_comparison_3d(
     vertices: np.ndarray,
     faces: np.ndarray,
-    results: Dict[str, np.ndarray],
+    results: dict[str, np.ndarray],
     *,
     view: str = "left_lateral",
     noise_color: str = "lightgray",
     lighting: str = "default",
     bg: str = _DEFAULT_BG,
-    size: Optional[Tuple[int, int]] = None,
+    size: tuple[int, int] | None = None,
     scale: int = _DEFAULT_SCALE,
-    save: Optional[PathLike] = None,
-) -> Tuple[Path, Dict[str, Any]]:
+    save: PathLike | None = None,
+) -> tuple[Path, dict[str, Any]]:
     """Compare multiple clustering methods on the same mesh.
 
     Each method gets one panel, all from the same camera angle.
@@ -455,7 +474,8 @@ def plot_method_comparison_3d(
         plt.at(i).show(
             mesh,
             title=f"{method} (k={n_clust})",
-            viewup="z", zoom=1.1,
+            viewup="z",
+            zoom=1.1,
             **{k: v for k, v in preset.items() if k in ("azimuth", "elevation")},
         )
 
@@ -468,6 +488,7 @@ def plot_method_comparison_3d(
 # §4  GNMF SPATIAL COMPONENTS — one panel per W column
 # ======================================================================
 
+
 def plot_gnmf_components(
     vertices: np.ndarray,
     faces: np.ndarray,
@@ -478,10 +499,10 @@ def plot_gnmf_components(
     view: str = "left_lateral",
     lighting: str = "default",
     bg: str = _DEFAULT_BG,
-    size: Optional[Tuple[int, int]] = None,
+    size: tuple[int, int] | None = None,
     scale: int = _DEFAULT_SCALE,
-    save: Optional[PathLike] = None,
-) -> Tuple[Path, Dict[str, Any]]:
+    save: PathLike | None = None,
+) -> tuple[Path, dict[str, Any]]:
     """Render GNMF spatial factor columns as separate mesh panels.
 
     Each column of W represents the soft membership weight for one
@@ -513,7 +534,10 @@ def plot_gnmf_components(
         size = (500 * n_cols, 500 * n_rows)
 
     plt = vedo.Plotter(
-        shape=(n_rows, n_cols), offscreen=True, size=size, bg=bg,
+        shape=(n_rows, n_cols),
+        offscreen=True,
+        size=size,
+        bg=bg,
     )
     preset = CAMERA_PRESETS.get(view, {})
 
@@ -529,7 +553,10 @@ def plot_gnmf_components(
         mesh.lighting(lighting)
 
         plt.at(row * n_cols + col).show(
-            mesh, title=f"W[:, {k}]", viewup="z", zoom=1.1,
+            mesh,
+            title=f"W[:, {k}]",
+            viewup="z",
+            zoom=1.1,
             **{kk: v for kk, v in preset.items() if kk in ("azimuth", "elevation")},
         )
 
@@ -542,6 +569,7 @@ def plot_gnmf_components(
 # §5  SOFT MEMBERSHIP — mesh coloured by probability
 # ======================================================================
 
+
 def plot_soft_membership(
     vertices: np.ndarray,
     faces: np.ndarray,
@@ -549,13 +577,13 @@ def plot_soft_membership(
     cluster_idx: int = 0,
     *,
     cmap: str = "YlOrRd",
-    views: Optional[List[str]] = None,
+    views: list[str] | None = None,
     lighting: str = "default",
     bg: str = _DEFAULT_BG,
-    size: Optional[Tuple[int, int]] = None,
+    size: tuple[int, int] | None = None,
     scale: int = _DEFAULT_SCALE,
-    save: Optional[PathLike] = None,
-) -> Tuple[Path, Dict[str, Any]]:
+    save: PathLike | None = None,
+) -> tuple[Path, dict[str, Any]]:
     """Render soft membership probability for one cluster.
 
     Parameters
@@ -594,8 +622,10 @@ def plot_soft_membership(
 
         preset = CAMERA_PRESETS.get(view_name, {})
         plt.at(vi).show(
-            mesh, title=view_name.replace("_", " ").title(),
-            viewup="z", zoom=1.1,
+            mesh,
+            title=view_name.replace("_", " ").title(),
+            viewup="z",
+            zoom=1.1,
             **{k: v for k, v in preset.items() if k in ("azimuth", "elevation")},
         )
 
@@ -608,6 +638,7 @@ def plot_soft_membership(
 # §6  EXPLODED CLUSTERS — spatially separated fragments
 # ======================================================================
 
+
 def plot_cluster_exploded(
     vertices: np.ndarray,
     faces: np.ndarray,
@@ -617,10 +648,10 @@ def plot_cluster_exploded(
     view: str = "oblique_left",
     lighting: str = "default",
     bg: str = _DEFAULT_BG,
-    size: Tuple[int, int] = (1600, 1200),
+    size: tuple[int, int] = (1600, 1200),
     scale: int = _DEFAULT_SCALE,
-    save: Optional[PathLike] = None,
-) -> Tuple[Path, Dict[str, Any]]:
+    save: PathLike | None = None,
+) -> tuple[Path, dict[str, Any]]:
     """Exploded view — each cluster is displaced outward from centroid.
 
     Useful for inspecting cluster topology on convoluted structures
@@ -647,7 +678,7 @@ def plot_cluster_exploded(
 
     unique_labels = sorted(set(labels[labels >= 0]))
     n_clusters = len(unique_labels)
-    cmap = _cluster_cmap(n_clusters)
+    _cluster_cmap(n_clusters)
     lab_to_idx = {l: i for i, l in enumerate(unique_labels)}
 
     # global centroid
@@ -692,7 +723,8 @@ def plot_cluster_exploded(
     plt.show(
         *actors,
         title="Exploded Cluster View",
-        viewup="z", zoom=0.9,
+        viewup="z",
+        zoom=0.9,
         **{k: v for k, v in preset.items() if k in ("azimuth", "elevation")},
     )
 
@@ -705,22 +737,23 @@ def plot_cluster_exploded(
 # §7  HKS + CLUSTERS PROGRESSION — scalar + labels across t
 # ======================================================================
 
+
 def plot_hks_cluster_progression(
     vertices: np.ndarray,
     faces: np.ndarray,
     H: np.ndarray,
     labels: np.ndarray,
-    t_indices: Optional[List[int]] = None,
+    t_indices: list[int] | None = None,
     *,
     n_panels: int = 4,
     view: str = "left_lateral",
     cmap_hks: str = "inferno",
     lighting: str = "default",
     bg: str = _DEFAULT_BG,
-    size: Optional[Tuple[int, int]] = None,
+    size: tuple[int, int] | None = None,
     scale: int = _DEFAULT_SCALE,
-    save: Optional[PathLike] = None,
-) -> Tuple[Path, Dict[str, Any]]:
+    save: PathLike | None = None,
+) -> tuple[Path, dict[str, Any]]:
     """Show HKS scalar at selected time-scales alongside cluster map.
 
     Top row: HKS at different t.  Bottom row: cluster labels.
@@ -757,7 +790,10 @@ def plot_hks_cluster_progression(
 
     # 2 rows: top = HKS, bottom = clusters
     plt = vedo.Plotter(
-        shape=(2, n_panels), offscreen=True, size=size, bg=bg,
+        shape=(2, n_panels),
+        offscreen=True,
+        size=size,
+        bg=bg,
     )
     preset = CAMERA_PRESETS.get(view, {})
 
@@ -784,7 +820,10 @@ def plot_hks_cluster_progression(
         mesh_hks.lighting(lighting)
 
         plt.at(0 * n_panels + pi).show(
-            mesh_hks, title=f"HKS t[{ti}]", viewup="z", zoom=1.1,
+            mesh_hks,
+            title=f"HKS t[{ti}]",
+            viewup="z",
+            zoom=1.1,
             **{k: v for k, v in preset.items() if k in ("azimuth", "elevation")},
         )
 
@@ -795,7 +834,10 @@ def plot_hks_cluster_progression(
         mesh_cl.lighting(lighting)
 
         plt.at(1 * n_panels + pi).show(
-            mesh_cl, title="Clusters", viewup="z", zoom=1.1,
+            mesh_cl,
+            title="Clusters",
+            viewup="z",
+            zoom=1.1,
             **{k: v for k, v in preset.items() if k in ("azimuth", "elevation")},
         )
 
@@ -807,6 +849,7 @@ def plot_hks_cluster_progression(
 # ======================================================================
 # §8  FUSION PANEL — HKS / WKS / Fused side by side
 # ======================================================================
+
 
 def plot_fusion_panel(
     vertices: np.ndarray,
@@ -821,10 +864,10 @@ def plot_fusion_panel(
     view: str = "left_lateral",
     lighting: str = "default",
     bg: str = _DEFAULT_BG,
-    size: Tuple[int, int] = (1800, 600),
+    size: tuple[int, int] = (1800, 600),
     scale: int = _DEFAULT_SCALE,
-    save: Optional[PathLike] = None,
-) -> Tuple[Path, Dict[str, Any]]:
+    save: PathLike | None = None,
+) -> tuple[Path, dict[str, Any]]:
     """Side-by-side render of HKS, WKS, and fused descriptor.
 
     Parameters
@@ -844,11 +887,13 @@ def plot_fusion_panel(
     preset = CAMERA_PRESETS.get(view, {})
     plt = vedo.Plotter(shape=(1, 3), offscreen=True, size=size, bg=bg)
 
-    for pi, (sc, name, cm) in enumerate([
-        (hks_scalar, "HKS", cmap_hks),
-        (wks_scalar, "WKS", cmap_wks),
-        (fused_scalar, "Fused", cmap_fused),
-    ]):
+    for pi, (sc, name, cm) in enumerate(
+        [
+            (hks_scalar, "HKS", cmap_hks),
+            (wks_scalar, "WKS", cmap_wks),
+            (fused_scalar, "Fused", cmap_fused),
+        ]
+    ):
         sc = np.asarray(sc, dtype=np.float64)
         v0 = float(np.nanpercentile(sc, 1))
         v1 = float(np.nanpercentile(sc, 99))
@@ -859,7 +904,10 @@ def plot_fusion_panel(
         mesh.lighting(lighting)
 
         plt.at(pi).show(
-            mesh, title=name, viewup="z", zoom=1.1,
+            mesh,
+            title=name,
+            viewup="z",
+            zoom=1.1,
             **{k: v for k, v in preset.items() if k in ("azimuth", "elevation")},
         )
 
@@ -872,19 +920,20 @@ def plot_fusion_panel(
 # §10  CLUSTER HKS TIME-PROFILES — mean ± SEM per cluster
 # ======================================================================
 
+
 def plot_cluster_profiles(
     H: np.ndarray,
     labels: np.ndarray,
-    t_values: Optional[np.ndarray] = None,
+    t_values: np.ndarray | None = None,
     *,
     log_t: bool = True,
     show_sem: bool = True,
     title: str = "Cluster HKS Profiles",
     xlabel: str = "Diffusion time t",
     ylabel: str = "HKS(x, t)",
-    figsize: Tuple[float, float] = (7, 4),
-    save: Optional[PathLike] = None,
-) -> Tuple[Figure, Axes]:
+    figsize: tuple[float, float] = (7, 4),
+    save: PathLike | None = None,
+) -> tuple[Figure, Axes]:
     """Mean ± SEM HKS profiles per cluster.
 
     Parameters
@@ -921,16 +970,13 @@ def plot_cluster_profiles(
         color = CLUSTER_COLORS[i % len(CLUSTER_COLORS)]
 
         if log_t:
-            ax.plot(t_values, mean, color=color, label=f"Cluster {lab}",
-                    linewidth=1.8)
+            ax.plot(t_values, mean, color=color, label=f"Cluster {lab}", linewidth=1.8)
         else:
-            ax.plot(t_values, mean, color=color, label=f"Cluster {lab}",
-                    linewidth=1.8)
+            ax.plot(t_values, mean, color=color, label=f"Cluster {lab}", linewidth=1.8)
 
         if show_sem and mask.sum() > 1:
             sem = cluster_h.std(axis=0) / np.sqrt(mask.sum())
-            ax.fill_between(t_values, mean - sem, mean + sem,
-                            color=color, alpha=0.2)
+            ax.fill_between(t_values, mean - sem, mean + sem, color=color, alpha=0.2)
 
     if log_t:
         ax.set_xscale("log")
@@ -949,15 +995,16 @@ def plot_cluster_profiles(
 # §11  SILHOUETTE DIAGRAM
 # ======================================================================
 
+
 def plot_silhouette_diagram(
     H: np.ndarray,
     labels: np.ndarray,
     *,
     metric: str = "euclidean",
     title: str = "Silhouette Diagram",
-    figsize: Tuple[float, float] = (6, 5),
-    save: Optional[PathLike] = None,
-) -> Tuple[Figure, Axes]:
+    figsize: tuple[float, float] = (6, 5),
+    save: PathLike | None = None,
+) -> tuple[Figure, Axes]:
     """Per-sample silhouette plot ordered by cluster.
 
     Parameters
@@ -1001,12 +1048,10 @@ def plot_silhouette_diagram(
             label=f"Cluster {lab}",
         )
         # label centroid
-        ax.text(-0.05, y_lower + 0.5 * cluster_size,
-                str(lab), fontsize=8, va="center", ha="right")
+        ax.text(-0.05, y_lower + 0.5 * cluster_size, str(lab), fontsize=8, va="center", ha="right")
         y_lower = y_upper + 2  # gap between clusters
 
-    ax.axvline(avg_sil, color="red", linestyle="--", linewidth=1,
-               label=f"Mean = {avg_sil:.3f}")
+    ax.axvline(avg_sil, color="red", linestyle="--", linewidth=1, label=f"Mean = {avg_sil:.3f}")
     ax.set_xlabel("Silhouette coefficient")
     ax.set_ylabel("Vertices (sorted by cluster)")
     ax.set_title(title)
@@ -1022,14 +1067,15 @@ def plot_silhouette_diagram(
 # §12  CLUSTER QUALITY COMPARISON — bar chart across methods
 # ======================================================================
 
+
 def plot_quality_comparison(
-    quality_dict: Dict[str, Dict[str, float]],
+    quality_dict: dict[str, dict[str, float]],
     *,
-    metrics: Optional[List[str]] = None,
+    metrics: list[str] | None = None,
     title: str = "Clustering Quality Comparison",
-    figsize: Tuple[float, float] = (8, 4),
-    save: Optional[PathLike] = None,
-) -> Tuple[Figure, Axes]:
+    figsize: tuple[float, float] = (8, 4),
+    save: PathLike | None = None,
+) -> tuple[Figure, Axes]:
     """Grouped bar chart comparing quality metrics across methods.
 
     Parameters
@@ -1080,16 +1126,17 @@ def plot_quality_comparison(
 # §13  METHOD AGREEMENT HEATMAP — ARI / NMI matrix
 # ======================================================================
 
+
 def plot_agreement_heatmap(
     agreement_matrix: np.ndarray,
-    method_names: List[str],
+    method_names: list[str],
     *,
     metric_name: str = "ARI",
     cmap: str = "YlGnBu",
     title: str = "Inter-Method Agreement",
-    figsize: Tuple[float, float] = (6, 5),
-    save: Optional[PathLike] = None,
-) -> Tuple[Figure, Axes]:
+    figsize: tuple[float, float] = (6, 5),
+    save: PathLike | None = None,
+) -> tuple[Figure, Axes]:
     """Heatmap of pairwise clustering agreement.
 
     Parameters
@@ -1116,9 +1163,15 @@ def plot_agreement_heatmap(
     # annotate cells
     for i in range(len(method_names)):
         for j in range(len(method_names)):
-            ax.text(j, i, f"{agreement_matrix[i, j]:.2f}",
-                    ha="center", va="center", fontsize=8,
-                    color="white" if agreement_matrix[i, j] > 0.5 else "black")
+            ax.text(
+                j,
+                i,
+                f"{agreement_matrix[i, j]:.2f}",
+                ha="center",
+                va="center",
+                fontsize=8,
+                color="white" if agreement_matrix[i, j] > 0.5 else "black",
+            )
 
     cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
     cbar.set_label(metric_name, fontsize=9)
@@ -1133,13 +1186,14 @@ def plot_agreement_heatmap(
 # §14  PERSISTENCE DIAGRAM — birth vs death scatter
 # ======================================================================
 
+
 def plot_persistence_diagram(
     diagram: np.ndarray,
     *,
     title: str = "Persistence Diagram",
-    figsize: Tuple[float, float] = (5, 5),
-    save: Optional[PathLike] = None,
-) -> Tuple[Figure, Axes]:
+    figsize: tuple[float, float] = (5, 5),
+    save: PathLike | None = None,
+) -> tuple[Figure, Axes]:
     """Birth-death scatter for persistence-based clustering.
 
     Parameters
@@ -1161,13 +1215,20 @@ def plot_persistence_diagram(
     fig, ax = plt.subplots(figsize=figsize)
 
     # diagonal
-    lims = [min(births.min(), deaths.min()) - 0.1,
-            max(births.max(), deaths.max()) + 0.1]
+    lims = [min(births.min(), deaths.min()) - 0.1, max(births.max(), deaths.max()) + 0.1]
     ax.plot(lims, lims, "k--", linewidth=0.5, alpha=0.5)
 
     # colour by persistence
-    sc = ax.scatter(births, deaths, c=persistence, cmap="plasma",
-                    s=30, alpha=0.7, edgecolors="k", linewidths=0.3)
+    sc = ax.scatter(
+        births,
+        deaths,
+        c=persistence,
+        cmap="plasma",
+        s=30,
+        alpha=0.7,
+        edgecolors="k",
+        linewidths=0.3,
+    )
     fig.colorbar(sc, ax=ax, label="Persistence")
 
     ax.set_xlabel("Birth")
@@ -1186,15 +1247,16 @@ def plot_persistence_diagram(
 # §15  GNMF TEMPORAL FACTORS — F matrix profiles
 # ======================================================================
 
+
 def plot_gnmf_temporal_factors(
     F: np.ndarray,
-    t_values: Optional[np.ndarray] = None,
+    t_values: np.ndarray | None = None,
     *,
     log_t: bool = True,
     title: str = "GNMF Temporal Factors",
-    figsize: Tuple[float, float] = (7, 4),
-    save: Optional[PathLike] = None,
-) -> Tuple[Figure, Axes]:
+    figsize: tuple[float, float] = (7, 4),
+    save: PathLike | None = None,
+) -> tuple[Figure, Axes]:
     """Plot rows of the GNMF F matrix as temporal profiles.
 
     Each row of F is a canonical HKS-like curve for one component.
@@ -1219,8 +1281,7 @@ def plot_gnmf_temporal_factors(
     fig, ax = plt.subplots(figsize=figsize)
     for k in range(K):
         color = CLUSTER_COLORS[k % len(CLUSTER_COLORS)]
-        ax.plot(t_values, F[k], color=color, linewidth=1.5,
-                label=f"Component {k}")
+        ax.plot(t_values, F[k], color=color, linewidth=1.5, label=f"Component {k}")
 
     if log_t:
         ax.set_xscale("log")
@@ -1238,15 +1299,16 @@ def plot_gnmf_temporal_factors(
 # §16  BAYESIAN CONFIRMATION — posteriors + credible intervals
 # ======================================================================
 
+
 def plot_bayesian_confirmation(
     label_probabilities: np.ndarray,
-    credible_intervals: Dict[int, Dict[str, Any]],
+    credible_intervals: dict[int, dict[str, Any]],
     agreement_ari: float,
     *,
     title: str = "Bayesian Cluster Confirmation",
-    figsize: Tuple[float, float] = (10, 4),
-    save: Optional[PathLike] = None,
-) -> Tuple[Figure, Tuple[Axes, Axes]]:
+    figsize: tuple[float, float] = (10, 4),
+    save: PathLike | None = None,
+) -> tuple[Figure, tuple[Axes, Axes]]:
     """Two-panel Bayesian confirmation diagnostic.
 
     Left: stacked area of posterior membership probabilities.
@@ -1280,8 +1342,9 @@ def plot_bayesian_confirmation(
     bottom = np.zeros(N)
     for k in range(K):
         color = CLUSTER_COLORS[k % len(CLUSTER_COLORS)]
-        ax1.fill_between(range(N), bottom, bottom + P_sorted[:, k],
-                         color=color, alpha=0.8, label=f"Cl {k}")
+        ax1.fill_between(
+            range(N), bottom, bottom + P_sorted[:, k], color=color, alpha=0.8, label=f"Cl {k}"
+        )
         bottom += P_sorted[:, k]
 
     ax1.set_xlabel("Vertices (sorted)")
@@ -1312,10 +1375,15 @@ def plot_bayesian_confirmation(
     lows = np.array(lows)
     highs = np.array(highs)
 
-    for i, k in enumerate(clusters):
+    for i, _k in enumerate(clusters):
         color = CLUSTER_COLORS[i % len(CLUSTER_COLORS)]
-        ax2.plot([lows[i], highs[i]], [y_pos[i], y_pos[i]],
-                 color=color, linewidth=2.5, solid_capstyle="round")
+        ax2.plot(
+            [lows[i], highs[i]],
+            [y_pos[i], y_pos[i]],
+            color=color,
+            linewidth=2.5,
+            solid_capstyle="round",
+        )
         ax2.plot(means[i], y_pos[i], "o", color=color, markersize=6)
 
     ax2.set_yticks(y_pos)
@@ -1334,13 +1402,14 @@ def plot_bayesian_confirmation(
 # §17  CLUSTER SIZE DISTRIBUTION
 # ======================================================================
 
+
 def plot_cluster_sizes(
     labels: np.ndarray,
     *,
     title: str = "Cluster Size Distribution",
-    figsize: Tuple[float, float] = (6, 3.5),
-    save: Optional[PathLike] = None,
-) -> Tuple[Figure, Axes]:
+    figsize: tuple[float, float] = (6, 3.5),
+    save: PathLike | None = None,
+) -> tuple[Figure, Axes]:
     """Bar chart of cluster sizes with noise count.
 
     Parameters
@@ -1360,13 +1429,10 @@ def plot_cluster_sizes(
     for i, (lab, cnt) in enumerate(zip(unique, counts)):
         if lab < 0:
             color = "lightgray"
-            label = f"Noise (n={cnt})"
         else:
             color = CLUSTER_COLORS[i % len(CLUSTER_COLORS)]
-            label = f"Cluster {lab}"
         ax.bar(i, cnt, color=color, edgecolor="k", linewidth=0.3)
-        ax.text(i, cnt + max(counts) * 0.01, str(cnt),
-                ha="center", va="bottom", fontsize=7)
+        ax.text(i, cnt + max(counts) * 0.01, str(cnt), ha="center", va="bottom", fontsize=7)
 
     ax.set_xticks(range(len(unique)))
     ax.set_xticklabels(
@@ -1385,6 +1451,7 @@ def plot_cluster_sizes(
 # §18  UMAP / PCA SCATTER — embedding coloured by clusters
 # ======================================================================
 
+
 def plot_cluster_scatter(
     embedding: np.ndarray,
     labels: np.ndarray,
@@ -1393,10 +1460,10 @@ def plot_cluster_scatter(
     noise_color: str = "lightgray",
     noise_alpha: float = 0.3,
     point_size: float = 3.0,
-    title: Optional[str] = None,
-    figsize: Tuple[float, float] = (6, 5),
-    save: Optional[PathLike] = None,
-) -> Tuple[Figure, Axes]:
+    title: str | None = None,
+    figsize: tuple[float, float] = (6, 5),
+    save: PathLike | None = None,
+) -> tuple[Figure, Axes]:
     """2D scatter of dimensionality-reduced embedding coloured by cluster.
 
     Parameters
@@ -1421,17 +1488,29 @@ def plot_cluster_scatter(
     # noise first (background)
     noise = labels < 0
     if noise.any():
-        ax.scatter(embedding[noise, 0], embedding[noise, 1],
-                   c=noise_color, alpha=noise_alpha, s=point_size,
-                   label="Noise", rasterized=True)
+        ax.scatter(
+            embedding[noise, 0],
+            embedding[noise, 1],
+            c=noise_color,
+            alpha=noise_alpha,
+            s=point_size,
+            label="Noise",
+            rasterized=True,
+        )
 
     unique = sorted(set(labels[labels >= 0]))
     for i, lab in enumerate(unique):
         mask = labels == lab
         color = CLUSTER_COLORS[i % len(CLUSTER_COLORS)]
-        ax.scatter(embedding[mask, 0], embedding[mask, 1],
-                   c=color, s=point_size, alpha=0.7,
-                   label=f"Cluster {lab}", rasterized=True)
+        ax.scatter(
+            embedding[mask, 0],
+            embedding[mask, 1],
+            c=color,
+            s=point_size,
+            alpha=0.7,
+            label=f"Cluster {lab}",
+            rasterized=True,
+        )
 
     ax.set_xlabel(f"{method_name} 1")
     ax.set_ylabel(f"{method_name} 2")
@@ -1447,6 +1526,7 @@ def plot_cluster_scatter(
 # §19  CO-CLUSTERING CHECKERBOARD — vertex × time block structure
 # ======================================================================
 
+
 def plot_coclustering_heatmap(
     H: np.ndarray,
     row_labels: np.ndarray,
@@ -1454,9 +1534,9 @@ def plot_coclustering_heatmap(
     *,
     cmap: str = "viridis",
     title: str = "Co-Clustering Structure",
-    figsize: Tuple[float, float] = (8, 6),
-    save: Optional[PathLike] = None,
-) -> Tuple[Figure, Axes]:
+    figsize: tuple[float, float] = (8, 6),
+    save: PathLike | None = None,
+) -> tuple[Figure, Axes]:
     """Reordered heatmap revealing vertex × time co-cluster blocks.
 
     Sorts rows and columns by their cluster labels so that the
@@ -1516,17 +1596,18 @@ def plot_coclustering_heatmap(
 # §20  SUMMARY PANEL — comprehensive overview figure
 # ======================================================================
 
+
 def plot_cluster_summary(
     vertices: np.ndarray,
     faces: np.ndarray,
     H: np.ndarray,
     labels: np.ndarray,
-    t_values: Optional[np.ndarray] = None,
+    t_values: np.ndarray | None = None,
     *,
     method_name: str = "GNMF",
-    figsize: Tuple[float, float] = (14, 10),
-    save: Optional[PathLike] = None,
-) -> Tuple[Figure, np.ndarray]:
+    figsize: tuple[float, float] = (14, 10),
+    save: PathLike | None = None,
+) -> tuple[Figure, np.ndarray]:
     """Comprehensive 2×3 summary panel for a clustering result.
 
     Layout:
@@ -1560,16 +1641,21 @@ def plot_cluster_summary(
     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tf:
         tmp_path = tf.name
     try:
-        plot_cluster_map(vertices, faces, labels,
-                         views=["left_lateral"], save=tmp_path)
+        plot_cluster_map(vertices, faces, labels, views=["left_lateral"], save=tmp_path)
         img = mpimg.imread(tmp_path)
         axes[0, 0].imshow(img)
         axes[0, 0].set_title(f"{method_name} Cluster Map")
         axes[0, 0].axis("off")
     except Exception as e:
-        axes[0, 0].text(0.5, 0.5, f"3D render failed:\n{e}",
-                        ha="center", va="center", fontsize=8,
-                        transform=axes[0, 0].transAxes)
+        axes[0, 0].text(
+            0.5,
+            0.5,
+            f"3D render failed:\n{e}",
+            ha="center",
+            va="center",
+            fontsize=8,
+            transform=axes[0, 0].transAxes,
+        )
         axes[0, 0].axis("off")
     finally:
         try:
@@ -1579,10 +1665,8 @@ def plot_cluster_summary(
 
     # --- [0,1] Cluster sizes ---
     unique, counts = np.unique(labels[labels >= 0], return_counts=True)
-    colors = [CLUSTER_COLORS[i % len(CLUSTER_COLORS)]
-              for i in range(len(unique))]
-    axes[0, 1].bar(range(len(unique)), counts, color=colors,
-                    edgecolor="k", linewidth=0.3)
+    colors = [CLUSTER_COLORS[i % len(CLUSTER_COLORS)] for i in range(len(unique))]
+    axes[0, 1].bar(range(len(unique)), counts, color=colors, edgecolor="k", linewidth=0.3)
     axes[0, 1].set_xticks(range(len(unique)))
     axes[0, 1].set_xticklabels([str(u) for u in unique], fontsize=7)
     axes[0, 1].set_ylabel("n vertices")
@@ -1591,31 +1675,39 @@ def plot_cluster_summary(
     # --- [0,2] UMAP scatter ---
     try:
         import umap as umap_mod
+
         X = np.log(H + 1e-12)
-        embedding = umap_mod.UMAP(
-            n_components=2, random_state=42
-        ).fit_transform(X)
+        embedding = umap_mod.UMAP(n_components=2, random_state=42).fit_transform(X)
         for i, lab in enumerate(sorted(set(labels[labels >= 0]))):
             mask = labels == lab
             color = CLUSTER_COLORS[i % len(CLUSTER_COLORS)]
-            axes[0, 2].scatter(embedding[mask, 0], embedding[mask, 1],
-                               c=color, s=2, alpha=0.5, rasterized=True)
+            axes[0, 2].scatter(
+                embedding[mask, 0], embedding[mask, 1], c=color, s=2, alpha=0.5, rasterized=True
+            )
         noise = labels < 0
         if noise.any():
-            axes[0, 2].scatter(embedding[noise, 0], embedding[noise, 1],
-                               c="lightgray", s=1, alpha=0.2, rasterized=True)
+            axes[0, 2].scatter(
+                embedding[noise, 0],
+                embedding[noise, 1],
+                c="lightgray",
+                s=1,
+                alpha=0.2,
+                rasterized=True,
+            )
         axes[0, 2].set_title("UMAP Embedding")
         axes[0, 2].set_xlabel("UMAP 1")
         axes[0, 2].set_ylabel("UMAP 2")
     except ImportError:
         from sklearn.decomposition import PCA
+
         X = np.log(H + 1e-12)
         embedding = PCA(n_components=2).fit_transform(X)
         for i, lab in enumerate(sorted(set(labels[labels >= 0]))):
             mask = labels == lab
             color = CLUSTER_COLORS[i % len(CLUSTER_COLORS)]
-            axes[0, 2].scatter(embedding[mask, 0], embedding[mask, 1],
-                               c=color, s=2, alpha=0.5, rasterized=True)
+            axes[0, 2].scatter(
+                embedding[mask, 0], embedding[mask, 1], c=color, s=2, alpha=0.5, rasterized=True
+            )
         axes[0, 2].set_title("PCA Embedding")
         axes[0, 2].set_xlabel("PC 1")
         axes[0, 2].set_ylabel("PC 2")
@@ -1630,12 +1722,10 @@ def plot_cluster_summary(
         mask = labels == lab
         mean_h = H[mask].mean(axis=0)
         color = CLUSTER_COLORS[i % len(CLUSTER_COLORS)]
-        axes[1, 0].plot(t_vals, mean_h, color=color, linewidth=1.2,
-                        label=f"Cl {lab}")
+        axes[1, 0].plot(t_vals, mean_h, color=color, linewidth=1.2, label=f"Cl {lab}")
         if mask.sum() > 1:
             sem = H[mask].std(axis=0) / np.sqrt(mask.sum())
-            axes[1, 0].fill_between(t_vals, mean_h - sem, mean_h + sem,
-                                    color=color, alpha=0.15)
+            axes[1, 0].fill_between(t_vals, mean_h - sem, mean_h + sem, color=color, alpha=0.15)
 
     axes[1, 0].set_xscale("log")
     axes[1, 0].set_xlabel("t")
@@ -1646,6 +1736,7 @@ def plot_cluster_summary(
     # --- [1,1] Silhouette ---
     try:
         from sklearn.metrics import silhouette_samples
+
         valid = labels >= 0
         sil = silhouette_samples(H[valid], labels[valid])
         y_lower = 0
@@ -1653,22 +1744,35 @@ def plot_cluster_summary(
             cl_sil = np.sort(sil[labels[valid] == lab])
             y_upper = y_lower + len(cl_sil)
             color = CLUSTER_COLORS[i % len(CLUSTER_COLORS)]
-            axes[1, 1].barh(range(y_lower, y_upper), cl_sil,
-                            height=1.0, color=color, edgecolor="none")
+            axes[1, 1].barh(
+                range(y_lower, y_upper), cl_sil, height=1.0, color=color, edgecolor="none"
+            )
             y_lower = y_upper + 2
         axes[1, 1].set_yticks([])
         axes[1, 1].set_xlabel("Silhouette")
         axes[1, 1].set_title("Silhouette Diagram")
     except Exception:
-        axes[1, 1].text(0.5, 0.5, "Could not compute silhouette",
-                        ha="center", va="center", fontsize=8,
-                        transform=axes[1, 1].transAxes)
+        axes[1, 1].text(
+            0.5,
+            0.5,
+            "Could not compute silhouette",
+            ha="center",
+            va="center",
+            fontsize=8,
+            transform=axes[1, 1].transAxes,
+        )
 
     # --- [1,2] Empty or placeholder ---
-    axes[1, 2].text(0.5, 0.5, f"Method: {method_name}\nk = {len(unique)}",
-                    ha="center", va="center", fontsize=12,
-                    transform=axes[1, 2].transAxes,
-                    bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.5))
+    axes[1, 2].text(
+        0.5,
+        0.5,
+        f"Method: {method_name}\nk = {len(unique)}",
+        ha="center",
+        va="center",
+        fontsize=12,
+        transform=axes[1, 2].transAxes,
+        bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.5),
+    )
     axes[1, 2].axis("off")
 
     fig.suptitle(f"Clustering Summary — {method_name}", fontsize=13, y=1.01)
@@ -1681,28 +1785,29 @@ def plot_cluster_summary(
 # §21  SPATIO-TEMPORAL FIELD — small multiples on unfolded coordinates
 # ======================================================================
 
+
 def plot_spatiotemporal_field(
     unfolded_coords: np.ndarray,
     faces: np.ndarray,
     H: np.ndarray,
-    t_values: Optional[np.ndarray] = None,
+    t_values: np.ndarray | None = None,
     *,
     n_panels: int = 8,
-    t_indices: Optional[List[int]] = None,
+    t_indices: list[int] | None = None,
     cmap: str = "magma",
     log_norm: bool = True,
-    vmin: Optional[float] = None,
-    vmax: Optional[float] = None,
-    subfield_labels: Optional[np.ndarray] = None,
+    vmin: float | None = None,
+    vmax: float | None = None,
+    subfield_labels: np.ndarray | None = None,
     boundary_color: str = "k",
     boundary_width: float = 0.6,
     descriptor_name: str = "HKS",
     xlabel: str = "AP coordinate",
     ylabel: str = "PD coordinate",
     n_cols: int = 4,
-    figsize: Optional[Tuple[float, float]] = None,
-    save: Optional[PathLike] = None,
-) -> Tuple[Figure, np.ndarray]:
+    figsize: tuple[float, float] | None = None,
+    save: PathLike | None = None,
+) -> tuple[Figure, np.ndarray]:
     """Small-multiples grid of a descriptor field on unfolded surface.
 
     Renders per-vertex spectral descriptor values (HKS, WKS) on the
@@ -1762,16 +1867,14 @@ def plot_spatiotemporal_field(
     H = np.asarray(H, dtype=np.float64)
     uv = np.asarray(unfolded_coords, dtype=np.float64)
     fcs = np.asarray(faces, dtype=np.int64)
-    V, T = H.shape
+    _V, T = H.shape
 
     # --- select scale indices ---
     if t_indices is not None:
         sel = list(t_indices)
     else:
         # geometrically spaced indices for log-spaced t
-        sel = np.unique(
-            np.geomspace(1, T, n_panels, dtype=int).clip(0, T - 1)
-        ).tolist()
+        sel = np.unique(np.geomspace(1, T, n_panels, dtype=int).clip(0, T - 1)).tolist()
     n_panels = len(sel)
 
     if t_values is None:
@@ -1800,8 +1903,11 @@ def plot_spatiotemporal_field(
         figsize = (4.0 * n_cols, 2.5 * n_rows)
 
     fig, axes = plt.subplots(
-        n_rows, n_cols, figsize=figsize,
-        sharex=True, sharey=True,
+        n_rows,
+        n_cols,
+        figsize=figsize,
+        sharex=True,
+        sharey=True,
         constrained_layout=True,
     )
     axes_flat = np.atleast_1d(axes).ravel()
@@ -1813,7 +1919,8 @@ def plot_spatiotemporal_field(
         scalar = H[:, t_idx]
 
         tpc = ax.tripcolor(
-            tri, scalar,
+            tri,
+            scalar,
             shading="gouraud",
             cmap=cmap,
             norm=norm,
@@ -1824,7 +1931,8 @@ def plot_spatiotemporal_field(
         if subfield_labels is not None:
             labels_f = np.asarray(subfield_labels, dtype=np.float64)
             ax.tricontour(
-                tri, labels_f,
+                tri,
+                labels_f,
                 levels=np.arange(labels_f.max()) + 0.5,
                 colors=boundary_color,
                 linewidths=boundary_width,
@@ -1849,8 +1957,11 @@ def plot_spatiotemporal_field(
     # shared colourbar
     if tpc is not None:
         cbar = fig.colorbar(
-            tpc, ax=axes_flat[:n_panels].tolist(),
-            location="right", shrink=0.8, pad=0.02,
+            tpc,
+            ax=axes_flat[:n_panels].tolist(),
+            location="right",
+            shrink=0.8,
+            pad=0.02,
         )
         cbar.set_label(
             f"{descriptor_name} ({'log scale' if log_norm else 'linear'})",
@@ -1866,22 +1977,23 @@ def plot_spatiotemporal_field(
 # §22  SPATIO-TEMPORAL ANIMATION — GIF / MP4 across scales
 # ======================================================================
 
+
 def plot_spatiotemporal_animation(
     unfolded_coords: np.ndarray,
     faces: np.ndarray,
     H: np.ndarray,
-    t_values: Optional[np.ndarray] = None,
+    t_values: np.ndarray | None = None,
     *,
     cmap: str = "magma",
     log_norm: bool = True,
-    vmin: Optional[float] = None,
-    vmax: Optional[float] = None,
-    subfield_labels: Optional[np.ndarray] = None,
+    vmin: float | None = None,
+    vmax: float | None = None,
+    subfield_labels: np.ndarray | None = None,
     descriptor_name: str = "HKS",
     fps: int = 8,
-    figsize: Tuple[float, float] = (6, 3.5),
-    save: Optional[PathLike] = None,
-) -> Optional[Any]:
+    figsize: tuple[float, float] = (6, 3.5),
+    save: PathLike | None = None,
+) -> Any | None:
     """Animate descriptor field across scales on the unfolded surface.
 
     Produces a GIF or MP4 (determined by file extension of ``save``)
@@ -1914,8 +2026,8 @@ def plot_spatiotemporal_animation(
     matplotlib.animation.FuncAnimation or None
         The animation object (for notebook display). None if save-only.
     """
-    import matplotlib.tri as mtri
     import matplotlib.animation as animation
+    import matplotlib.tri as mtri
     from matplotlib.colors import LogNorm, Normalize
 
     _apply_style()
@@ -1923,7 +2035,7 @@ def plot_spatiotemporal_animation(
     H = np.asarray(H, dtype=np.float64)
     uv = np.asarray(unfolded_coords, dtype=np.float64)
     fcs = np.asarray(faces, dtype=np.int64)
-    V, T = H.shape
+    _V, T = H.shape
 
     if t_values is None:
         t_values = np.arange(T, dtype=np.float64)
@@ -1946,8 +2058,12 @@ def plot_spatiotemporal_animation(
     # --- setup figure with first frame ---
     fig, ax = plt.subplots(figsize=figsize)
     tpc = ax.tripcolor(
-        tri, H[:, 0], shading="gouraud",
-        cmap=cmap, norm=norm, rasterized=True,
+        tri,
+        H[:, 0],
+        shading="gouraud",
+        cmap=cmap,
+        norm=norm,
+        rasterized=True,
     )
     fig.colorbar(tpc, ax=ax, label=descriptor_name, shrink=0.8)
 
@@ -1955,16 +2071,19 @@ def plot_spatiotemporal_animation(
     if subfield_labels is not None:
         labels_f = np.asarray(subfield_labels, dtype=np.float64)
         ax.tricontour(
-            tri, labels_f,
+            tri,
+            labels_f,
             levels=np.arange(labels_f.max()) + 0.5,
-            colors="k", linewidths=0.5,
+            colors="k",
+            linewidths=0.5,
         )
 
     ax.set_aspect("equal")
     ax.set_xlabel("AP coordinate", fontsize=8)
     ax.set_ylabel("PD coordinate", fontsize=8)
     title_text = ax.set_title(
-        f"{descriptor_name}  t = {t_values[0]:.2g}", fontsize=9,
+        f"{descriptor_name}  t = {t_values[0]:.2g}",
+        fontsize=9,
     )
 
     # --- animation update ---
@@ -1973,13 +2092,13 @@ def plot_spatiotemporal_animation(
         # tripcolor stores face-averaged values for flat shading
         # and vertex values for gouraud — set_array on the collection
         tpc.set_array(H[:, frame_idx])
-        title_text.set_text(
-            f"{descriptor_name}  t = {t_values[frame_idx]:.2g}"
-        )
+        title_text.set_text(f"{descriptor_name}  t = {t_values[frame_idx]:.2g}")
         return (tpc, title_text)
 
     ani = animation.FuncAnimation(
-        fig, _update, frames=T,
+        fig,
+        _update,
+        frames=T,
         interval=1000 // fps,
         blit=False,  # tripcolor + blit can produce blank frames
     )
@@ -2003,10 +2122,11 @@ def plot_spatiotemporal_animation(
 # §23  HOVMÖLLER DIAGRAM — position × scale 2D heatmap
 # ======================================================================
 
+
 def plot_hovmoller(
     unfolded_coords: np.ndarray,
     H: np.ndarray,
-    t_values: Optional[np.ndarray] = None,
+    t_values: np.ndarray | None = None,
     *,
     axis: Literal["AP", "PD"] = "AP",
     n_bins: int = 100,
@@ -2014,10 +2134,10 @@ def plot_hovmoller(
     log_norm: bool = True,
     log_t: bool = True,
     descriptor_name: str = "HKS",
-    title: Optional[str] = None,
-    figsize: Tuple[float, float] = (8, 4),
-    save: Optional[PathLike] = None,
-) -> Tuple[Figure, Axes]:
+    title: str | None = None,
+    figsize: tuple[float, float] = (8, 4),
+    save: PathLike | None = None,
+) -> tuple[Figure, Axes]:
     """Hovmöller diagram: averaged descriptor along one spatial axis × scale.
 
     Collapses the orthogonal spatial axis by averaging, producing a
@@ -2091,8 +2211,13 @@ def plot_hovmoller(
     # --- plot ---
     fig, ax = plt.subplots(figsize=figsize)
     mesh_plot = ax.pcolormesh(
-        t_values, bin_centers, H_binned,
-        shading="auto", cmap=cmap, norm=norm, rasterized=True,
+        t_values,
+        bin_centers,
+        H_binned,
+        shading="auto",
+        cmap=cmap,
+        norm=norm,
+        rasterized=True,
     )
 
     if log_t:
@@ -2114,11 +2239,12 @@ def plot_hovmoller(
 # §24  KYMOGRAPH — 1D line through the surface × scale
 # ======================================================================
 
+
 def plot_kymograph(
     unfolded_coords: np.ndarray,
     faces: np.ndarray,
     H: np.ndarray,
-    t_values: Optional[np.ndarray] = None,
+    t_values: np.ndarray | None = None,
     *,
     line_axis: Literal["AP", "PD"] = "AP",
     line_position: float = 0.5,
@@ -2127,10 +2253,10 @@ def plot_kymograph(
     log_norm: bool = True,
     log_t: bool = True,
     descriptor_name: str = "HKS",
-    title: Optional[str] = None,
-    figsize: Tuple[float, float] = (8, 4),
-    save: Optional[PathLike] = None,
-) -> Tuple[Figure, Axes]:
+    title: str | None = None,
+    figsize: tuple[float, float] = (8, 4),
+    save: PathLike | None = None,
+) -> tuple[Figure, Axes]:
     """Kymograph: descriptor values along a 1D line × scale.
 
     Unlike the Hovmöller diagram (which averages over the orthogonal
@@ -2160,12 +2286,12 @@ def plot_kymograph(
     (Figure, Axes)
     """
     _apply_style()
-    from scipy.interpolate import LinearNDInterpolator
     from matplotlib.colors import LogNorm, Normalize
+    from scipy.interpolate import LinearNDInterpolator
 
     H = np.asarray(H, dtype=np.float64)
     uv = np.asarray(unfolded_coords, dtype=np.float64)
-    V, T = H.shape
+    _V, T = H.shape
 
     if t_values is None:
         t_values = np.arange(T, dtype=np.float64)
@@ -2195,7 +2321,7 @@ def plot_kymograph(
     kymo = np.empty((n_samples, T), dtype=np.float64)
     for k in range(T):
         # reuse the same Delaunay but update values
-        interp.values = H[:, k:k + 1]
+        interp.values = H[:, k : k + 1]
         kymo[:, k] = interp(line_pts).squeeze()
 
     # fill NaN from outside convex hull with nearest valid
@@ -2204,7 +2330,9 @@ def plot_kymograph(
         if nans.any() and not nans.all():
             valid = ~nans
             kymo[nans, k] = np.interp(
-                np.where(nans)[0], np.where(valid)[0], kymo[valid, k],
+                np.where(nans)[0],
+                np.where(valid)[0],
+                kymo[valid, k],
             )
 
     # --- plot ---
@@ -2218,8 +2346,13 @@ def plot_kymograph(
         norm = Normalize(vmin=vmin_val, vmax=vmax_val)
 
     mesh_plot = ax.pcolormesh(
-        t_values, spatial_coord, kymo,
-        shading="auto", cmap=cmap, norm=norm, rasterized=True,
+        t_values,
+        spatial_coord,
+        kymo,
+        shading="auto",
+        cmap=cmap,
+        norm=norm,
+        rasterized=True,
     )
 
     if log_t:
@@ -2229,8 +2362,8 @@ def plot_kymograph(
     ax.set_xlabel("Diffusion scale t")
     ax.set_ylabel(spatial_label)
     ax.set_title(
-        title or f"Kymograph — {descriptor_name} along {line_axis} "
-                 f"at {ortho_name}={line_position:.2f}"
+        title
+        or f"Kymograph — {descriptor_name} along {line_axis} at {ortho_name}={line_position:.2f}"
     )
 
     cbar = fig.colorbar(mesh_plot, ax=ax, pad=0.02)
@@ -2245,6 +2378,7 @@ def plot_kymograph(
 # §25  WARPED SURFACE — 3D with height = descriptor value (vedo)
 # ======================================================================
 
+
 def plot_warped_surface(
     unfolded_coords: np.ndarray,
     faces: np.ndarray,
@@ -2252,16 +2386,16 @@ def plot_warped_surface(
     *,
     warp_factor: float = 0.5,
     cmap: str = "magma",
-    vmin: Optional[float] = None,
-    vmax: Optional[float] = None,
+    vmin: float | None = None,
+    vmax: float | None = None,
     descriptor_name: str = "HKS",
-    views: Optional[List[str]] = None,
+    views: list[str] | None = None,
     lighting: str = "default",
     bg: str = _DEFAULT_BG,
-    size: Optional[Tuple[int, int]] = None,
+    size: tuple[int, int] | None = None,
     scale: int = _DEFAULT_SCALE,
-    save: Optional[PathLike] = None,
-) -> Tuple[Path, Dict[str, Any]]:
+    save: PathLike | None = None,
+) -> tuple[Path, dict[str, Any]]:
     """3D warped surface: unfolded (u, v) + height from descriptor.
 
     Creates a 3D surface where x = AP, y = PD, and z = warp_factor ×
@@ -2301,11 +2435,13 @@ def plot_warped_surface(
         sc_norm /= sc_max
 
     # build 3D vertices: (u, v, warp_factor * normalised_scalar)
-    verts_3d = np.column_stack([
-        uv[:, 0],
-        uv[:, 1],
-        warp_factor * sc_norm,
-    ])
+    verts_3d = np.column_stack(
+        [
+            uv[:, 0],
+            uv[:, 1],
+            warp_factor * sc_norm,
+        ]
+    )
 
     if views is None:
         views = ["oblique_left"]
@@ -2319,7 +2455,10 @@ def plot_warped_surface(
         vmax = float(np.nanpercentile(sc, 99))
 
     plt_obj = vedo.Plotter(
-        shape=(1, n_views), offscreen=True, size=size, bg=bg,
+        shape=(1, n_views),
+        offscreen=True,
+        size=size,
+        bg=bg,
     )
 
     for vi, view_name in enumerate(views):
@@ -2333,7 +2472,8 @@ def plot_warped_surface(
         plt_obj.at(vi).show(
             mesh,
             title=f"{descriptor_name} (warped)",
-            viewup="z", zoom=1.0,
+            viewup="z",
+            zoom=1.0,
             **{k: v for k, v in preset.items() if k in ("azimuth", "elevation")},
         )
 
@@ -2350,22 +2490,23 @@ def plot_warped_surface(
 # §26  DESCRIPTOR EVOLUTION COMPARISON — HKS vs WKS on unfolded
 # ======================================================================
 
+
 def plot_descriptor_evolution_comparison(
     unfolded_coords: np.ndarray,
     faces: np.ndarray,
     H_hks: np.ndarray,
     H_wks: np.ndarray,
-    t_values_hks: Optional[np.ndarray] = None,
-    e_values_wks: Optional[np.ndarray] = None,
+    t_values_hks: np.ndarray | None = None,
+    e_values_wks: np.ndarray | None = None,
     *,
     n_scales: int = 4,
     cmap_hks: str = "inferno",
     cmap_wks: str = "cividis",
     log_norm: bool = True,
-    subfield_labels: Optional[np.ndarray] = None,
-    figsize: Optional[Tuple[float, float]] = None,
-    save: Optional[PathLike] = None,
-) -> Tuple[Figure, np.ndarray]:
+    subfield_labels: np.ndarray | None = None,
+    figsize: tuple[float, float] | None = None,
+    save: PathLike | None = None,
+) -> tuple[Figure, np.ndarray]:
     """Side-by-side HKS vs WKS evolution on the unfolded surface.
 
     Two-row layout: top = HKS at selected t, bottom = WKS at matched
@@ -2420,9 +2561,9 @@ def plot_descriptor_evolution_comparison(
     if figsize is None:
         figsize = (4.0 * n_cols, 5.0)
 
-    fig, axes = plt.subplots(2, n_cols, figsize=figsize,
-                              sharex=True, sharey=True,
-                              constrained_layout=True)
+    fig, axes = plt.subplots(
+        2, n_cols, figsize=figsize, sharex=True, sharey=True, constrained_layout=True
+    )
     if n_cols == 1:
         axes = axes.reshape(2, 1)
 
@@ -2444,26 +2585,36 @@ def plot_descriptor_evolution_comparison(
     # --- top row: HKS ---
     for pi, ti in enumerate(sel_h):
         ax = axes[0, pi]
-        tpc_h = ax.tripcolor(tri, H_h[:, ti], shading="gouraud",
-                              cmap=cmap_hks, norm=norm_h, rasterized=True)
+        tpc_h = ax.tripcolor(
+            tri, H_h[:, ti], shading="gouraud", cmap=cmap_hks, norm=norm_h, rasterized=True
+        )
         ax.set_title(f"t = {t_h[ti]:.2g}", fontsize=7)
         ax.set_aspect("equal")
         if subfield_labels is not None:
-            ax.tricontour(tri, subfield_labels.astype(float),
-                          levels=np.arange(subfield_labels.max()) + 0.5,
-                          colors="k", linewidths=0.4)
+            ax.tricontour(
+                tri,
+                subfield_labels.astype(float),
+                levels=np.arange(subfield_labels.max()) + 0.5,
+                colors="k",
+                linewidths=0.4,
+            )
 
     # --- bottom row: WKS ---
     for pi, ei in enumerate(sel_w):
         ax = axes[1, pi]
-        tpc_w = ax.tripcolor(tri, H_w[:, ei], shading="gouraud",
-                              cmap=cmap_wks, norm=norm_w, rasterized=True)
+        tpc_w = ax.tripcolor(
+            tri, H_w[:, ei], shading="gouraud", cmap=cmap_wks, norm=norm_w, rasterized=True
+        )
         ax.set_title(f"E = {e_w[ei]:.2g}", fontsize=7)
         ax.set_aspect("equal")
         if subfield_labels is not None:
-            ax.tricontour(tri, subfield_labels.astype(float),
-                          levels=np.arange(subfield_labels.max()) + 0.5,
-                          colors="k", linewidths=0.4)
+            ax.tricontour(
+                tri,
+                subfield_labels.astype(float),
+                levels=np.arange(subfield_labels.max()) + 0.5,
+                colors="k",
+                linewidths=0.4,
+            )
 
     # hide unused panels
     for pi in range(n_h, n_cols):
@@ -2477,11 +2628,13 @@ def plot_descriptor_evolution_comparison(
 
     # colourbars
     if tpc_h is not None:
-        fig.colorbar(tpc_h, ax=axes[0, :].tolist(), location="right",
-                     shrink=0.7, pad=0.02, label="HKS")
+        fig.colorbar(
+            tpc_h, ax=axes[0, :].tolist(), location="right", shrink=0.7, pad=0.02, label="HKS"
+        )
     if tpc_w is not None:
-        fig.colorbar(tpc_w, ax=axes[1, :].tolist(), location="right",
-                     shrink=0.7, pad=0.02, label="WKS")
+        fig.colorbar(
+            tpc_w, ax=axes[1, :].tolist(), location="right", shrink=0.7, pad=0.02, label="WKS"
+        )
 
     _savefig(fig, save)
     return fig, axes

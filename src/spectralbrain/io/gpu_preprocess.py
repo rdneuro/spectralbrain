@@ -48,14 +48,12 @@ import gc
 import os
 import re
 import subprocess
-import sys
-import tempfile
 import time
 import urllib.request
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple, Union
+from typing import Literal
 
 import numpy as np
 
@@ -90,6 +88,7 @@ TEMPLATE_CACHE = Path.home() / ".cache" / "spectralbrain" / "templates"
 
 class Step(Enum):
     """Available preprocessing steps."""
+
     ENHANCE = auto()
     SKULL_STRIP = auto()
     REGISTER = auto()
@@ -108,7 +107,10 @@ _STEP_MAP = {
 
 # Default pipeline order
 DEFAULT_STEPS = [
-    Step.ENHANCE, Step.SKULL_STRIP, Step.REGISTER, Step.SEGMENT,
+    Step.ENHANCE,
+    Step.SKULL_STRIP,
+    Step.REGISTER,
+    Step.SEGMENT,
 ]
 
 
@@ -116,10 +118,12 @@ DEFAULT_STEPS = [
 # §1  VRAM management — mirrors gpu_preproc.py + backends/gpu.py
 # ======================================================================
 
+
 def _has_cuda() -> bool:
     """Check CUDA availability without importing torch at module load."""
     try:
         import torch
+
         return torch.cuda.is_available()
     except ImportError:
         return False
@@ -136,6 +140,7 @@ def purge_vram() -> None:
     gc.collect()
     try:
         import torch
+
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
             torch.cuda.ipc_collect()
@@ -145,7 +150,7 @@ def purge_vram() -> None:
     gc.collect()
 
 
-def vram_info() -> Dict[str, float]:
+def vram_info() -> dict[str, float]:
     """Return current VRAM usage in GB.
 
     Returns
@@ -156,11 +161,12 @@ def vram_info() -> Dict[str, float]:
     """
     try:
         import torch
+
         if not torch.cuda.is_available():
             return {"allocated": 0, "reserved": 0, "total": 0, "free": 0}
-        alloc = torch.cuda.memory_allocated() / (1024 ** 3)
-        resrv = torch.cuda.memory_reserved() / (1024 ** 3)
-        total = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
+        alloc = torch.cuda.memory_allocated() / (1024**3)
+        resrv = torch.cuda.memory_reserved() / (1024**3)
+        total = torch.cuda.get_device_properties(0).total_memory / (1024**3)
         return {
             "allocated": round(alloc, 2),
             "reserved": round(resrv, 2),
@@ -175,19 +181,19 @@ def vram_info() -> Dict[str, float]:
 # §2  Template management
 # ======================================================================
 
+
 def _detect_sequence(filepath: Path, fallback: str = "t1") -> str:
     """Detect MRI sequence from BIDS-style filename."""
     m = BIDS_SEQ_RE.search(filepath.name)
     if m:
         raw = m.group(1).lower()
-        return {"t1w": "t1", "t2w": "t2", "flair": "t2", "pd": "t1",
-                "pdw": "t1"}.get(raw, fallback)
+        return {"t1w": "t1", "t2w": "t2", "flair": "t2", "pd": "t1", "pdw": "t1"}.get(raw, fallback)
     return fallback
 
 
 def ensure_template(
     seq: str = "t1",
-    user_template: Optional[PathLike] = None,
+    user_template: PathLike | None = None,
 ) -> Path:
     """Resolve or download the MNI registration template.
 
@@ -228,11 +234,12 @@ def ensure_template(
 # §3  Subprocess runner with VRAM isolation
 # ======================================================================
 
+
 def _run_cmd(
     cmd: str,
     label: str,
     *,
-    env_extras: Optional[Dict[str, str]] = None,
+    env_extras: dict[str, str] | None = None,
     timeout: int = 600,
 ) -> subprocess.CompletedProcess:
     """Execute a shell command with CUDA memory configuration.
@@ -268,18 +275,19 @@ def _run_cmd(
 
     logger.info("[%s] $ %s", label, cmd)
     result = subprocess.run(
-        cmd, shell=True, capture_output=True, text=True,
-        env=env, timeout=timeout,
+        cmd,
+        shell=True,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=timeout,
     )
 
     if result.returncode != 0:
         # Log last 500 chars of output for debugging
         tail = (result.stdout + result.stderr)[-500:]
         logger.error("[%s] failed (exit %d): %s", label, result.returncode, tail)
-        raise RuntimeError(
-            f"{label} exited with code {result.returncode}.\n"
-            f"Last output: {tail}"
-        )
+        raise RuntimeError(f"{label} exited with code {result.returncode}.\nLast output: {tail}")
 
     logger.info("[%s] completed successfully", label)
     return result
@@ -288,6 +296,7 @@ def _run_cmd(
 # ======================================================================
 # §4  Step 1 — Image enhancement (BME-X or DeepN4)
 # ======================================================================
+
 
 def enhance_bmex(
     input_path: PathLike,
@@ -423,7 +432,7 @@ def enhance_deepn4(
     nib.save(nib.Nifti1Image(corrected, affine, img.header), str(out))
 
     # Free all GPU memory
-    del model, data, corrected, img
+    del data, corrected, img  # model freed on return
     purge_vram()
 
     elapsed = time.time() - t0
@@ -476,13 +485,14 @@ def enhance(
 # §5  Step 2 — Skull stripping (HD-BET or SynthStrip)
 # ======================================================================
 
+
 def skull_strip_hdbet(
     input_path: PathLike,
     output_path: PathLike,
     *,
     device: str = "cuda:0",
     save_mask: bool = True,
-) -> Tuple[Path, Optional[Path]]:
+) -> tuple[Path, Path | None]:
     """Brain extraction via HD-BET (Isensee et al., 2019).
 
     Parameters
@@ -530,8 +540,8 @@ def skull_strip_hdbet(
 def skull_strip_synthstrip(
     input_path: PathLike,
     output_path: PathLike,
-    mask_path: Optional[PathLike] = None,
-) -> Tuple[Path, Optional[Path]]:
+    mask_path: PathLike | None = None,
+) -> tuple[Path, Path | None]:
     """Brain extraction via SynthStrip (Hoopes et al., 2022).
 
     Contrast-agnostic skull stripping trained with domain
@@ -576,7 +586,7 @@ def skull_strip(
     *,
     method: Literal["hdbet", "synthstrip", "auto"] = "auto",
     **kwargs,
-) -> Tuple[Path, Optional[Path]]:
+) -> tuple[Path, Path | None]:
     """Brain extraction using the best available method.
 
     Parameters
@@ -612,12 +622,13 @@ def skull_strip(
 # §6  Step 3 — Registration (SynthMorph affine + uniGradICON deformable)
 # ======================================================================
 
+
 def register_synthmorph_affine(
     moving_path: PathLike,
     fixed_path: PathLike,
     output_path: PathLike,
-    transform_path: Optional[PathLike] = None,
-) -> Tuple[Path, Optional[Path]]:
+    transform_path: PathLike | None = None,
+) -> tuple[Path, Path | None]:
     """Affine registration via SynthMorph (Hoffmann et al., 2024).
 
     Contrast-invariant affine alignment trained with domain
@@ -654,10 +665,7 @@ def register_synthmorph_affine(
     purge_vram()
 
     xfm_flag = f"--trans {transform_path}" if transform_path else ""
-    cmd = (
-        f"mri_synthmorph -m affine "
-        f"-i {mov} -t {fix} -o {out} {xfm_flag} --gpu"
-    )
+    cmd = f"mri_synthmorph -m affine -i {mov} -t {fix} -o {out} {xfm_flag} --gpu"
     _run_cmd(cmd, "SynthMorph affine", timeout=120)
 
     purge_vram()
@@ -673,8 +681,8 @@ def register_unigradicon(
     warped_path: PathLike,
     transform_path: PathLike,
     *,
-    io_iterations: Optional[int] = None,
-) -> Tuple[Path, Path]:
+    io_iterations: int | None = None,
+) -> tuple[Path, Path]:
     """Deformable registration via uniGradICON (Tian et al., 2024).
 
     Foundation model for medical image registration.  Produces a
@@ -739,8 +747,8 @@ def register(
     stem: str,
     *,
     affine_method: Literal["synthmorph", "none"] = "synthmorph",
-    io_iterations: Optional[int] = None,
-) -> Dict[str, Path]:
+    io_iterations: int | None = None,
+) -> dict[str, Path]:
     """Full registration pipeline: optional affine + deformable.
 
     Parameters
@@ -767,9 +775,11 @@ def register(
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    paths: Dict[str, Optional[Path]] = {
-        "affine": None, "affine_xfm": None,
-        "warped": None, "deformable_xfm": None,
+    paths: dict[str, Path | None] = {
+        "affine": None,
+        "affine_xfm": None,
+        "warped": None,
+        "deformable_xfm": None,
     }
 
     # Step A: Affine pre-alignment (optional but recommended)
@@ -778,7 +788,10 @@ def register(
         affine_xfm = out_dir / f"{stem}_affine.lta"
         try:
             aff, axfm = register_synthmorph_affine(
-                moving_path, fixed_path, affine_out, affine_xfm,
+                moving_path,
+                fixed_path,
+                affine_out,
+                affine_xfm,
             )
             paths["affine"] = aff
             paths["affine_xfm"] = axfm
@@ -786,15 +799,18 @@ def register(
             moving_path = aff
         except (FileNotFoundError, RuntimeError) as exc:
             logger.warning(
-                "SynthMorph affine failed (%s), proceeding directly "
-                "to uniGradICON deformable.", exc,
+                "SynthMorph affine failed (%s), proceeding directly to uniGradICON deformable.",
+                exc,
             )
 
     # Step B: Deformable registration
     warped = out_dir / f"{stem}_MNI.nii.gz"
     deform_xfm = out_dir / f"{stem}_transform.hdf5"
     warp, dxfm = register_unigradicon(
-        moving_path, fixed_path, warped, deform_xfm,
+        moving_path,
+        fixed_path,
+        warped,
+        deform_xfm,
         io_iterations=io_iterations,
     )
     paths["warped"] = warp
@@ -807,14 +823,15 @@ def register(
 # §7  Step 4 — Tissue segmentation (SynthSeg+)
 # ======================================================================
 
+
 def segment_synthseg(
     input_path: PathLike,
     output_path: PathLike,
     *,
     parc: bool = True,
     robust: bool = False,
-    vol_path: Optional[PathLike] = None,
-    qc_path: Optional[PathLike] = None,
+    vol_path: PathLike | None = None,
+    qc_path: PathLike | None = None,
 ) -> Path:
     """Tissue segmentation + optional DKT parcellation via SynthSeg+.
 
@@ -968,6 +985,7 @@ def segment(
 # §8  Step 5 — Parcellation (OpenMAP-T1 or BrainParc)
 # ======================================================================
 
+
 def parcellate_openmap(
     input_path: PathLike,
     output_dir: PathLike,
@@ -1006,9 +1024,7 @@ def parcellate_openmap(
     if not parcel_files:
         parcel_files = list(out_dir.glob("*.nii.gz"))
     if not parcel_files:
-        raise FileNotFoundError(
-            f"OpenMAP-T1 produced no output in {out_dir}"
-        )
+        raise FileNotFoundError(f"OpenMAP-T1 produced no output in {out_dir}")
 
     result = parcel_files[0]
     purge_vram()
@@ -1052,9 +1068,7 @@ def parcellate_brainparc(
     if not parcel_files:
         parcel_files = list(out_dir.glob("*.nii.gz"))
     if not parcel_files:
-        raise FileNotFoundError(
-            f"BrainParc produced no output in {out_dir}"
-        )
+        raise FileNotFoundError(f"BrainParc produced no output in {out_dir}")
 
     result = parcel_files[0]
     purge_vram()
@@ -1066,6 +1080,7 @@ def parcellate_brainparc(
 # ======================================================================
 # §9  Pipeline result container
 # ======================================================================
+
 
 @dataclass
 class PreprocessResult:
@@ -1094,16 +1109,17 @@ class PreprocessResult:
     methods : dict
         Which method was used for each step.
     """
+
     input_path: Path
-    enhanced_path: Optional[Path] = None
-    brain_path: Optional[Path] = None
-    brain_mask_path: Optional[Path] = None
-    registered_paths: Optional[Dict[str, Path]] = None
-    segmentation_path: Optional[Path] = None
-    parcellation_path: Optional[Path] = None
-    template_path: Optional[Path] = None
-    timings: Dict[str, float] = field(default_factory=dict)
-    methods: Dict[str, str] = field(default_factory=dict)
+    enhanced_path: Path | None = None
+    brain_path: Path | None = None
+    brain_mask_path: Path | None = None
+    registered_paths: dict[str, Path] | None = None
+    segmentation_path: Path | None = None
+    parcellation_path: Path | None = None
+    template_path: Path | None = None
+    timings: dict[str, float] = field(default_factory=dict)
+    methods: dict[str, str] = field(default_factory=dict)
 
     @property
     def total_time(self) -> float:
@@ -1126,17 +1142,18 @@ class PreprocessResult:
 # §10  End-to-end pipeline orchestrator
 # ======================================================================
 
+
 def preprocess_gpu(
     input_path: PathLike,
     output_dir: PathLike,
     *,
-    steps: Optional[List[str]] = None,
+    steps: list[str] | None = None,
     enhance_method: Literal["bmex", "deepn4", "auto"] = "auto",
     strip_method: Literal["hdbet", "synthstrip", "auto"] = "auto",
     segment_method: Literal["synthseg", "fastsurfer", "auto"] = "auto",
-    parcellate_method: Optional[Literal["openmap", "brainparc"]] = None,
-    template: Optional[PathLike] = None,
-    io_iterations: Optional[int] = None,
+    parcellate_method: Literal["openmap", "brainparc"] | None = None,
+    template: PathLike | None = None,
+    io_iterations: int | None = None,
     affine_pre: bool = True,
     device: str = "cuda:0",
     skip_existing: bool = True,
@@ -1217,10 +1234,7 @@ def preprocess_gpu(
             if s.lower() in _STEP_MAP:
                 active_steps.add(_STEP_MAP[s.lower()])
             else:
-                raise ValueError(
-                    f"Unknown step '{s}'.  "
-                    f"Available: {list(_STEP_MAP.keys())}"
-                )
+                raise ValueError(f"Unknown step '{s}'.  Available: {list(_STEP_MAP.keys())}")
 
     # Add parcellate if explicitly requested
     if parcellate_method is not None:
@@ -1244,7 +1258,10 @@ def preprocess_gpu(
         t0 = time.time()
         brain = out_dir / f"{stem}_brain.nii.gz"
         brain_path, mask_path = skull_strip(
-            current, brain, method=strip_method, device=device,
+            current,
+            brain,
+            method=strip_method,
+            device=device,
         )
         current = brain_path
         result.brain_path = brain_path
@@ -1261,7 +1278,10 @@ def preprocess_gpu(
         result.template_path = tmpl
 
         reg_paths = register(
-            current, tmpl, out_dir, stem,
+            current,
+            tmpl,
+            out_dir,
+            stem,
             affine_method="synthmorph" if affine_pre else "none",
             io_iterations=io_iterations,
         )
@@ -1280,8 +1300,12 @@ def preprocess_gpu(
         vol_csv = out_dir / f"{stem}_volumes.csv"
         qc_csv = out_dir / f"{stem}_qc.csv"
         seg_path = segment(
-            current, seg, method=segment_method,
-            parc=True, vol_path=vol_csv, qc_path=qc_csv,
+            current,
+            seg,
+            method=segment_method,
+            parc=True,
+            vol_path=vol_csv,
+            qc_path=qc_csv,
         )
         result.segmentation_path = seg_path
         result.timings["segment"] = time.time() - t0
@@ -1305,7 +1329,8 @@ def preprocess_gpu(
 
     logger.info(
         "Pipeline complete for %s in %.1fs",
-        inp.name, result.total_time,
+        inp.name,
+        result.total_time,
     )
     return result
 
@@ -1314,20 +1339,21 @@ def preprocess_gpu(
 # §11  Batch processing
 # ======================================================================
 
+
 def preprocess_gpu_batch(
-    input_paths: List[PathLike],
+    input_paths: list[PathLike],
     output_dir: PathLike,
     *,
-    steps: Optional[List[str]] = None,
+    steps: list[str] | None = None,
     enhance_method: Literal["bmex", "deepn4", "auto"] = "auto",
     strip_method: Literal["hdbet", "synthstrip", "auto"] = "auto",
     segment_method: Literal["synthseg", "fastsurfer", "auto"] = "auto",
-    parcellate_method: Optional[Literal["openmap", "brainparc"]] = None,
-    template: Optional[PathLike] = None,
-    io_iterations: Optional[int] = None,
+    parcellate_method: Literal["openmap", "brainparc"] | None = None,
+    template: PathLike | None = None,
+    io_iterations: int | None = None,
     affine_pre: bool = True,
     device: str = "cuda:0",
-) -> Dict[str, PreprocessResult]:
+) -> dict[str, PreprocessResult]:
     """Process multiple subjects sequentially with VRAM isolation.
 
     Parameters
@@ -1346,7 +1372,7 @@ def preprocess_gpu_batch(
         Results keyed by filename stem.
     """
     out_base = Path(output_dir).resolve()
-    results: Dict[str, PreprocessResult] = {}
+    results: dict[str, PreprocessResult] = {}
     n = len(input_paths)
 
     for i, inp in enumerate(input_paths, 1):
@@ -1356,13 +1382,17 @@ def preprocess_gpu_batch(
             stem = stem.replace(ext, "")
 
         logger.info(
-            "Processing %d/%d: %s", i, n, inp.name,
+            "Processing %d/%d: %s",
+            i,
+            n,
+            inp.name,
         )
 
         subj_dir = out_base / stem
         try:
             result = preprocess_gpu(
-                inp, subj_dir,
+                inp,
+                subj_dir,
                 steps=steps,
                 enhance_method=enhance_method,
                 strip_method=strip_method,
@@ -1381,7 +1411,9 @@ def preprocess_gpu_batch(
 
     successful = len(results)
     logger.info(
-        "Batch complete: %d/%d subjects succeeded.", successful, n,
+        "Batch complete: %d/%d subjects succeeded.",
+        successful,
+        n,
     )
     return results
 
@@ -1390,7 +1422,8 @@ def preprocess_gpu_batch(
 # §12  File discovery utility
 # ======================================================================
 
-def discover_nifti(input_path: PathLike) -> List[Path]:
+
+def discover_nifti(input_path: PathLike) -> list[Path]:
     """Find NIfTI files from a file or directory.
 
     If a file, returns ``[file]``.  If a directory, searches root
@@ -1439,21 +1472,33 @@ def discover_nifti(input_path: PathLike) -> List[Path]:
 # ======================================================================
 
 __all__ = [
-    # Constants
-    "Step", "DEFAULT_STEPS",
-    # VRAM management
-    "purge_vram", "vram_info",
-    # Template management
-    "ensure_template",
-    # Individual steps
-    "enhance", "enhance_bmex", "enhance_deepn4",
-    "skull_strip", "skull_strip_hdbet", "skull_strip_synthstrip",
-    "register", "register_synthmorph_affine", "register_unigradicon",
-    "segment", "segment_synthseg", "segment_fastsurfer",
-    "parcellate_openmap", "parcellate_brainparc",
+    "DEFAULT_STEPS",
     # Pipeline
     "PreprocessResult",
-    "preprocess_gpu", "preprocess_gpu_batch",
+    # Constants
+    "Step",
     # Utilities
     "discover_nifti",
+    # Individual steps
+    "enhance",
+    "enhance_bmex",
+    "enhance_deepn4",
+    # Template management
+    "ensure_template",
+    "parcellate_brainparc",
+    "parcellate_openmap",
+    "preprocess_gpu",
+    "preprocess_gpu_batch",
+    # VRAM management
+    "purge_vram",
+    "register",
+    "register_synthmorph_affine",
+    "register_unigradicon",
+    "segment",
+    "segment_fastsurfer",
+    "segment_synthseg",
+    "skull_strip",
+    "skull_strip_hdbet",
+    "skull_strip_synthstrip",
+    "vram_info",
 ]

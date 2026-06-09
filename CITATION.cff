@@ -1,0 +1,30 @@
+cff-version: 1.2.0
+message: "If you use SpectralBrain in your research, please cite it as below."
+title: "SpectralBrain: Spectral Shape Analysis for Brain Structures"
+abstract: >-
+  SpectralBrain is a Python library for computing, analyzing, and visualizing
+  spectral shape descriptors of brain structures (cortical surfaces,
+  subcortical meshes, hippocampal subfields, white-matter tracts, and point
+  clouds) via the Laplace-Beltrami operator. It bridges spectral geometry with
+  clinical neuroimaging, from FreeSurfer/HippUnfold output to publication-ready
+  statistical analysis and visualization.
+type: software
+authors:
+  - family-names: "Debona"
+    given-names: "Rodrigo"
+    email: "r.debona@posgrad.ufsc.br"
+    affiliation: >-
+      Instituto Nacional de Neurociência Translacional (INNT),
+      Universidade Federal do Rio de Janeiro (UFRJ)
+license: MIT
+repository-code: "https://github.com/rdneuro/spectralbrain"
+url: "https://github.com/rdneuro/spectralbrain"
+keywords:
+  - neuroscience
+  - neuroimaging
+  - spectral-analysis
+  - laplace-beltrami
+  - shape-analysis
+  - morphometry
+version: 0.1.0
+date-released: "2026-06-05"

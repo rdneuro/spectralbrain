@@ -19,11 +19,9 @@ files when available.
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Tuple
+from typing import Literal
 
-import numpy as np
-
-from spectralbrain.runtime import AtlasScheme, get_logger
+from spectralbrain.runtime import get_logger
 
 logger = get_logger(__name__)
 
@@ -32,7 +30,7 @@ logger = get_logger(__name__)
 # §1  FREESURFER ASEG
 # ======================================================================
 
-ASEG_LABELS: Dict[int, str] = {
+ASEG_LABELS: dict[int, str] = {
     2: "Left-Cerebral-White-Matter",
     3: "Left-Cerebral-Cortex",
     4: "Left-Lateral-Ventricle",
@@ -83,7 +81,7 @@ ASEG_LABELS: Dict[int, str] = {
 # §2  HIPPOCAMPAL SUBFIELDS (FreeSurfer v7.x, T1-based)
 # ======================================================================
 
-HIPPOCAMPAL_SUBFIELDS: Dict[int, str] = {
+HIPPOCAMPAL_SUBFIELDS: dict[int, str] = {
     203: "parasubiculum",
     204: "presubiculum-head",
     205: "presubiculum-body",
@@ -108,9 +106,8 @@ HIPPOCAMPAL_SUBFIELDS: Dict[int, str] = {
 }
 
 # Right-hemisphere labels are + 1000.
-HIPPOCAMPAL_SUBFIELDS_RIGHT: Dict[int, str] = {
-    k + 1000: v.replace("left", "right")
-    for k, v in HIPPOCAMPAL_SUBFIELDS.items()
+HIPPOCAMPAL_SUBFIELDS_RIGHT: dict[int, str] = {
+    k + 1000: v.replace("left", "right") for k, v in HIPPOCAMPAL_SUBFIELDS.items()
 }
 
 
@@ -118,7 +115,7 @@ HIPPOCAMPAL_SUBFIELDS_RIGHT: Dict[int, str] = {
 # §3  THALAMIC NUCLEI (FreeSurfer v7.x)
 # ======================================================================
 
-THALAMIC_NUCLEI: Dict[int, str] = {
+THALAMIC_NUCLEI: dict[int, str] = {
     8103: "Left-AV",
     8104: "Left-CeM",
     8105: "Left-CL",
@@ -148,9 +145,8 @@ THALAMIC_NUCLEI: Dict[int, str] = {
     # Right = Left + 100
 }
 
-THALAMIC_NUCLEI_RIGHT: Dict[int, str] = {
-    k + 100: v.replace("Left", "Right")
-    for k, v in THALAMIC_NUCLEI.items()
+THALAMIC_NUCLEI_RIGHT: dict[int, str] = {
+    k + 100: v.replace("Left", "Right") for k, v in THALAMIC_NUCLEI.items()
 }
 
 
@@ -158,7 +154,7 @@ THALAMIC_NUCLEI_RIGHT: Dict[int, str] = {
 # §4  AMYGDALA NUCLEI (FreeSurfer v7.x)
 # ======================================================================
 
-AMYGDALA_NUCLEI: Dict[int, str] = {
+AMYGDALA_NUCLEI: dict[int, str] = {
     7001: "Left-Lateral-nucleus",
     7002: "Left-Basal-nucleus",
     7003: "Left-Accessory-Basal-nucleus",
@@ -171,9 +167,8 @@ AMYGDALA_NUCLEI: Dict[int, str] = {
     7010: "Left-Whole-amygdala",
 }
 
-AMYGDALA_NUCLEI_RIGHT: Dict[int, str] = {
-    k + 1000: v.replace("Left", "Right")
-    for k, v in AMYGDALA_NUCLEI.items()
+AMYGDALA_NUCLEI_RIGHT: dict[int, str] = {
+    k + 1000: v.replace("Left", "Right") for k, v in AMYGDALA_NUCLEI.items()
 }
 
 
@@ -181,7 +176,7 @@ AMYGDALA_NUCLEI_RIGHT: Dict[int, str] = {
 # §5  YEO NETWORK ASSIGNMENTS
 # ======================================================================
 
-YEO_7_NETWORKS: Dict[int, str] = {
+YEO_7_NETWORKS: dict[int, str] = {
     1: "Visual",
     2: "Somatomotor",
     3: "DorsalAttention",
@@ -191,14 +186,23 @@ YEO_7_NETWORKS: Dict[int, str] = {
     7: "Default",
 }
 
-YEO_17_NETWORKS: Dict[int, str] = {
-    1: "VisCent", 2: "VisPeri",
-    3: "SomMotA", 4: "SomMotB",
-    5: "DorsAttnA", 6: "DorsAttnB",
-    7: "SalVentAttnA", 8: "SalVentAttnB",
-    9: "LimbicA", 10: "LimbicB",
-    11: "ContA", 12: "ContB", 13: "ContC",
-    14: "DefaultA", 15: "DefaultB", 16: "DefaultC",
+YEO_17_NETWORKS: dict[int, str] = {
+    1: "VisCent",
+    2: "VisPeri",
+    3: "SomMotA",
+    4: "SomMotB",
+    5: "DorsAttnA",
+    6: "DorsAttnB",
+    7: "SalVentAttnA",
+    8: "SalVentAttnB",
+    9: "LimbicA",
+    10: "LimbicB",
+    11: "ContA",
+    12: "ContB",
+    13: "ContC",
+    14: "DefaultA",
+    15: "DefaultB",
+    16: "DefaultC",
     17: "TempPar",
 }
 
@@ -207,7 +211,7 @@ YEO_17_NETWORKS: Dict[int, str] = {
 # §6  UNIFIED LOOKUP
 # ======================================================================
 
-_REGISTRIES: Dict[str, Dict[int, str]] = {
+_REGISTRIES: dict[str, dict[int, str]] = {
     "aseg": ASEG_LABELS,
     "hippocampal_subfields": {
         **HIPPOCAMPAL_SUBFIELDS,
@@ -242,7 +246,7 @@ def get_label_name(atlas: str, label_id: int) -> str:
     return registry.get(label_id, f"Unknown-{label_id}")
 
 
-def get_label_id(atlas: str, name: str) -> Optional[int]:
+def get_label_id(atlas: str, name: str) -> int | None:
     """Reverse lookup: region name → label ID.
 
     Parameters
@@ -263,7 +267,7 @@ def get_label_id(atlas: str, name: str) -> Optional[int]:
     return None
 
 
-def list_labels(atlas: str) -> Dict[int, str]:
+def list_labels(atlas: str) -> dict[int, str]:
     """Return all label ID → name mappings for an atlas.
 
     Parameters
@@ -280,7 +284,7 @@ def list_labels(atlas: str) -> Dict[int, str]:
 def get_structure_ids(
     atlas: str,
     hemisphere: Literal["left", "right", "both"] = "both",
-) -> List[int]:
+) -> list[int]:
     """Get all label IDs for a hemisphere.
 
     Parameters
@@ -345,18 +349,16 @@ def schaefer_to_yeo(
     return networks.get(net_idx, f"Network-{net_idx}")
 
 
-from typing import Literal
-
 __all__ = [
+    "AMYGDALA_NUCLEI",
     "ASEG_LABELS",
     "HIPPOCAMPAL_SUBFIELDS",
     "THALAMIC_NUCLEI",
-    "AMYGDALA_NUCLEI",
     "YEO_7_NETWORKS",
     "YEO_17_NETWORKS",
-    "get_label_name",
     "get_label_id",
-    "list_labels",
+    "get_label_name",
     "get_structure_ids",
+    "list_labels",
     "schaefer_to_yeo",
 ]

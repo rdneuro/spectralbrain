@@ -27,7 +27,7 @@ where g(λ) is a spectral filter that defines the metric.
 
 from __future__ import annotations
 
-from typing import List, Literal, Optional, Tuple, Union
+from typing import Literal
 
 import numpy as np
 
@@ -46,11 +46,12 @@ logger = get_logger(__name__)
 # §1  UNIFIED SPECTRAL DISTANCE KERNEL
 # ======================================================================
 
+
 def _spectral_distance_matrix(
     eigenvectors: np.ndarray,
     weights: np.ndarray,
     *,
-    indices: Optional[np.ndarray] = None,
+    indices: np.ndarray | None = None,
 ) -> DistanceMatrix:
     """Compute pairwise spectral distance matrix.
 
@@ -73,20 +74,20 @@ def _spectral_distance_matrix(
     ndarray, shape (M, N) or (N, N)
     """
     # Weighted embedding: Ψ(x) = φ(x) · √w
-    sqrt_w = np.sqrt(np.clip(weights, 0.0, None))          # (k,)
-    embedding = eigenvectors * sqrt_w[None, :]              # (N, k)
+    sqrt_w = np.sqrt(np.clip(weights, 0.0, None))  # (k,)
+    embedding = eigenvectors * sqrt_w[None, :]  # (N, k)
 
     if indices is not None:
-        sources = embedding[indices]                        # (M, k)
+        sources = embedding[indices]  # (M, k)
         # Squared Euclidean: ||a-b||² = ||a||² + ||b||² - 2·a·b
-        sq_src = np.sum(sources ** 2, axis=1, keepdims=True)  # (M, 1)
-        sq_all = np.sum(embedding ** 2, axis=1, keepdims=True).T  # (1, N)
-        cross = sources @ embedding.T                       # (M, N)
-        D2 = sq_src + sq_all - 2 * cross                    # (M, N)
+        sq_src = np.sum(sources**2, axis=1, keepdims=True)  # (M, 1)
+        sq_all = np.sum(embedding**2, axis=1, keepdims=True).T  # (1, N)
+        cross = sources @ embedding.T  # (M, N)
+        D2 = sq_src + sq_all - 2 * cross  # (M, N)
     else:
-        sq = np.sum(embedding ** 2, axis=1)                 # (N,)
-        cross = embedding @ embedding.T                     # (N, N)
-        D2 = sq[:, None] + sq[None, :] - 2 * cross         # (N, N)
+        sq = np.sum(embedding**2, axis=1)  # (N,)
+        cross = embedding @ embedding.T  # (N, N)
+        D2 = sq[:, None] + sq[None, :] - 2 * cross  # (N, N)
 
     return np.sqrt(np.clip(D2, 0.0, None))
 
@@ -94,6 +95,7 @@ def _spectral_distance_matrix(
 # ======================================================================
 # §2  SHAPE-TO-SHAPE DISTANCES
 # ======================================================================
+
 
 def wesd(
     dna_a: GlobalDescriptor,
@@ -149,7 +151,7 @@ def wesd(
     b = np.clip(b, 1e-20, None)
 
     terms = np.abs(a - b) / (a * b)
-    raw = np.sum(terms ** p) ** (1.0 / p)
+    raw = np.sum(terms**p) ** (1.0 / p)
 
     if normalize:
         return float(raw / (1.0 + raw))
@@ -184,8 +186,10 @@ def wesd_matrix(
         for i in range(S):
             for j in range(i + 1, S):
                 d = wesd(
-                    dna_collection[i], dna_collection[j],
-                    p=p, normalize=normalize,
+                    dna_collection[i],
+                    dna_collection[j],
+                    p=p,
+                    normalize=normalize,
                 )
                 D[i, j] = d
                 D[j, i] = d
@@ -199,7 +203,7 @@ def shapedna_distance(
     dna_b: GlobalDescriptor,
     *,
     metric: Literal["euclidean", "mahalanobis", "cosine"] = "euclidean",
-    cov_inv: Optional[np.ndarray] = None,
+    cov_inv: np.ndarray | None = None,
 ) -> float:
     """Simple distance between two ShapeDNA vectors.
 
@@ -244,10 +248,11 @@ def shapedna_distance(
 # §3  BIHARMONIC DISTANCE  (Lipman, Rustamov & Funkhouser, 2010)
 # ======================================================================
 
+
 def biharmonic_distance(
     decomp: SpectralDecomposition,
     *,
-    indices: Optional[np.ndarray] = None,
+    indices: np.ndarray | None = None,
 ) -> DistanceMatrix:
     """Biharmonic distance — parameter-free intrinsic metric.
 
@@ -290,10 +295,11 @@ def biharmonic_distance(
 # §4  COMMUTE-TIME DISTANCE
 # ======================================================================
 
+
 def commute_time_distance(
     decomp: SpectralDecomposition,
     *,
-    indices: Optional[np.ndarray] = None,
+    indices: np.ndarray | None = None,
     warn_large: bool = True,
 ) -> DistanceMatrix:
     """Commute-time distance from random walk theory.
@@ -342,11 +348,12 @@ def commute_time_distance(
 # §5  DIFFUSION DISTANCE  (Coifman & Lafon, 2006)
 # ======================================================================
 
+
 def diffusion_distance(
     decomp: SpectralDecomposition,
     t: float,
     *,
-    indices: Optional[np.ndarray] = None,
+    indices: np.ndarray | None = None,
 ) -> DistanceMatrix:
     """Diffusion distance — multi-scale intrinsic metric.
 
@@ -388,7 +395,7 @@ def diffusion_distance_multiscale(
     decomp: SpectralDecomposition,
     t_values: np.ndarray,
     *,
-    indices: Optional[np.ndarray] = None,
+    indices: np.ndarray | None = None,
 ) -> np.ndarray:
     """Diffusion distance at multiple time scales.
 
@@ -418,12 +425,17 @@ def diffusion_distance_multiscale(
 # §6  SPECTRAL DISTANCE BETWEEN DESCRIPTORS (for geometric connectome)
 # ======================================================================
 
+
 def descriptor_distance(
     desc_a: np.ndarray,
     desc_b: np.ndarray,
     *,
     method: Literal[
-        "wasserstein", "mmd", "euclidean", "cosine", "correlation",
+        "wasserstein",
+        "mmd",
+        "euclidean",
+        "cosine",
+        "correlation",
     ] = "wasserstein",
     **kwargs,
 ) -> float:
@@ -498,10 +510,7 @@ def _wasserstein_1d_multi(a: np.ndarray, b: np.ndarray) -> float:
         b = b[:, None]
 
     T = min(a.shape[1], b.shape[1])
-    dists = [
-        wasserstein_distance(a[:, t], b[:, t])
-        for t in range(T)
-    ]
+    dists = [wasserstein_distance(a[:, t], b[:, t]) for t in range(T)]
     return float(np.mean(dists))
 
 
@@ -509,7 +518,7 @@ def _mmd_gaussian(
     a: np.ndarray,
     b: np.ndarray,
     *,
-    sigma: Optional[float] = None,
+    sigma: float | None = None,
 ) -> float:
     """Maximum Mean Discrepancy with Gaussian kernel."""
     if a.ndim == 1:
@@ -521,17 +530,18 @@ def _mmd_gaussian(
         combined = np.vstack([a, b])
         # Median heuristic.
         from scipy.spatial.distance import pdist
-        dists = pdist(combined[:min(500, len(combined))])
+
+        dists = pdist(combined[: min(500, len(combined))])
         sigma = float(np.median(dists)) if len(dists) > 0 else 1.0
         sigma = max(sigma, 1e-6)
 
-    gamma = 1.0 / (2.0 * sigma ** 2)
+    gamma = 1.0 / (2.0 * sigma**2)
 
     def _k(X: np.ndarray, Y: np.ndarray) -> float:
         """Kernel function for the shell distance computation."""
         D2 = (
-            np.sum(X ** 2, axis=1, keepdims=True)
-            + np.sum(Y ** 2, axis=1, keepdims=True).T
+            np.sum(X**2, axis=1, keepdims=True)
+            + np.sum(Y**2, axis=1, keepdims=True).T
             - 2 * X @ Y.T
         )
         return float(np.mean(np.exp(-gamma * D2)))
@@ -544,14 +554,19 @@ def _mmd_gaussian(
 # §7  CONNECTOME BUILDER
 # ======================================================================
 
+
 def build_geometric_connectome(
     parcel_descriptors: dict,
     *,
     method: Literal[
-        "wasserstein", "mmd", "euclidean", "cosine", "correlation",
+        "wasserstein",
+        "mmd",
+        "euclidean",
+        "cosine",
+        "correlation",
     ] = "wasserstein",
     **kwargs,
-) -> Tuple[DistanceMatrix, list]:
+) -> tuple[DistanceMatrix, list]:
     """Build a ROI × ROI geometric connectome from parcel descriptors.
 
     For each pair of parcels, computes the distance between their
@@ -604,7 +619,9 @@ def build_geometric_connectome(
 
     logger.info(
         "Geometric connectome: %d × %d (method=%s)",
-        R, R, method,
+        R,
+        R,
+        method,
     )
     return matrix, labels
 
@@ -615,7 +632,7 @@ def aggregate_to_networks(
     network_assignments: dict,
     *,
     aggregation: Literal["mean", "median"] = "mean",
-) -> Tuple[np.ndarray, list]:
+) -> tuple[np.ndarray, list]:
     """Aggregate a parcel-level connectome to network level.
 
     Parameters
@@ -673,19 +690,19 @@ def aggregate_to_networks(
 
 # ======================================================================
 
-__all__: List[str] = [
+__all__: list[str] = [
+    "aggregate_to_networks",
+    # Point-to-point
+    "biharmonic_distance",
+    # Geometric connectome
+    "build_geometric_connectome",
+    "commute_time_distance",
+    # Descriptor distributions
+    "descriptor_distance",
+    "diffusion_distance",
+    "diffusion_distance_multiscale",
+    "shapedna_distance",
     # Shape-to-shape
     "wesd",
     "wesd_matrix",
-    "shapedna_distance",
-    # Point-to-point
-    "biharmonic_distance",
-    "commute_time_distance",
-    "diffusion_distance",
-    "diffusion_distance_multiscale",
-    # Descriptor distributions
-    "descriptor_distance",
-    # Geometric connectome
-    "build_geometric_connectome",
-    "aggregate_to_networks",
 ]

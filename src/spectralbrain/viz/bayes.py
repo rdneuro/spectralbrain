@@ -21,14 +21,11 @@ Figure types
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple, Union
-
-import numpy as np
-import matplotlib
-import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
-from matplotlib.figure import Figure
+import matplotlib.pyplot as plt
+import numpy as np
 from matplotlib.axes import Axes
+from matplotlib.figure import Figure
 from scipy.stats import gaussian_kde
 
 from spectralbrain.runtime import PathLike, get_logger
@@ -50,8 +47,7 @@ _DARK = "#222222"
 _CYAN = "#66CCEE"
 _INDIGO = "#332288"
 
-_PALETTE = [_BLUE, _RED, _GREEN, _PURPLE, _ORANGE,
-            _TEAL, _CYAN, _INDIGO]
+_PALETTE = [_BLUE, _RED, _GREEN, _PURPLE, _ORANGE, _TEAL, _CYAN, _INDIGO]
 
 _ROPE_BELOW = "#4477AA"
 _ROPE_INSIDE = "#BBBBBB"
@@ -62,6 +58,7 @@ def _apply_style():
     """Apply the publication-quality matplotlib style preset."""
     try:
         import scienceplots  # noqa: F401
+
         plt.style.use(["science", "no-latex"])
         plt.rcParams["mathtext.fontset"] = "cm"
     except ImportError:
@@ -72,6 +69,7 @@ def _apply_style():
 def _save(fig, path, formats=None):
     """Save the current figure if a path is provided."""
     from spectralbrain.viz.graphics import savefig
+
     return savefig(fig, path, formats=formats, dpi=DPI)
 
 
@@ -79,18 +77,19 @@ def _save(fig, path, formats=None):
 # §1  POSTERIOR DISTRIBUTION + HDI + ROPE
 # ======================================================================
 
+
 def plot_posterior(
     samples: np.ndarray,
     *,
     hdi_prob: float = 0.94,
-    rope: Optional[Tuple[float, float]] = None,
-    ref_val: Optional[float] = None,
+    rope: tuple[float, float] | None = None,
+    ref_val: float | None = None,
     color: str = _BLUE,
     xlabel: str = "Parameter",
     title: str = "",
-    ax: Optional[Axes] = None,
-    save: Optional[PathLike] = None,
-) -> Tuple[Figure, Axes]:
+    ax: Axes | None = None,
+    save: PathLike | None = None,
+) -> tuple[Figure, Axes]:
     """Posterior distribution with HDI band and optional ROPE.
 
     Parameters
@@ -121,26 +120,41 @@ def plot_posterior(
     # HDI.
     lo, hi = _hdi(s, hdi_prob)
     mask = (x >= lo) & (x <= hi)
-    ax.fill_between(x[mask], y[mask], alpha=0.4, color=color,
-                    label=f"{hdi_prob*100:.0f}% HDI [{lo:.3f}, {hi:.3f}]")
+    ax.fill_between(
+        x[mask],
+        y[mask],
+        alpha=0.4,
+        color=color,
+        label=f"{hdi_prob * 100:.0f}% HDI [{lo:.3f}, {hi:.3f}]",
+    )
     for v in [lo, hi]:
         ax.axvline(v, color=color, ls=":", lw=0.8, alpha=0.6)
 
     # ROPE.
     if rope is not None:
-        ax.axvspan(rope[0], rope[1], alpha=0.12, color=_GREY, zorder=0,
-                   label=f"ROPE [{rope[0]:.2f}, {rope[1]:.2f}]")
+        ax.axvspan(
+            rope[0],
+            rope[1],
+            alpha=0.12,
+            color=_GREY,
+            zorder=0,
+            label=f"ROPE [{rope[0]:.2f}, {rope[1]:.2f}]",
+        )
 
     # Reference value.
     if ref_val is not None:
-        ax.axvline(ref_val, color=_DARK, ls="--", lw=1, alpha=0.7,
-                   label=f"ref = {ref_val}")
+        ax.axvline(ref_val, color=_DARK, ls="--", lw=1, alpha=0.7, label=f"ref = {ref_val}")
 
     # Posterior mean.
     mean_val = s.mean()
     ax.axvline(mean_val, color=color, ls="-", lw=1.2, alpha=0.5)
-    ax.annotate(f"mean = {mean_val:.3f}", xy=(mean_val, y.max() * 0.95),
-                fontsize=7, ha="center", color=color)
+    ax.annotate(
+        f"mean = {mean_val:.3f}",
+        xy=(mean_val, y.max() * 0.95),
+        fontsize=7,
+        ha="center",
+        color=color,
+    )
 
     ax.set_xlabel(xlabel)
     ax.set_ylabel("Density")
@@ -154,12 +168,12 @@ def plot_posterior(
     return fig, ax
 
 
-def _hdi(samples: np.ndarray, prob: float) -> Tuple[float, float]:
+def _hdi(samples: np.ndarray, prob: float) -> tuple[float, float]:
     """Highest Density Interval (narrowest interval containing prob mass)."""
     s = np.sort(samples)
     n = len(s)
     interval_width = int(np.ceil(prob * n))
-    widths = s[interval_width:] - s[:n - interval_width]
+    widths = s[interval_width:] - s[: n - interval_width]
     best = widths.argmin()
     return float(s[best]), float(s[best + interval_width])
 
@@ -168,18 +182,19 @@ def _hdi(samples: np.ndarray, prob: float) -> Tuple[float, float]:
 # §2  FOREST PLOT
 # ======================================================================
 
+
 def plot_forest(
-    var_names: List[str],
-    posteriors: List[np.ndarray],
+    var_names: list[str],
+    posteriors: list[np.ndarray],
     *,
     hdi_prob: float = 0.94,
     ref_val: float = 0.0,
-    colors: Optional[List[str]] = None,
+    colors: list[str] | None = None,
     title: str = "Forest Plot",
     xlabel: str = "Coefficient",
-    ax: Optional[Axes] = None,
-    save: Optional[PathLike] = None,
-) -> Tuple[Figure, Axes]:
+    ax: Axes | None = None,
+    save: PathLike | None = None,
+) -> tuple[Figure, Axes]:
     """Forest plot — coefficients + credible intervals.
 
     Parameters
@@ -202,7 +217,7 @@ def plot_forest(
     cols = colors or [_BLUE] * n
     positions = np.arange(n)
 
-    for i, (name, post) in enumerate(zip(var_names, posteriors)):
+    for i, (_name, post) in enumerate(zip(var_names, posteriors)):
         s = post.ravel()
         lo, hi = _hdi(s, hdi_prob)
         lo50, hi50 = _hdi(s, 0.50)
@@ -212,8 +227,7 @@ def plot_forest(
         # Thin line: full HDI.
         ax.plot([lo, hi], [i, i], color=c, lw=1.2, solid_capstyle="round")
         # Thick line: 50% HDI.
-        ax.plot([lo50, hi50], [i, i], color=c, lw=3.5, solid_capstyle="round",
-                alpha=0.7)
+        ax.plot([lo50, hi50], [i, i], color=c, lw=3.5, solid_capstyle="round", alpha=0.7)
         # Dot: posterior mean.
         ax.plot(mean, i, "o", color=c, markersize=5, zorder=5)
 
@@ -234,15 +248,16 @@ def plot_forest(
 # §3  PRIOR vs POSTERIOR
 # ======================================================================
 
+
 def plot_prior_posterior(
     prior_samples: np.ndarray,
     posterior_samples: np.ndarray,
     *,
     xlabel: str = "Parameter",
     title: str = "Prior → Posterior",
-    ax: Optional[Axes] = None,
-    save: Optional[PathLike] = None,
-) -> Tuple[Figure, Axes]:
+    ax: Axes | None = None,
+    save: PathLike | None = None,
+) -> tuple[Figure, Axes]:
     """Overlay prior and posterior distributions."""
     _apply_style()
     if ax is None:
@@ -276,15 +291,16 @@ def plot_prior_posterior(
 # §4  ROPE DECISION DIAGRAM
 # ======================================================================
 
+
 def plot_rope_decision(
-    posteriors: Dict[str, np.ndarray],
-    rope: Tuple[float, float] = (-0.1, 0.1),
+    posteriors: dict[str, np.ndarray],
+    rope: tuple[float, float] = (-0.1, 0.1),
     *,
     title: str = "ROPE Decision",
     xlabel: str = "Probability",
-    ax: Optional[Axes] = None,
-    save: Optional[PathLike] = None,
-) -> Tuple[Figure, Axes]:
+    ax: Axes | None = None,
+    save: PathLike | None = None,
+) -> tuple[Figure, Axes]:
     """Stacked horizontal bar — P(below) | P(ROPE) | P(above).
 
     Parameters
@@ -303,7 +319,7 @@ def plot_rope_decision(
     lo, hi = rope
     y_pos = np.arange(n)
 
-    for i, (name, samples) in enumerate(posteriors.items()):
+    for i, (_name, samples) in enumerate(posteriors.items()):
         s = samples.ravel()
         p_below = (s < lo).mean()
         p_rope = ((s >= lo) & (s <= hi)).mean()
@@ -311,7 +327,15 @@ def plot_rope_decision(
 
         ax.barh(i, p_below, height=0.6, color=_ROPE_BELOW, edgecolor="white", lw=0.5)
         ax.barh(i, p_rope, left=p_below, height=0.6, color=_ROPE_INSIDE, edgecolor="white", lw=0.5)
-        ax.barh(i, p_above, left=p_below + p_rope, height=0.6, color=_ROPE_ABOVE, edgecolor="white", lw=0.5)
+        ax.barh(
+            i,
+            p_above,
+            left=p_below + p_rope,
+            height=0.6,
+            color=_ROPE_ABOVE,
+            edgecolor="white",
+            lw=0.5,
+        )
 
         # Annotate probabilities.
         for p, x_start, col in [
@@ -320,9 +344,16 @@ def plot_rope_decision(
             (p_above, p_below + p_rope + p_above / 2, _ROPE_ABOVE),
         ]:
             if p > 0.05:
-                ax.text(x_start, i, f"{p:.0%}", ha="center", va="center",
-                        fontsize=6, fontweight="bold",
-                        color="white" if col != _DARK else _DARK)
+                ax.text(
+                    x_start,
+                    i,
+                    f"{p:.0%}",
+                    ha="center",
+                    va="center",
+                    fontsize=6,
+                    fontweight="bold",
+                    color="white" if col != _DARK else _DARK,
+                )
 
     ax.set_yticks(y_pos)
     ax.set_yticklabels(names, fontsize=7)
@@ -332,11 +363,10 @@ def plot_rope_decision(
 
     legend_patches = [
         mpatches.Patch(color=_ROPE_BELOW, label=f"P(< {lo:.2f})"),
-        mpatches.Patch(color=_ROPE_INSIDE, label=f"P(ROPE)"),
+        mpatches.Patch(color=_ROPE_INSIDE, label="P(ROPE)"),
         mpatches.Patch(color=_ROPE_ABOVE, label=f"P(> {hi:.2f})"),
     ]
-    ax.legend(handles=legend_patches, fontsize=6, loc="lower right",
-              ncol=3, frameon=False)
+    ax.legend(handles=legend_patches, fontsize=6, loc="lower right", ncol=3, frameon=False)
 
     if title:
         ax.set_title(title, fontweight="bold")
@@ -350,17 +380,18 @@ def plot_rope_decision(
 # §5  RIDGELINE PLOT (the showpiece)
 # ======================================================================
 
+
 def plot_ridgeline(
-    data: Dict[str, Dict[str, np.ndarray]],
+    data: dict[str, dict[str, np.ndarray]],
     *,
     overlap: float = 0.6,
-    colors: Optional[List[str]] = None,
+    colors: list[str] | None = None,
     xlabel: str = "Value",
     title: str = "",
-    figsize: Optional[Tuple[float, float]] = None,
-    save: Optional[PathLike] = None,
-    formats: Optional[Union[str, List[str]]] = None,
-) -> Tuple[Figure, List[Axes]]:
+    figsize: tuple[float, float] | None = None,
+    save: PathLike | None = None,
+    formats: str | list[str] | None = None,
+) -> tuple[Figure, list[Axes]]:
     """Multi-panel ridgeline plot.
 
     Each panel corresponds to one feature.  Within each panel,
@@ -407,7 +438,11 @@ def plot_ridgeline(
         figsize = (4 * n_panels, 0.6 * n_groups + 1.5)
 
     fig, axes_arr = plt.subplots(
-        1, n_panels, figsize=figsize, dpi=DPI, sharey=True,
+        1,
+        n_panels,
+        figsize=figsize,
+        dpi=DPI,
+        sharey=True,
     )
     if n_panels == 1:
         axes_arr = [axes_arr]
@@ -418,9 +453,7 @@ def plot_ridgeline(
         ax = axes_arr[panel_idx]
 
         # Global x range for this panel.
-        all_vals = np.concatenate([
-            feat_data[g].ravel() for g in all_groups if g in feat_data
-        ])
+        all_vals = np.concatenate([feat_data[g].ravel() for g in all_groups if g in feat_data])
         x_lo = np.percentile(all_vals, 1) - np.std(all_vals) * 0.3
         x_hi = np.percentile(all_vals, 99) + np.std(all_vals) * 0.3
         x = np.linspace(x_lo, x_hi, 300)
@@ -443,21 +476,24 @@ def plot_ridgeline(
             color = cols[(n_groups - 1 - i) % len(cols)]
 
             # Gradient fill.
-            ax.fill_between(x, y_base, y_base + y_kde,
-                            alpha=0.55, color=color, zorder=n_groups - i)
-            ax.plot(x, y_base + y_kde,
-                    color=color, lw=1.2, zorder=n_groups - i + 1)
+            ax.fill_between(x, y_base, y_base + y_kde, alpha=0.55, color=color, zorder=n_groups - i)
+            ax.plot(x, y_base + y_kde, color=color, lw=1.2, zorder=n_groups - i + 1)
 
             # Baseline.
-            ax.axhline(y_base, color=color, lw=0.3, alpha=0.3,
-                       zorder=n_groups - i - 1)
+            ax.axhline(y_base, color=color, lw=0.3, alpha=0.3, zorder=n_groups - i - 1)
 
             # Group label on left.
             if panel_idx == 0:
-                ax.text(x_lo - (x_hi - x_lo) * 0.02,
-                        y_base + 0.15, g,
-                        ha="right", va="bottom", fontsize=7,
-                        fontweight="bold", color=color)
+                ax.text(
+                    x_lo - (x_hi - x_lo) * 0.02,
+                    y_base + 0.15,
+                    g,
+                    ha="right",
+                    va="bottom",
+                    fontsize=7,
+                    fontweight="bold",
+                    color=color,
+                )
 
         ax.set_xlim(x_lo, x_hi)
         ax.set_ylim(-0.1, n_groups * (1 - overlap) + 0.5)
@@ -479,14 +515,15 @@ def plot_ridgeline(
 # §6  HORSESHOE SHRINKAGE (HorseshoeRegression)
 # ======================================================================
 
+
 def plot_horseshoe_coefficients(
     trace,
     *,
-    var_names: Optional[List[str]] = None,
+    var_names: list[str] | None = None,
     hdi_prob: float = 0.94,
     title: str = "Horseshoe Regression — Feature Selection",
-    save: Optional[PathLike] = None,
-) -> Tuple[Figure, Tuple[Axes, Axes]]:
+    save: PathLike | None = None,
+) -> tuple[Figure, tuple[Axes, Axes]]:
     """Horseshoe coefficient plot: forest + shrinkage heatmap.
 
     Left panel: forest plot of β posteriors.
@@ -513,11 +550,14 @@ def plot_horseshoe_coefficients(
         var_names = [f"β_{i}" for i in range(d)]
 
     # Shrinkage factor: κ = 1/(1 + λ²)
-    kappa = 1.0 / (1.0 + lam ** 2)
+    kappa = 1.0 / (1.0 + lam**2)
     kappa_mean = kappa.mean(axis=0)
 
     fig, (ax_forest, ax_shrink) = plt.subplots(
-        1, 2, figsize=(8, 0.35 * d + 1.2), dpi=DPI,
+        1,
+        2,
+        figsize=(8, 0.35 * d + 1.2),
+        dpi=DPI,
         gridspec_kw={"width_ratios": [3, 1], "wspace": 0.05},
     )
 
@@ -534,9 +574,13 @@ def plot_horseshoe_coefficients(
             colors.append(_BLUE)
 
     plot_forest(
-        var_names, posteriors,
-        hdi_prob=hdi_prob, ref_val=0.0,
-        colors=colors, title="", xlabel="β",
+        var_names,
+        posteriors,
+        hdi_prob=hdi_prob,
+        ref_val=0.0,
+        colors=colors,
+        title="",
+        xlabel="β",
         ax=ax_forest,
     )
     ax_forest.set_title("Coefficient posteriors", fontsize=9)
@@ -544,8 +588,12 @@ def plot_horseshoe_coefficients(
     # Shrinkage heatmap.
     kappa_img = kappa_mean[:, None]
     ax_shrink.imshow(
-        kappa_img, cmap="Greys", aspect="auto",
-        vmin=0, vmax=1, interpolation="nearest",
+        kappa_img,
+        cmap="Greys",
+        aspect="auto",
+        vmin=0,
+        vmax=1,
+        interpolation="nearest",
     )
     ax_shrink.set_xticks([0])
     ax_shrink.set_xticklabels(["κ"], fontsize=7)
@@ -555,8 +603,15 @@ def plot_horseshoe_coefficients(
 
     # Annotate κ values.
     for i, k in enumerate(kappa_mean):
-        ax_shrink.text(0, i, f"{k:.2f}", ha="center", va="center",
-                       fontsize=6, color="white" if k > 0.5 else _DARK)
+        ax_shrink.text(
+            0,
+            i,
+            f"{k:.2f}",
+            ha="center",
+            va="center",
+            fontsize=6,
+            color="white" if k > 0.5 else _DARK,
+        )
 
     fig.suptitle(title, fontsize=10, fontweight="bold")
 
@@ -569,13 +624,14 @@ def plot_horseshoe_coefficients(
 # §7  BEST EFFECT SIZE (BayesianGroupComparison)
 # ======================================================================
 
+
 def plot_best_posterior(
     trace,
     *,
-    rope: Tuple[float, float] = (-0.1, 0.1),
+    rope: tuple[float, float] = (-0.1, 0.1),
     title: str = "BEST — Bayesian Group Comparison",
-    save: Optional[PathLike] = None,
-) -> Tuple[Figure, List[Axes]]:
+    save: PathLike | None = None,
+) -> tuple[Figure, list[Axes]]:
     """Three-panel BEST visualisation: Δμ, Δσ, effect size.
 
     Parameters
@@ -597,10 +653,13 @@ def plot_best_posterior(
     for ax, (var, label, color) in zip(axes, panels):
         samples = trace.posterior[var].values.ravel()
         plot_posterior(
-            samples, hdi_prob=0.94,
+            samples,
+            hdi_prob=0.94,
             rope=rope if var == "effect_size" else None,
-            ref_val=0.0, color=color,
-            xlabel=label, ax=ax,
+            ref_val=0.0,
+            color=color,
+            xlabel=label,
+            ax=ax,
         )
 
     fig.suptitle(title, fontsize=11, fontweight="bold", y=1.03)
@@ -615,13 +674,14 @@ def plot_best_posterior(
 # §8  SITE EFFECTS (HierarchicalLinearModel)
 # ======================================================================
 
+
 def plot_site_effects(
     trace,
     *,
-    site_names: Optional[List[str]] = None,
+    site_names: list[str] | None = None,
     title: str = "Hierarchical Model — Site Random Effects",
-    save: Optional[PathLike] = None,
-) -> Tuple[Figure, Axes]:
+    save: PathLike | None = None,
+) -> tuple[Figure, Axes]:
     """Caterpillar plot of random intercepts per site.
 
     Parameters
@@ -651,8 +711,13 @@ def plot_site_effects(
             colors.append(_BLUE if intensity > 0.3 else _CYAN)
 
     fig, ax = plot_forest(
-        site_names, posteriors, hdi_prob=0.94, ref_val=0.0,
-        colors=colors, title=title, xlabel="Random intercept",
+        site_names,
+        posteriors,
+        hdi_prob=0.94,
+        ref_val=0.0,
+        colors=colors,
+        title=title,
+        xlabel="Random intercept",
     )
 
     if save:
@@ -664,6 +729,7 @@ def plot_site_effects(
 # §9  GP NORMATIVE TRAJECTORY (GaussianProcessNormative)
 # ======================================================================
 
+
 def plot_gp_trajectory(
     ages_train: np.ndarray,
     y_train: np.ndarray,
@@ -671,16 +737,16 @@ def plot_gp_trajectory(
     y_pred_mean: np.ndarray,
     y_pred_std: np.ndarray,
     *,
-    patient_ages: Optional[np.ndarray] = None,
-    patient_values: Optional[np.ndarray] = None,
-    patient_labels: Optional[List[str]] = None,
-    ci_levels: Tuple[float, ...] = (0.5, 0.9, 0.99),
+    patient_ages: np.ndarray | None = None,
+    patient_values: np.ndarray | None = None,
+    patient_labels: list[str] | None = None,
+    ci_levels: tuple[float, ...] = (0.5, 0.9, 0.99),
     title: str = "GP Normative Trajectory",
     xlabel: str = "Age (years)",
     ylabel: str = "Descriptor",
-    ax: Optional[Axes] = None,
-    save: Optional[PathLike] = None,
-) -> Tuple[Figure, Axes]:
+    ax: Axes | None = None,
+    save: PathLike | None = None,
+) -> tuple[Figure, Axes]:
     """Gaussian Process age trajectory with uncertainty fans.
 
     Concentric bands show expanding uncertainty.  Individual
@@ -707,12 +773,19 @@ def plot_gp_trajectory(
     from scipy.stats import norm
 
     # Reference cohort.
-    ax.scatter(ages_train, y_train, s=8, alpha=0.25, color=_GREY,
-               rasterized=True, zorder=1, label="Reference cohort")
+    ax.scatter(
+        ages_train,
+        y_train,
+        s=8,
+        alpha=0.25,
+        color=_GREY,
+        rasterized=True,
+        zorder=1,
+        label="Reference cohort",
+    )
 
     # GP mean.
-    ax.plot(ages_pred, y_pred_mean, color=_BLUE, lw=2, zorder=3,
-            label="GP mean")
+    ax.plot(ages_pred, y_pred_mean, color=_BLUE, lw=2, zorder=3, label="GP mean")
 
     # Confidence fans (outer to inner for correct layering).
     alphas = np.linspace(0.08, 0.25, len(ci_levels))
@@ -720,27 +793,36 @@ def plot_gp_trajectory(
         z = norm.ppf(0.5 + ci / 2)
         lo = y_pred_mean - z * y_pred_std
         hi = y_pred_mean + z * y_pred_std
-        ax.fill_between(ages_pred, lo, hi, alpha=alpha, color=_BLUE,
-                        zorder=2, label=f"{ci*100:.0f}% CI" if ci == max(ci_levels) else "")
+        ax.fill_between(
+            ages_pred,
+            lo,
+            hi,
+            alpha=alpha,
+            color=_BLUE,
+            zorder=2,
+            label=f"{ci * 100:.0f}% CI" if ci == max(ci_levels) else "",
+        )
 
     # Patients.
     if patient_ages is not None and patient_values is not None:
         pat_colors = [_RED, _ORANGE, _PURPLE, _GREEN, _TEAL]
         for i, (pa, pv) in enumerate(zip(patient_ages, patient_values)):
             c = pat_colors[i % len(pat_colors)]
-            label = patient_labels[i] if patient_labels else f"Patient {i+1}"
+            label = patient_labels[i] if patient_labels else f"Patient {i + 1}"
 
             # Compute z-score at this age.
             idx = np.argmin(np.abs(ages_pred - pa))
             z_score = (pv - y_pred_mean[idx]) / (y_pred_std[idx] + 1e-10)
 
-            ax.scatter(pa, pv, s=60, color=c, edgecolors="white",
-                       linewidths=0.8, zorder=5)
+            ax.scatter(pa, pv, s=60, color=c, edgecolors="white", linewidths=0.8, zorder=5)
             ax.annotate(
                 f"{label}\nz={z_score:.1f}",
-                xy=(pa, pv), xytext=(8, 8),
-                textcoords="offset points", fontsize=6,
-                color=c, fontweight="bold",
+                xy=(pa, pv),
+                xytext=(8, 8),
+                textcoords="offset points",
+                fontsize=6,
+                color=c,
+                fontweight="bold",
                 arrowprops=dict(arrowstyle="-", color=c, lw=0.5),
             )
 
@@ -759,17 +841,18 @@ def plot_gp_trajectory(
 # §10  CONNECTOME DIFFERENCE (BayesianConnectome)
 # ======================================================================
 
+
 def plot_connectome_posterior(
     edge_diff_matrix: np.ndarray,
     *,
-    labels: Optional[List[str]] = None,
-    network_boundaries: Optional[List[int]] = None,
+    labels: list[str] | None = None,
+    network_boundaries: list[int] | None = None,
     cmap: str = "RdBu_r",
-    vmax: Optional[float] = None,
+    vmax: float | None = None,
     title: str = "Bayesian Connectome — Edge Differences",
-    ax: Optional[Axes] = None,
-    save: Optional[PathLike] = None,
-) -> Tuple[Figure, Axes]:
+    ax: Axes | None = None,
+    save: PathLike | None = None,
+) -> tuple[Figure, Axes]:
     """Posterior mean edge-difference matrix.
 
     Parameters
@@ -786,8 +869,9 @@ def plot_connectome_posterior(
     if vmax is None:
         vmax = np.abs(edge_diff_matrix).max()
 
-    im = ax.imshow(edge_diff_matrix, cmap=cmap, aspect="auto",
-                   vmin=-vmax, vmax=vmax, interpolation="nearest")
+    im = ax.imshow(
+        edge_diff_matrix, cmap=cmap, aspect="auto", vmin=-vmax, vmax=vmax, interpolation="nearest"
+    )
     plt.colorbar(im, ax=ax, shrink=0.8, label="Posterior Δ (A − B)")
 
     if network_boundaries:
@@ -812,16 +896,16 @@ def plot_connectome_posterior(
 # ======================================================================
 
 __all__ = [
-    # General Bayesian
-    "plot_posterior",
+    "plot_best_posterior",
+    "plot_connectome_posterior",
     "plot_forest",
-    "plot_prior_posterior",
-    "plot_rope_decision",
-    "plot_ridgeline",
+    "plot_gp_trajectory",
     # Model-specific
     "plot_horseshoe_coefficients",
-    "plot_best_posterior",
+    # General Bayesian
+    "plot_posterior",
+    "plot_prior_posterior",
+    "plot_ridgeline",
+    "plot_rope_decision",
     "plot_site_effects",
-    "plot_gp_trajectory",
-    "plot_connectome_posterior",
 ]

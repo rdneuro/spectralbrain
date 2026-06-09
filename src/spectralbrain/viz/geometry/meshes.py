@@ -31,11 +31,14 @@ from __future__ import annotations
 import os
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple, Union
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from spectralbrain.runtime import PathLike, get_logger
+
+if TYPE_CHECKING:
+    import vedo
 
 logger = get_logger(__name__)
 
@@ -43,12 +46,12 @@ logger = get_logger(__name__)
 #  Constants — shared with points.py
 # ---------------------------------------------------------------------------
 
-_DEFAULT_SIZE: Tuple[int, int] = (1600, 1200)
+_DEFAULT_SIZE: tuple[int, int] = (1600, 1200)
 _DEFAULT_SCALE: int = 2
 _DEFAULT_BG: str = "white"
 
 # Curvature method codes used by VTK / vedo
-CURVATURE_METHODS: Dict[str, int] = {
+CURVATURE_METHODS: dict[str, int] = {
     "gaussian": 0,
     "mean": 1,
     "maximum": 2,
@@ -56,21 +59,22 @@ CURVATURE_METHODS: Dict[str, int] = {
 }
 
 # Standard multi-view camera presets (azimuth, elevation)
-CAMERA_PRESETS: Dict[str, Dict[str, Any]] = {
-    "anterior":      {"azimuth": 0,   "elevation": 0},
-    "posterior":      {"azimuth": 180, "elevation": 0},
-    "left_lateral":   {"azimuth": -90, "elevation": 0},
-    "right_lateral":  {"azimuth": 90,  "elevation": 0},
-    "superior":       {"azimuth": 0,   "elevation": 90},
-    "inferior":       {"azimuth": 0,   "elevation": -90},
-    "left_medial":    {"azimuth": 90,  "elevation": 0},
-    "right_medial":   {"azimuth": -90, "elevation": 0},
+CAMERA_PRESETS: dict[str, dict[str, Any]] = {
+    "anterior": {"azimuth": 0, "elevation": 0},
+    "posterior": {"azimuth": 180, "elevation": 0},
+    "left_lateral": {"azimuth": -90, "elevation": 0},
+    "right_lateral": {"azimuth": 90, "elevation": 0},
+    "superior": {"azimuth": 0, "elevation": 90},
+    "inferior": {"azimuth": 0, "elevation": -90},
+    "left_medial": {"azimuth": 90, "elevation": 0},
+    "right_medial": {"azimuth": -90, "elevation": 0},
 }
 
 
 # ======================================================================
 # §0  Lazy imports & helpers
 # ======================================================================
+
 
 def _ensure_offscreen() -> None:
     """Set vedo to offscreen rendering mode."""
@@ -82,6 +86,7 @@ def _get_vedo():
     _ensure_offscreen()
     try:
         import vedo
+
         try:
             vedo.start_xvfb()
         except Exception:
@@ -89,12 +94,11 @@ def _get_vedo():
         return vedo
     except ImportError:
         raise ImportError(
-            "vedo is required for mesh visualization.  "
-            "Install with: pip install vedo"
+            "vedo is required for mesh visualization.  Install with: pip install vedo"
         )
 
 
-def _save_screenshot(plotter, save: Optional[PathLike], *, scale: int = _DEFAULT_SCALE) -> Path:
+def _save_screenshot(plotter, save: PathLike | None, *, scale: int = _DEFAULT_SCALE) -> Path:
     """Capture a vedo Plotter to PNG and close it."""
     if save is None:
         fd, save = tempfile.mkstemp(suffix=".png")
@@ -111,7 +115,7 @@ def _build_vedo_mesh(
     vertices: np.ndarray,
     faces: np.ndarray,
     vedo_module,
-) -> "vedo.Mesh":
+) -> vedo.Mesh:
     """Construct a vedo Mesh from numpy arrays.
 
     Parameters
@@ -132,16 +136,22 @@ def _build_vedo_mesh(
     return mesh
 
 
-def _resolve_cmap(scalar_name: Optional[str], cmap: Optional[str]) -> str:
+def _resolve_cmap(scalar_name: str | None, cmap: str | None) -> str:
     """Pick colourmap: explicit > name-based > viridis."""
     if cmap is not None:
         return cmap
     LOOKUP = {
-        "hks": "inferno", "wks": "cividis", "bks": "magma",
-        "gps": "viridis", "shapedna": "plasma",
-        "curvature": "RdBu_r", "mean": "RdBu_r",
-        "gaussian": "RdBu_r", "thickness": "YlOrRd",
-        "z_score": "RdBu_r", "difference": "RdBu_r",
+        "hks": "inferno",
+        "wks": "cividis",
+        "bks": "magma",
+        "gps": "viridis",
+        "shapedna": "plasma",
+        "curvature": "RdBu_r",
+        "mean": "RdBu_r",
+        "gaussian": "RdBu_r",
+        "thickness": "YlOrRd",
+        "z_score": "RdBu_r",
+        "difference": "RdBu_r",
     }
     if scalar_name is not None:
         key = scalar_name.lower().replace(" ", "_").split("_")[0]
@@ -153,14 +163,15 @@ def _resolve_cmap(scalar_name: Optional[str], cmap: Optional[str]) -> str:
 # §1  Surface render — smooth-shaded mesh with scalar overlay
 # ======================================================================
 
+
 def plot_mesh(
     vertices: np.ndarray,
     faces: np.ndarray,
-    scalars: Optional[np.ndarray] = None,
+    scalars: np.ndarray | None = None,
     scalar_name: str = "HKS",
-    cmap: Optional[str] = None,
-    vmin: Optional[float] = None,
-    vmax: Optional[float] = None,
+    cmap: str | None = None,
+    vmin: float | None = None,
+    vmax: float | None = None,
     color: str = "gold",
     alpha: float = 1.0,
     show_edges: bool = False,
@@ -168,13 +179,13 @@ def plot_mesh(
     edge_width: float = 0.3,
     show_scalarbar: bool = True,
     lighting: str = "default",
-    camera: Optional[Dict[str, Any]] = None,
-    title: Optional[str] = None,
+    camera: dict[str, Any] | None = None,
+    title: str | None = None,
     bg: str = _DEFAULT_BG,
-    size: Tuple[int, int] = _DEFAULT_SIZE,
+    size: tuple[int, int] = _DEFAULT_SIZE,
     scale: int = _DEFAULT_SCALE,
-    save: Optional[PathLike] = None,
-) -> Tuple[Path, Dict[str, Any]]:
+    save: PathLike | None = None,
+) -> tuple[Path, dict[str, Any]]:
     """Render a triangular mesh with optional scalar overlay.
 
     This is the primary mesh visualisation: a smooth Phong-shaded
@@ -225,7 +236,7 @@ def plot_mesh(
     mesh = _build_vedo_mesh(vertices, faces, vedo)
     cmap_name = _resolve_cmap(scalar_name, cmap)
 
-    meta: Dict[str, Any] = {
+    meta: dict[str, Any] = {
         "n_vertices": vertices.shape[0],
         "n_faces": faces.shape[0],
         "cmap": cmap_name,
@@ -258,7 +269,7 @@ def plot_mesh(
 
     plt = vedo.Plotter(offscreen=True, size=size, bg=bg, title=title or "")
 
-    show_kw: Dict[str, Any] = {"viewup": "z", "zoom": 1.2}
+    show_kw: dict[str, Any] = {"viewup": "z", "zoom": 1.2}
     if camera is not None:
         show_kw["camera"] = camera
     plt.show(mesh, **show_kw)
@@ -271,6 +282,7 @@ def plot_mesh(
 # §2  Wireframe render
 # ======================================================================
 
+
 def plot_wireframe(
     vertices: np.ndarray,
     faces: np.ndarray,
@@ -278,13 +290,13 @@ def plot_wireframe(
     color: str = "steelblue",
     linewidth: float = 0.5,
     alpha: float = 1.0,
-    camera: Optional[Dict[str, Any]] = None,
-    title: Optional[str] = None,
+    camera: dict[str, Any] | None = None,
+    title: str | None = None,
     bg: str = _DEFAULT_BG,
-    size: Tuple[int, int] = _DEFAULT_SIZE,
+    size: tuple[int, int] = _DEFAULT_SIZE,
     scale: int = _DEFAULT_SCALE,
-    save: Optional[PathLike] = None,
-) -> Tuple[Path, Dict[str, Any]]:
+    save: PathLike | None = None,
+) -> tuple[Path, dict[str, Any]]:
     """Wireframe render of a mesh for topology inspection.
 
     Useful for QC of reconstructed surfaces and for methods figures
@@ -313,7 +325,7 @@ def plot_wireframe(
     mesh.wireframe(True).color(color).linewidth(linewidth).alpha(alpha)
 
     plt = vedo.Plotter(offscreen=True, size=size, bg=bg, title=title or "")
-    show_kw: Dict[str, Any] = {"viewup": "z", "zoom": 1.2}
+    show_kw: dict[str, Any] = {"viewup": "z", "zoom": 1.2}
     if camera is not None:
         show_kw["camera"] = camera
     plt.show(mesh, **show_kw)
@@ -327,21 +339,22 @@ def plot_wireframe(
 # §3  Curvature map
 # ======================================================================
 
+
 def plot_curvature(
     vertices: np.ndarray,
     faces: np.ndarray,
     method: str = "mean",
     *,
     cmap: str = "RdBu_r",
-    vmin: Optional[float] = None,
-    vmax: Optional[float] = None,
+    vmin: float | None = None,
+    vmax: float | None = None,
     symmetric: bool = True,
-    title: Optional[str] = None,
+    title: str | None = None,
     bg: str = _DEFAULT_BG,
-    size: Tuple[int, int] = _DEFAULT_SIZE,
+    size: tuple[int, int] = _DEFAULT_SIZE,
     scale: int = _DEFAULT_SCALE,
-    save: Optional[PathLike] = None,
-) -> Tuple[Path, Dict[str, Any]]:
+    save: PathLike | None = None,
+) -> tuple[Path, dict[str, Any]]:
     """Compute and render curvature on a mesh surface.
 
     Computes curvature using VTK's built-in estimator and immediately
@@ -375,8 +388,7 @@ def plot_curvature(
     method_code = CURVATURE_METHODS.get(method.lower())
     if method_code is None:
         raise ValueError(
-            f"Unknown curvature method '{method}'.  "
-            f"Choose from: {list(CURVATURE_METHODS.keys())}"
+            f"Unknown curvature method '{method}'.  Choose from: {list(CURVATURE_METHODS.keys())}"
         )
 
     mesh.compute_curvature(method=method_code)
@@ -421,23 +433,24 @@ def plot_curvature(
 # §4  Multi-view panel — same mesh from multiple camera angles
 # ======================================================================
 
+
 def plot_multi_view(
     vertices: np.ndarray,
     faces: np.ndarray,
-    scalars: Optional[np.ndarray] = None,
+    scalars: np.ndarray | None = None,
     scalar_name: str = "HKS",
-    cmap: Optional[str] = None,
-    vmin: Optional[float] = None,
-    vmax: Optional[float] = None,
-    views: Optional[List[str]] = None,
+    cmap: str | None = None,
+    vmin: float | None = None,
+    vmax: float | None = None,
+    views: list[str] | None = None,
     *,
     color: str = "gold",
     lighting: str = "default",
     bg: str = _DEFAULT_BG,
-    size: Optional[Tuple[int, int]] = None,
+    size: tuple[int, int] | None = None,
     scale: int = _DEFAULT_SCALE,
-    save: Optional[PathLike] = None,
-) -> Tuple[Path, Dict[str, Any]]:
+    save: PathLike | None = None,
+) -> tuple[Path, dict[str, Any]]:
     """Multi-view panel showing the same mesh from different angles.
 
     Renders the same mesh (optionally with scalar overlay) in a 1×N
@@ -526,15 +539,16 @@ def plot_multi_view(
 # §5  Mesh comparison — side-by-side panels
 # ======================================================================
 
+
 def plot_mesh_comparison(
-    meshes: List[Dict[str, Any]],
+    meshes: list[dict[str, Any]],
     *,
-    shape: Optional[Tuple[int, int]] = None,
+    shape: tuple[int, int] | None = None,
     bg: str = _DEFAULT_BG,
-    size: Optional[Tuple[int, int]] = None,
+    size: tuple[int, int] | None = None,
     scale: int = _DEFAULT_SCALE,
-    save: Optional[PathLike] = None,
-) -> Tuple[Path, Dict[str, Any]]:
+    save: PathLike | None = None,
+) -> tuple[Path, dict[str, Any]]:
     """Side-by-side comparison of multiple meshes.
 
     Each element in *meshes* is a dict with keys:
@@ -604,6 +618,7 @@ def plot_mesh_comparison(
 # §6  Scalar difference map
 # ======================================================================
 
+
 def plot_scalar_difference(
     vertices: np.ndarray,
     faces: np.ndarray,
@@ -615,12 +630,12 @@ def plot_scalar_difference(
     diff_cmap: str = "RdBu_r",
     symmetric: bool = True,
     show_individual: bool = True,
-    individual_cmap: Optional[str] = None,
+    individual_cmap: str | None = None,
     bg: str = _DEFAULT_BG,
-    size: Optional[Tuple[int, int]] = None,
+    size: tuple[int, int] | None = None,
     scale: int = _DEFAULT_SCALE,
-    save: Optional[PathLike] = None,
-) -> Tuple[Path, Dict[str, Any]]:
+    save: PathLike | None = None,
+) -> tuple[Path, dict[str, Any]]:
     """Vertex-wise scalar difference map between two conditions.
 
     Computes ``scalars_a - scalars_b`` and displays the difference
@@ -728,16 +743,17 @@ def plot_scalar_difference(
 # §7  PyVista fallback — basic mesh render
 # ======================================================================
 
+
 def plot_mesh_pyvista(
     vertices: np.ndarray,
     faces: np.ndarray,
-    scalars: Optional[np.ndarray] = None,
+    scalars: np.ndarray | None = None,
     cmap: str = "viridis",
     *,
     show_edges: bool = False,
-    window_size: Tuple[int, int] = (1600, 1200),
-    save: Optional[PathLike] = None,
-) -> Optional[Path]:
+    window_size: tuple[int, int] = (1600, 1200),
+    save: PathLike | None = None,
+) -> Path | None:
     """Minimal PyVista mesh render (fallback when vedo unavailable).
 
     Parameters
@@ -766,9 +782,7 @@ def plot_mesh_pyvista(
     vertices = np.asarray(vertices, dtype=np.float64)
     faces = np.asarray(faces, dtype=int)
     # PyVista expects faces as [3, i, j, k, 3, i, j, k, ...]
-    pv_faces = np.column_stack([
-        np.full(len(faces), 3, dtype=int), faces
-    ]).ravel()
+    pv_faces = np.column_stack([np.full(len(faces), 3, dtype=int), faces]).ravel()
 
     mesh = pv.PolyData(vertices, pv_faces)
     if scalars is not None:
@@ -799,16 +813,16 @@ def plot_mesh_pyvista(
 # ======================================================================
 
 __all__ = [
+    "CAMERA_PRESETS",
     # Constants
     "CURVATURE_METHODS",
-    "CAMERA_PRESETS",
+    "plot_curvature",
     # Core renders
     "plot_mesh",
-    "plot_wireframe",
-    "plot_curvature",
-    "plot_multi_view",
     "plot_mesh_comparison",
-    "plot_scalar_difference",
     # PyVista fallback
     "plot_mesh_pyvista",
+    "plot_multi_view",
+    "plot_scalar_difference",
+    "plot_wireframe",
 ]

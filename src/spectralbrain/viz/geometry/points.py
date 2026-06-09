@@ -33,7 +33,7 @@ from __future__ import annotations
 import os
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple, Union
+from typing import Any, Literal
 
 import numpy as np
 
@@ -45,7 +45,7 @@ logger = get_logger(__name__)
 #  Constants
 # ---------------------------------------------------------------------------
 
-_DEFAULT_SIZE: Tuple[int, int] = (1600, 1200)
+_DEFAULT_SIZE: tuple[int, int] = (1600, 1200)
 """Default render window size in pixels (width, height)."""
 
 _DEFAULT_SCALE: int = 2
@@ -55,7 +55,7 @@ At size=(1600,1200) and scale=2 → 3200×2400 px ≈ 600 DPI at ~5.3 in."""
 _DEFAULT_BG: str = "white"
 
 # Descriptor → colourmap mapping (shared with graphics.py / brainplots.py)
-_SCALAR_CMAPS: Dict[str, str] = {
+_SCALAR_CMAPS: dict[str, str] = {
     "hks": "inferno",
     "wks": "cividis",
     "bks": "magma",
@@ -71,6 +71,7 @@ _SCALAR_CMAPS: Dict[str, str] = {
 # §0  Lazy imports & environment setup
 # ======================================================================
 
+
 def _ensure_offscreen() -> None:
     """Set VTK offscreen environment variables if not already set."""
     os.environ.setdefault("VTK_USE_OFFSCREEN", "1")
@@ -81,6 +82,7 @@ def _get_vedo():
     _ensure_offscreen()
     try:
         import vedo
+
         # Start Xvfb on headless Linux if needed
         try:
             vedo.start_xvfb()
@@ -89,8 +91,7 @@ def _get_vedo():
         return vedo
     except ImportError:
         raise ImportError(
-            "vedo is required for point cloud visualization.  "
-            "Install with: pip install vedo"
+            "vedo is required for point cloud visualization.  Install with: pip install vedo"
         )
 
 
@@ -98,12 +99,13 @@ def _get_open3d():
     """Lazily import Open3D as optional fallback."""
     try:
         import open3d as o3d
+
         return o3d
     except ImportError:
         return None
 
 
-def _resolve_cmap(scalar_name: Optional[str], cmap: Optional[str]) -> str:
+def _resolve_cmap(scalar_name: str | None, cmap: str | None) -> str:
     """Pick a colormap: explicit > name-based lookup > inferno fallback."""
     if cmap is not None:
         return cmap
@@ -115,7 +117,7 @@ def _resolve_cmap(scalar_name: Optional[str], cmap: Optional[str]) -> str:
 
 def _save_vedo_screenshot(
     plotter,
-    save: Optional[PathLike],
+    save: PathLike | None,
     *,
     scale: int = _DEFAULT_SCALE,
 ) -> Path:
@@ -150,22 +152,23 @@ def _save_vedo_screenshot(
 # §1  Scalar scatter — 3D point cloud with descriptor overlay
 # ======================================================================
 
+
 def plot_point_cloud(
     coords: np.ndarray,
-    scalars: Optional[np.ndarray] = None,
+    scalars: np.ndarray | None = None,
     scalar_name: str = "HKS",
-    cmap: Optional[str] = None,
-    vmin: Optional[float] = None,
-    vmax: Optional[float] = None,
+    cmap: str | None = None,
+    vmin: float | None = None,
+    vmax: float | None = None,
     point_size: int = 6,
-    title: Optional[str] = None,
-    camera: Optional[Dict[str, Any]] = None,
+    title: str | None = None,
+    camera: dict[str, Any] | None = None,
     show_scalarbar: bool = True,
     bg: str = _DEFAULT_BG,
-    size: Tuple[int, int] = _DEFAULT_SIZE,
+    size: tuple[int, int] = _DEFAULT_SIZE,
     scale: int = _DEFAULT_SCALE,
-    save: Optional[PathLike] = None,
-) -> Tuple[Path, Dict[str, Any]]:
+    save: PathLike | None = None,
+) -> tuple[Path, dict[str, Any]]:
     """Render a 3D point cloud coloured by a scalar descriptor.
 
     This is the workhorse visualisation for atlas-free analyses:
@@ -211,14 +214,12 @@ def plot_point_cloud(
     """
     vedo = _get_vedo()
     coords = np.asarray(coords, dtype=np.float64)
-    assert coords.ndim == 2 and coords.shape[1] == 3, (
-        f"coords must be (N, 3), got {coords.shape}"
-    )
+    assert coords.ndim == 2 and coords.shape[1] == 3, f"coords must be (N, 3), got {coords.shape}"
 
     pts = vedo.Points(coords, r=point_size, c="gray", alpha=1.0)
 
     cmap_name = _resolve_cmap(scalar_name, cmap)
-    meta: Dict[str, Any] = {
+    meta: dict[str, Any] = {
         "n_points": len(coords),
         "cmap": cmap_name,
         "scalar_range": None,
@@ -249,7 +250,7 @@ def plot_point_cloud(
         title=title or "",
     )
 
-    show_kwargs: Dict[str, Any] = {"viewup": "z", "zoom": 1.2}
+    show_kwargs: dict[str, Any] = {"viewup": "z", "zoom": 1.2}
     if camera is not None:
         show_kwargs["camera"] = camera
 
@@ -262,19 +263,20 @@ def plot_point_cloud(
 # §2  MLS surface reconstruction pipeline
 # ======================================================================
 
+
 def plot_mls_reconstruction(
     coords: np.ndarray,
-    scalars: Optional[np.ndarray] = None,
+    scalars: np.ndarray | None = None,
     scalar_name: str = "HKS",
-    cmap: Optional[str] = None,
+    cmap: str | None = None,
     mls_factor: float = 0.2,
-    recon_dims: Tuple[int, int, int] = (80, 80, 80),
+    recon_dims: tuple[int, int, int] = (80, 80, 80),
     point_size: int = 4,
     bg: str = _DEFAULT_BG,
-    size: Tuple[int, int] = (2400, 800),
+    size: tuple[int, int] = (2400, 800),
     scale: int = _DEFAULT_SCALE,
-    save: Optional[PathLike] = None,
-) -> Tuple[Path, Dict[str, Any]]:
+    save: PathLike | None = None,
+) -> tuple[Path, dict[str, Any]]:
     """Three-panel pipeline: raw → MLS-smoothed → reconstructed surface.
 
     Demonstrates the atlas-free mesh generation pipeline used when no
@@ -328,6 +330,7 @@ def plot_mls_reconstruction(
     if scalars is not None:
         # Transfer scalars to reconstructed mesh via nearest-neighbour
         from scipy.spatial import cKDTree
+
         tree = cKDTree(coords)
         recon_verts = recon.vertices
         _, idx = tree.query(recon_verts, k=1)
@@ -365,6 +368,7 @@ def plot_mls_reconstruction(
 # §3  Cluster overlay with PCA ellipsoids
 # ======================================================================
 
+
 def plot_clusters(
     coords: np.ndarray,
     labels: np.ndarray,
@@ -375,12 +379,12 @@ def plot_clusters(
     centroid_size: int = 14,
     cmap: str = "Set1",
     point_size: int = 5,
-    title: Optional[str] = None,
+    title: str | None = None,
     bg: str = _DEFAULT_BG,
-    size: Tuple[int, int] = _DEFAULT_SIZE,
+    size: tuple[int, int] = _DEFAULT_SIZE,
     scale: int = _DEFAULT_SCALE,
-    save: Optional[PathLike] = None,
-) -> Tuple[Path, Dict[str, Any]]:
+    save: PathLike | None = None,
+) -> tuple[Path, dict[str, Any]]:
     """Render clustered point cloud with per-cluster PCA ellipsoids.
 
     Useful for visualising K-means, spectral clustering, or HDBSCAN
@@ -477,15 +481,16 @@ def plot_clusters(
 # §4  Multi-panel comparison
 # ======================================================================
 
+
 def plot_point_cloud_panel(
-    panels: List[Dict[str, Any]],
+    panels: list[dict[str, Any]],
     *,
-    shape: Optional[Tuple[int, int]] = None,
+    shape: tuple[int, int] | None = None,
     bg: str = _DEFAULT_BG,
-    size: Optional[Tuple[int, int]] = None,
+    size: tuple[int, int] | None = None,
     scale: int = _DEFAULT_SCALE,
-    save: Optional[PathLike] = None,
-) -> Tuple[Path, Dict[str, Any]]:
+    save: PathLike | None = None,
+) -> tuple[Path, dict[str, Any]]:
     """Multi-panel point cloud comparison.
 
     Each panel is a dict with keys:
@@ -560,6 +565,7 @@ def plot_point_cloud_panel(
 # §5  Warp / morphing between two point clouds
 # ======================================================================
 
+
 def plot_warp(
     source: np.ndarray,
     target: np.ndarray,
@@ -571,12 +577,12 @@ def plot_warp(
     warped_color: str = "gold",
     point_size: int = 5,
     arrow_scale: float = 0.3,
-    title: Optional[str] = None,
+    title: str | None = None,
     bg: str = _DEFAULT_BG,
-    size: Tuple[int, int] = (2400, 800),
+    size: tuple[int, int] = (2400, 800),
     scale: int = _DEFAULT_SCALE,
-    save: Optional[PathLike] = None,
-) -> Tuple[Path, Dict[str, Any]]:
+    save: PathLike | None = None,
+) -> tuple[Path, dict[str, Any]]:
     """Visualise thin-plate spline warp between two point clouds.
 
     Three panels: source cloud, target cloud, and warped result
@@ -632,8 +638,11 @@ def plot_warp(
     if show_displacement:
         # Draw arrows from source to warped positions
         arrows = vedo.Arrows(
-            source, warped_coords,
-            c="black", alpha=0.4, s=arrow_scale,
+            source,
+            warped_coords,
+            c="black",
+            alpha=0.4,
+            s=arrow_scale,
         )
         actors_warped.append(arrows)
 
@@ -662,11 +671,12 @@ def plot_warp(
 # §6  Voronoi diagram
 # ======================================================================
 
+
 def plot_voronoi(
     coords: np.ndarray,
-    scalars: Optional[np.ndarray] = None,
+    scalars: np.ndarray | None = None,
     scalar_name: str = "cluster",
-    cmap: Optional[str] = None,
+    cmap: str | None = None,
     *,
     projection: Literal["xy", "xz", "yz"] = "xy",
     padding: float = 0.1,
@@ -674,10 +684,10 @@ def plot_voronoi(
     wireframe_width: int = 1,
     point_size: int = 8,
     bg: str = _DEFAULT_BG,
-    size: Tuple[int, int] = _DEFAULT_SIZE,
+    size: tuple[int, int] = _DEFAULT_SIZE,
     scale: int = _DEFAULT_SCALE,
-    save: Optional[PathLike] = None,
-) -> Tuple[Path, Dict[str, Any]]:
+    save: PathLike | None = None,
+) -> tuple[Path, dict[str, Any]]:
     """Voronoi tessellation of a point cloud projected onto a 2D plane.
 
     Particularly useful for spatial domain analysis of thalamic nuclei
@@ -718,11 +728,13 @@ def plot_voronoi(
     if coords.shape[1] == 3:
         proj_map = {"xy": [0, 1], "xz": [0, 2], "yz": [1, 2]}
         axes = proj_map[projection]
-        coords_2d = np.column_stack([
-            coords[:, axes[0]],
-            coords[:, axes[1]],
-            np.zeros(len(coords)),
-        ])
+        coords_2d = np.column_stack(
+            [
+                coords[:, axes[0]],
+                coords[:, axes[1]],
+                np.zeros(len(coords)),
+            ]
+        )
     elif coords.shape[1] == 2:
         coords_2d = np.column_stack([coords, np.zeros(len(coords))])
     else:
@@ -758,15 +770,16 @@ def plot_voronoi(
 # §7  Open3D fallback — basic point cloud render
 # ======================================================================
 
+
 def plot_point_cloud_o3d(
     coords: np.ndarray,
-    scalars: Optional[np.ndarray] = None,
+    scalars: np.ndarray | None = None,
     cmap: str = "inferno",
     point_size: float = 2.0,
     width: int = 1600,
     height: int = 1200,
-    save: Optional[PathLike] = None,
-) -> Optional[Path]:
+    save: PathLike | None = None,
+) -> Path | None:
     """Minimal Open3D point cloud render (fallback when vedo unavailable).
 
     Parameters
@@ -833,17 +846,17 @@ def plot_point_cloud_o3d(
 # ======================================================================
 
 __all__ = [
+    "_DEFAULT_SCALE",
     # Constants
     "_DEFAULT_SIZE",
-    "_DEFAULT_SCALE",
     "_SCALAR_CMAPS",
+    "plot_clusters",
+    "plot_mls_reconstruction",
     # Core renders
     "plot_point_cloud",
-    "plot_mls_reconstruction",
-    "plot_clusters",
-    "plot_point_cloud_panel",
-    "plot_warp",
-    "plot_voronoi",
     # Open3D fallback
     "plot_point_cloud_o3d",
+    "plot_point_cloud_panel",
+    "plot_voronoi",
+    "plot_warp",
 ]

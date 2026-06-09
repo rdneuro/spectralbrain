@@ -12,277 +12,215 @@
 
 ---
 
-**SpectralBrain** is a Python library for computing, analyzing, and visualizing
-spectral shape descriptors of brain structures — cortical surfaces, subcortical
-meshes, hippocampal subfields, white-matter tracts, and point clouds derived
-from volumetric segmentations.
+**SpectralBrain** computes, analyzes, and visualizes spectral shape descriptors
+of brain structures — cortical surfaces, subcortical meshes, hippocampal
+subfields, white-matter tracts, and point clouds from volumetric segmentations.
+It connects spectral geometry (the Laplace–Beltrami operator) to clinical
+neuroimaging, with one pipeline from FreeSurfer / HippUnfold output through
+statistically rigorous analysis to publication-ready figures.
 
-It bridges spectral geometry (Laplace–Beltrami eigenpairs) with clinical
-neuroimaging, providing a unified pipeline from FreeSurfer/HippUnfold output to
-publication-ready statistical analysis and visualization.
+## Statement of need
 
-## Key Capabilities
+Volumetric and thickness measures collapse a structure's shape to a few scalars
+and are sensitive to registration and voxel size. **Intrinsic spectral
+descriptors** derived from the Laplace–Beltrami operator (LBO) — ShapeDNA, the
+Heat/Wave Kernel Signatures, and relatives — characterize shape *independently
+of pose and parameterization*, capturing geometry that volume alone misses. They
+are well established in geometry processing but scattered across
+research code, rarely packaged with the I/O, multi-site harmonization,
+correct multiple-comparison statistics, and rendering that a neuroimaging study
+needs end to end. SpectralBrain fills that gap as a single, tested library, with
+a primary focus on the hippocampus in mesial temporal lobe epilepsy, while
+remaining general to any brain surface or point cloud.
 
-**Spectral Descriptors** — 12+ descriptors computed from the Laplace–Beltrami
-operator eigenpairs: ShapeDNA, Heat Kernel Signature (HKS), Scale-Invariant HKS,
-Wave Kernel Signature (WKS), Global Point Signature (GPS), Bates–Kornfeld
-Signature (BKS), Inverse BKS, Spectral Graph Wavelets, and more.
+## Key capabilities
 
-**Input Agnostic** — Load FreeSurfer surfaces (`.pial`, `.white`, `.inflated`),
-GIfTI (`.surf.gii`, `.func.gii`), NIfTI volumetric labels, HippUnfold outputs,
-generic meshes (`.ply`, `.obj`, `.stl`), or point clouds. Automatic format
-detection.
-
-**Multi-site Harmonization** — Built-in ComBat and ComBat-GAM for removing batch
-effects across multiple datasets before normative modeling.
-
-**Bayesian Statistics** — Six PyMC-based models: Horseshoe Regression, Bayesian
-Group Comparison (BEST), Hierarchical Linear Model, Gaussian Process Normative,
-Bayesian Spatial Model (GMRF), and Bayesian Connectome Comparison. Multiple
-sampler backends (NUTS, nutpie, NumPyro).
-
-**Normative Modeling** — Build age- and sex-conditioned normative distributions
-from healthy reference cohorts; score individual patients as z-score deviation
-maps.
-
-**Clustering** — 16 clustering methods for spatial, temporal, and joint
-spatio-temporal analysis of descriptor fields, including HDBSCAN, Leiden,
-graph-regularized NMF, persistence-based, Mapper (TDA), tensor decomposition,
-and scale-space blob tracking.
-
-**Visualization** — 7 visualization modules: 2D statistical graphics, cortical
-and subcortical brain plots (via `yabplot`), hippocampal surface rendering
-(via `hippunfold-plot`), Bayesian posterior plots, 3D mesh and point cloud
-rendering (via `vedo`/`open3d`/`pyvista`), and cluster visualization.
-
-**GPU Acceleration** — Optional CUDA backends (PyTorch, CuPy) for
-eigenpair computation, descriptor calculation, and batch processing. CPU
-parallelization via `joblib` for multi-subject pipelines.
+- **Spectral descriptors** — ShapeDNA, Heat Kernel Signature (HKS),
+  Scale-Invariant HKS, Wave Kernel Signature (WKS), Global Point Signature
+  (GPS), Bates–Kornfeld Signature (BKS) and its inverse, functional maps, and
+  more — all from the LBO eigenpairs of a mesh *or* point cloud.
+- **Input-agnostic I/O** — FreeSurfer surfaces and morphometry, GIfTI
+  (`.surf.gii` / `.func.gii` / `.shape.gii`), NIfTI / MGZ volumes and labels,
+  HippUnfold v1 & v2 outputs, `.ply / .obj / .stl / .vtk`, HDF5, and point
+  clouds, with automatic format detection.
+- **Cohort loading** — BIDS / derivatives, FreeSurfer `SUBJECTS_DIR`, or an
+  explicit list, loaded in parallel and stacked for group analysis; FreeSurfer
+  measures can be resampled onto a common template; TractSeg bundle masks import
+  directly as point clouds or isosurface meshes.
+- **Statistics done right** — vertex-wise tests with genuine family-wise error
+  control (max-statistic permutation), FDR, partial correlations with correct
+  degrees of freedom, TFCE, the analytic DeLong AUC test, BCa bootstrap, ComBat /
+  ComBat-GAM harmonization, and six PyMC Bayesian models.
+- **Publication figures** — a template-free six-view 3D renderer (vedo), plus
+  unfolded flat-maps, cluster overlays, and Bayesian-posterior plots.
 
 ## Installation
-
-### From PyPI (minimal)
 
 ```bash
 pip install spectralbrain
 ```
 
-### With optional extras
+Optional feature sets (extras):
 
 ```bash
-# Bayesian models (PyMC + ArviZ)
-pip install "spectralbrain[bayesian]"
-
-# GPU acceleration (PyTorch CUDA)
-pip install "spectralbrain[gpu]"
-
-# Full visualization suite (vedo, open3d, yabplot, hippunfold-plot)
-pip install "spectralbrain[viz]"
-
-# Neuroimaging I/O (nilearn, dipy, templateflow)
-pip install "spectralbrain[neuro]"
-
-# Everything
-pip install "spectralbrain[full]"
+pip install "spectralbrain[bayesian]"   # PyMC, nutpie, NumPyro, BlackJAX, ArviZ
+pip install "spectralbrain[viz]"        # vedo, scienceplots, hippunfold_plot, …
+pip install "spectralbrain[gpu]"        # torch, CuPy, JAX (CUDA)
+pip install "spectralbrain[neuro]"      # nilearn, dipy, pybids, templateflow, …
+pip install "spectralbrain[full]"       # everything above
 ```
 
-### From source (development)
+Requires Python 3.11–3.12.
 
-```bash
-git clone https://github.com/rdneuro/spectralbrain.git
-cd spectralbrain
-pip install -e ".[full]"
+## API at a glance
 
-# Or with uv (faster)
-uv sync --all-extras --group dev
+The core API is on the top-level package; heavier statistics and visualization
+live in submodules you import explicitly (mirroring `scipy.stats`):
+
+```python
+import spectralbrain as sb               # meshes, descriptors, I/O
+import spectralbrain.statistics as sbstats   # frequentist + Bayesian
+import spectralbrain.viz as sbviz             # 3D / 2D figures
 ```
 
-### Conda environment
+## Quick start
 
-```bash
-conda env create -f environment.yml
-conda activate spectralbrain
-pip install -e ".[full]"
-```
-
-## Quick Start
+### 1 — Mesh → eigenpairs → descriptors
 
 ```python
 import spectralbrain as sb
 
-# Load a FreeSurfer surface
-vertices, faces = sb.load_freesurfer_surface("lh.pial")
+# A BrainMesh from vertices (N, 3) and faces (M, 3); or sb.io.load(...) a file.
+mesh   = sb.BrainMesh(vertices, faces)
+decomp = mesh.decompose(k=100)                       # 100 LBO eigenpairs
 
-# Build a mesh object and compute eigenpairs
-mesh = sb.BrainMesh(vertices, faces)
-mesh.compute_eigenpairs(k=300)
-
-# Compute spectral descriptors
-hks = sb.compute_hks(mesh.eigenvalues, mesh.eigenvectors,
-                     t_values=[1, 10, 100])
-wks = sb.compute_wks(mesh.eigenvalues, mesh.eigenvectors)
-shapedna = sb.compute_shapedna(mesh.eigenvalues, n=50)
+hks = sb.compute_hks(decomp, t_values=[1.0, 10.0, 100.0])   # (N, 3)
+wks = sb.compute_wks(decomp, n_energies=50)                 # (N, 50)
+dna = sb.compute_shapedna(decomp)                           # (k-1,) global
 ```
 
-## Module Overview
+Point clouds work identically — `sb.BrainPointCloud(points).decompose(k=...)`.
 
-| Module | Purpose |
-|--------|---------|
-| `spectralbrain.core` | `BrainMesh`, `BrainPointCloud`, `SpectralDecomposition` |
-| `spectralbrain.io` | Format detection, loaders, exporters, parcellation |
-| `spectralbrain.spectral` | All spectral descriptors, distances, wavelets |
-| `spectralbrain.statistics` | EDA, frequentist tests, Bayesian models, normative, clustering, surrogates |
-| `spectralbrain.backends` | CPU (NumPy/SciPy) and GPU (PyTorch/CuPy) backends |
-| `spectralbrain.viz` | 7 visualization submodules |
-| `spectralbrain.utils` | Atlases, datasets, helpers |
-
-### Descriptors
+### 2 — Compare two shapes
 
 ```python
-# Heat Kernel Signature — multiscale shape descriptor
-hks = sb.compute_hks(eigenvalues, eigenvectors, t_values=[1, 10, 100])
-
-# Wave Kernel Signature — frequency-localized shape descriptor
-wks = sb.compute_wks(eigenvalues, eigenvectors, n_scales=100)
-
-# ShapeDNA — global shape fingerprint
-dna = sb.compute_shapedna(eigenvalues, n=100)
-
-# Global Point Signature
-gps = sb.compute_gps(eigenvalues, eigenvectors, n=50)
-
-# All descriptors at once
-all_desc = sb.compute_all_descriptors(eigenvalues, eigenvectors)
+d = sb.shapedna_distance(dna_a, dna_b)   # pose-invariant spectral distance
 ```
 
-### Multi-site Harmonization
+### 3 — Vertex-wise group statistics with FWER control
 
 ```python
-from spectralbrain.statistics import harmonize_combat, harmonize_combat_gam
+import spectralbrain.statistics as sbstats
 
-# Standard ComBat
-result = harmonize_combat(
-    data, sites=site_labels,
-    covariates=np.column_stack([ages, sex]),
+# controls, patients : (n_subjects, n_vertices) descriptor fields
+res = sbstats.vertexwise_permutation(
+    controls, patients,
+    n_permutations=5000,
+    correction="max",      # family-wise error via the max-statistic null
+    seed=0,
 )
-harmonized = result.data_harmonized
-
-# ComBat-GAM (nonlinear age effects)
-result = harmonize_combat_gam(
-    data, sites=site_labels,
-    continuous_covariates=ages[:, None],
-    continuous_names=["age"],
-    smooth_terms=["age"],
-)
+significant = res.significant          # boolean mask, FWER-controlled
 ```
 
-### Normative Modeling
+`correction="fdr"` and `"none"` are also available; `vertexwise_ttest`
+defaults to Welch's t-test.
+
+### 4 — Compare two classifiers (analytic DeLong)
 
 ```python
-from spectralbrain.statistics import NormativeModel
-
-# Build normative from healthy controls
-norm = NormativeModel(method="gaussian")
-norm.fit(descriptors_hc, ages=ages_hc, sex=sex_hc,
-         sites=sites_hc, harmonize_method="combat")
-
-# Score a patient
-z_scores = norm.score(descriptor_patient, age=45, sex=1)
+auc_new, auc_ref, p = sbstats.auc_comparison_delong(y_true, scores_new, scores_ref)
 ```
 
-### Bayesian Models
+### 5 — Six-view 3D render (template-free)
+
+```python
+import spectralbrain.viz as sbviz
+
+fig = sbviz.plot_hippocampus_sixview(
+    mesh, scalars=hks[:, 1],
+    cmap="plasma", scalar_bar_title="HKS(t=10)",
+    save="hipp_sixview.png",
+)
+# Pick any subset/order of the six canonical views:
+fig = sbviz.plot_hippocampus_sixview(mesh, scalars=hks[:, 1],
+                                     views=("superior", "left_lateral"))
+```
+
+Views: `anterior, posterior, inferior, superior, left_lateral, right_lateral`.
+It renders *any* surface — HippUnfold v2 `den-8k`, an `aseg` ROI mesh, or a whole
+cortical hemisphere — with no bundled template, so scalar↔vertex correspondence
+is guaranteed.
+
+### 6 — Bayesian sparse regression (extra: `[bayesian]`)
 
 ```python
 from spectralbrain.statistics import HorseshoeRegression
 
-model = HorseshoeRegression(tau_prior=0.1)
-model.fit(descriptors, clinical_scores, sampler="auto")
-model.summary(var_names=["beta"])
-importance = model.feature_importance()
+model = HorseshoeRegression(tau_prior=0.5).fit(X, y, sampler="nuts")
+importance = model.feature_importance()   # sparse posterior shrinkage
 ```
 
-### Visualization
+## Loading a cohort
 
 ```python
-from spectralbrain.viz import (
-    plot_brain, plot_hippocampus, plot_posterior,
-    plot_forest, plot_mesh, plot_point_cloud,
-)
+import spectralbrain as sb
 
-# Cortical surface plot
-plot_brain(data=hks[:, 0], atlas="schaefer_400")
+# BIDS / derivatives (one file per subject):
+files = sb.discover_bids("/data/derivatives/hippunfold",
+                         "sub-{sub}/surf/sub-{sub}_hemi-L_*thickness.shape.gii")
+group = sb.load_group(files, mode="maps", n_jobs=8)
+res   = sb.group_comparison(group, group.covariate("group"), test="ttest")
 
-# Hippocampal subfield rendering
-plot_hippocampus(values=z_scores, density="0p5mm")
+# FreeSurfer SUBJECTS_DIR, resampled to a common template:
+group = sb.load_group_freesurfer("/data/fs", measure="thickness",
+                                 template="fsaverage", n_jobs=8)
 
-# Bayesian posterior
-plot_posterior(samples, hdi_prob=0.94, rope=(-0.1, 0.1))
-
-# Forest plot
-plot_forest(var_names=["HKS", "WKS", "GPS"], posteriors=[...])
+# TractSeg bundle masks → meshes ready for .decompose():
+bundles = sb.load_tractseg("/data/sub-01/tractseg_output", output="mesh")
+decomp  = bundles["CST_left"].decompose(k=80)
 ```
 
-## Supported Formats
+`mode="pipeline"` runs load → decompose → descriptor per subject (with an
+optional GPU `backend=`); `mode="maps"` stacks vertex-corresponded fields.
 
-| Origin | Formats |
-|--------|---------|
-| FreeSurfer | `.pial`, `.white`, `.inflated`, `.sphere`, `.annot`, `.label`, `.curv`, `.thickness`, `.sulc` |
-| GIfTI | `.surf.gii`, `.func.gii`, `.label.gii` |
-| NIfTI | `.nii`, `.nii.gz` (volumetric labels → point clouds) |
-| HippUnfold | Hippocampal subfield surfaces and labels |
-| TractSeg | White-matter tract surfaces |
-| Generic | `.ply`, `.obj`, `.stl`, `.off`, `.vtk` |
+## Compute backends
 
-## Supported Atlases
+Eigen-decomposition and Bayesian sampling run on pluggable backends:
 
-Parcellation is supported for Schaefer (100–1000 parcels), Brainnetome,
-Desikan–Killiany, Destrieux, HCP MMP, aseg, hippocampal subfields
-(FreeSurfer `segmentHA_T1`), and thalamic nuclei.
+```python
+from spectralbrain.backends import TorchBackend       # or CupyBackend, JaxBackend
+decomp = mesh.decompose(k=200, backend=TorchBackend())  # GPU eigsolve
+```
+
+Bayesian models accept `sampler="auto" | "nuts" | "nutpie" | "numpyro" |
+"blackjax"`.
+
+## Documentation map
+
+| Subpackage | What it provides |
+|---|---|
+| `spectralbrain` (top level) | `BrainMesh`, `BrainPointCloud`, `decompose`, all `compute_*` descriptors, distances, I/O, cohort loading |
+| `spectralbrain.io` | loaders/savers, BIDS & FreeSurfer discovery, `load_group`, template resampling, TractSeg import, parcellation |
+| `spectralbrain.statistics` | vertex-wise tests, TFCE, effect sizes, RSA, classification, ComBat(-GAM), normative models, bootstrap & null models, six Bayesian models |
+| `spectralbrain.backends` | CPU / Torch / CuPy / JAX eigensolvers; PyMC / nutpie / NumPyro / BlackJAX samplers |
+| `spectralbrain.viz` | six-view 3D renderer, unfolded flat-maps, cluster overlays, Bayesian-posterior and general scientific plots |
 
 ## Development
 
 ```bash
-# Run tests
-make test
-
-# Lint
-make lint
-
-# Format
-make format
-
-# Build
-make build
+git clone https://github.com/rdneuro/spectralbrain
+cd spectralbrain
+uv sync --group dev          # or: pip install -e ".[full]" + dev tools
+uv run pytest                # run the test suite
+uv run ruff check src/ tests/
 ```
 
-## Citation
+## Citing
 
-If you use SpectralBrain in your research, please cite:
-
-```bibtex
-@software{debona2024spectralbrain,
-  author  = {Debona, Rodrigo},
-  title   = {SpectralBrain: Spectral Shape Analysis for Brain Structures},
-  year    = {2024},
-  url     = {https://github.com/rdneuro/spectralbrain},
-}
-```
+If SpectralBrain contributes to your work, please cite it (a JOSS paper is in
+preparation; until then cite the repository and release DOI). See
+[`CITATION.cff`](CITATION.cff).
 
 ## License
 
-[MIT](LICENSE)
-
-## Acknowledgments
-
-SpectralBrain builds on the work of many open-source projects, including
-[lapy](https://github.com/Deep-MI/LaPy),
-[FreeSurfer](https://surfer.nmr.mgh.harvard.edu/),
-[HippUnfold](https://github.com/khanlab/hippunfold),
-[PyMC](https://www.pymc.io/),
-[yabplot](https://github.com/yabplot/yabplot),
-[vedo](https://vedo.embl.es/), and
-[ArviZ](https://www.arviz.org/).
-
-Developed at the Instituto Nacional de Neurociência Translacional (INNT)
-and Universidade Federal do Rio de Janeiro (UFRJ), under the supervision
-of Dr. Roger Walz, MD, PhD.
+MIT — see [`LICENSE`](LICENSE).

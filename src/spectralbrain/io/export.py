@@ -8,7 +8,7 @@ geometry formats.  The primary cache format is HDF5 (via h5py).
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any
 
 import numpy as np
 
@@ -18,11 +18,8 @@ from spectralbrain.runtime import (
     Eigenvalues,
     Eigenvectors,
     Faces,
-    GlobalDescriptor,
-    MassMatrix,
     PathLike,
     ScalarMap,
-    SparseMatrix,
     Vertices,
     get_logger,
 )
@@ -34,22 +31,21 @@ def _require_h5py():
     """Lazy-import h5py for HDF5 I/O."""
     try:
         import h5py
+
         return h5py
     except ImportError as exc:
-        raise ImportError(
-            "h5py is required for HDF5 export.\n  pip install h5py"
-        ) from exc
+        raise ImportError("h5py is required for HDF5 export.\n  pip install h5py") from exc
 
 
 def _require_nibabel():
     """Lazy-import nibabel for neuroimaging I/O."""
     try:
         import nibabel as nib
+
         return nib
     except ImportError as exc:
         raise ImportError(
-            "nibabel is required for neuroimaging export.\n"
-            "  pip install nibabel"
+            "nibabel is required for neuroimaging export.\n  pip install nibabel"
         ) from exc
 
 
@@ -57,15 +53,16 @@ def _require_nibabel():
 # §1  HDF5 CACHE  (SpectralDecomposition persistence)
 # ======================================================================
 
+
 def save_hdf5(
     path: PathLike,
     *,
-    eigenvalues: Optional[Eigenvalues] = None,
-    eigenvectors: Optional[Eigenvectors] = None,
-    vertices: Optional[Vertices] = None,
-    faces: Optional[np.ndarray] = None,
-    descriptors: Optional[Dict[str, np.ndarray]] = None,
-    metadata: Optional[Dict[str, Any]] = None,
+    eigenvalues: Eigenvalues | None = None,
+    eigenvectors: Eigenvectors | None = None,
+    vertices: Vertices | None = None,
+    faces: np.ndarray | None = None,
+    descriptors: dict[str, np.ndarray] | None = None,
+    metadata: dict[str, Any] | None = None,
     compression: str = "gzip",
     compression_opts: int = 4,
 ) -> Path:
@@ -139,13 +136,14 @@ def save_hdf5(
 
         # Always stamp the SpectralBrain version.
         from spectralbrain.runtime import __version__
+
         f.attrs["spectralbrain_version"] = __version__
 
     logger.info("Saved HDF5 → %s", out)
     return out
 
 
-def load_hdf5(path: PathLike) -> Dict[str, Any]:
+def load_hdf5(path: PathLike) -> dict[str, Any]:
     """Load a SpectralBrain HDF5 cache file.
 
     Parameters
@@ -158,15 +156,13 @@ def load_hdf5(path: PathLike) -> Dict[str, Any]:
         Keys mirror what was passed to :func:`save_hdf5`.
     """
     h5py = _require_h5py()
-    result: Dict[str, Any] = {}
+    result: dict[str, Any] = {}
     with h5py.File(str(path), "r") as f:
         for key in ("eigenvalues", "eigenvectors", "vertices", "faces"):
             if key in f:
                 result[key] = np.asarray(f[key])
         if "descriptors" in f:
-            result["descriptors"] = {
-                k: np.asarray(v) for k, v in f["descriptors"].items()
-            }
+            result["descriptors"] = {k: np.asarray(v) for k, v in f["descriptors"].items()}
         result["metadata"] = dict(f.attrs)
     return result
 
@@ -175,12 +171,17 @@ def load_hdf5(path: PathLike) -> Dict[str, Any]:
 # §2  MESH EXPORT
 # ======================================================================
 
+
 def save_mesh(
     path: PathLike,
     vertices: Vertices,
     faces: Faces,
 ) -> Path:
-    """Save a mesh to .ply, .obj, .stl, or .vtk.
+    """Save a mesh to .ply, .obj, .stl, .vtk, or .vtp.
+
+    Backed by PyVista (a core dependency), so every listed format works
+    with a default install and the geometry round-trips with
+    :func:`spectralbrain.io.load_mesh`.
 
     Parameters
     ----------
@@ -193,20 +194,15 @@ def save_mesh(
     -------
     Path
     """
-    try:
-        import trimesh
-    except ImportError as exc:
-        raise ImportError(
-            "trimesh is required for mesh export.\n  pip install trimesh"
-        ) from exc
+    import pyvista as pv
 
     out = Path(path)
-    mesh = trimesh.Trimesh(
-        vertices=np.asarray(vertices),
-        faces=np.asarray(faces),
-        process=False,
-    )
-    mesh.export(str(out))
+    v = np.asarray(vertices, dtype=np.float64)
+    f = np.asarray(faces, dtype=np.int64)
+    # PyVista packs faces as [3, i, j, k, 3, i, j, k, ...].
+    faces_pv = np.hstack([np.full((len(f), 1), 3, dtype=np.int64), f]).ravel()
+    mesh = pv.PolyData(v, faces_pv)
+    mesh.save(str(out))
     logger.info("Saved mesh → %s", out)
     return out
 
@@ -215,9 +211,10 @@ def save_mesh(
 # §3  GIFTI SCALAR OVERLAY EXPORT
 # ======================================================================
 
+
 def save_gifti_func(
     path: PathLike,
-    scalars: Union[ScalarMap, DescriptorMatrix],
+    scalars: ScalarMap | DescriptorMatrix,
 ) -> Path:
     """Save a scalar map or descriptor matrix as .func.gii.
 
@@ -257,6 +254,7 @@ def save_gifti_func(
 # §4  NUMPY ARCHIVE EXPORT
 # ======================================================================
 
+
 def save_npz(
     path: PathLike,
     **arrays: np.ndarray,
@@ -285,11 +283,12 @@ def save_npz(
 # §5  CONNECTOME MATRIX EXPORT
 # ======================================================================
 
+
 def save_connectome(
     path: PathLike,
     matrix: ConnectomeMatrix,
     *,
-    labels: Optional[List[str]] = None,
+    labels: list[str] | None = None,
 ) -> Path:
     """Save a connectome matrix to .tsv (BIDS-compatible).
 
@@ -311,7 +310,7 @@ def save_connectome(
 
     header = ""
     if labels is not None:
-        header = "\t".join([""] + labels) + "\n"
+        header = "\t".join(["", *labels]) + "\n"
 
     with open(out, "w") as fh:
         fh.write(header)
@@ -327,9 +326,10 @@ def save_connectome(
 # ======================================================================
 
 __all__ = [
-    "save_hdf5", "load_hdf5",
-    "save_mesh",
-    "save_gifti_func",
-    "save_npz",
+    "load_hdf5",
     "save_connectome",
+    "save_gifti_func",
+    "save_hdf5",
+    "save_mesh",
+    "save_npz",
 ]

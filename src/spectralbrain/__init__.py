@@ -13,13 +13,14 @@ Quick start::
     # Load a FreeSurfer surface
     vertices, faces = sb.load_freesurfer_surface("lh.pial")
 
-    # Build a mesh object and compute eigenpairs
+    # Build a mesh and compute its Laplace-Beltrami decomposition
     mesh = sb.BrainMesh(vertices, faces)
-    mesh.compute_eigenpairs(k=300)
+    decomp = mesh.decompose(k=300)        # -> SpectralDecomposition
 
-    # Compute spectral descriptors
-    hks = sb.compute_hks(mesh.eigenvalues, mesh.eigenvectors,
-                         t_values=[1, 10, 100])
+    # Compute spectral descriptors from the decomposition
+    hks = sb.compute_hks(decomp, t_values=[1, 10, 100])
+    wks = sb.compute_wks(decomp, n_energies=100)
+    shapedna = sb.compute_shapedna(decomp)
 
     # Visualize on a brain surface
     sb.plot_brain(data=hks[:, 0], atlas="schaefer_400")
@@ -32,115 +33,231 @@ from __future__ import annotations
 try:
     from spectralbrain._version import __version__
 except ImportError:
-    __version__ = "0.0.2"
+    __version__ = "0.1.0"
 
 # ── Runtime configuration ──
-from spectralbrain.runtime import (  # noqa: F401
-    get_logger, set_log_level,
-    GeometryFormat, AtlasScheme, DescriptorType,
-    AnalysisObjective, BackendName,
-    ContainerSpec, ContainerManager,
-)
+# ── Backends (lazy — heavy imports deferred) ──
+from spectralbrain.backends import NumpyBackend
 
 # ── Core geometric objects ──
-from spectralbrain.core import (  # noqa: F401
-    SpectralDecomposition,
+from spectralbrain.core import (
     BrainMesh,
     BrainPointCloud,
-    compute_centroid, compute_bounding_box, compute_pca_axes,
-    center_points, normalize_scale, align_to_pca,
-    procrustes_align, farthest_point_sampling,
-    knn_search, radius_search,
-    hausdorff_distance, chamfer_distance,
+    SpectralDecomposition,
+    align_to_pca,
+    center_points,
+    chamfer_distance,
+    compute_bounding_box,
+    compute_centroid,
+    compute_pca_axes,
+    farthest_point_sampling,
+    hausdorff_distance,
+    knn_search,
+    normalize_scale,
+    procrustes_align,
+    radius_search,
 )
 
 # ── I/O ──
-from spectralbrain.io import (  # noqa: F401
-    detect_format, load,
-    load_freesurfer_surface, load_freesurfer_annot, load_freesurfer_morph,
-    load_gifti_surface, load_gifti_func, load_gifti_label,
-    load_nifti, load_mesh,
-    labels_to_pointcloud, extract_submesh, apply_parcellation,
-    remap_parcellation, aggregate_by_parcellation,
-    DESIKAN_LOBE_MAP, SCHAEFER_NETWORK_MAP,
-    save_hdf5, load_hdf5, save_mesh, save_gifti_func,
-    save_npz, save_connectome,
+from spectralbrain.io import (
+    ATLAS_REGISTRY,
+    DESIKAN_LOBE_MAP,
+    SCHAEFER_NETWORK_MAP,
+    GroupData,
+    ParcellationResult,
+    aggregate_by_parcellation,
+    apply_parcellation,
+    detect_format,
+    discover_bids,
+    discover_freesurfer,
+    discover_tractseg_bundles,
+    discover_tractseg_subjects,
+    extract_submesh,
+    group_comparison,
+    labels_to_pointcloud,
+    list_atlases,
+    load,
+    load_freesurfer_annot,
+    load_freesurfer_morph,
+    load_freesurfer_surface,
+    load_gifti_func,
+    load_gifti_label,
+    load_gifti_surface,
+    load_group,
+    load_group_freesurfer,
+    load_hdf5,
+    load_mesh,
+    load_nifti,
+    load_tractseg,
+    load_tractseg_bundle,
     # Parcellation pipeline
-    parcellate, parcellate_batch, list_atlases,
-    ParcellationResult, ATLAS_REGISTRY,
+    parcellate,
+    parcellate_batch,
+    remap_parcellation,
+    resample_to_template,
+    save_connectome,
+    save_gifti_func,
+    save_hdf5,
+    save_mesh,
+    save_npz,
+)
+from spectralbrain.runtime import (  # noqa: F401
+    AnalysisObjective,
+    AtlasScheme,
+    BackendName,
+    ContainerManager,
+    ContainerSpec,
+    DescriptorType,
+    GeometryFormat,
+    get_logger,
+    set_log_level,
 )
 
 # ── Spectral analysis (the core value of the library) ──
-from spectralbrain.spectral import (  # noqa: F401
-    compute_shapedna, compute_hks, compute_si_hks,
-    compute_wks, compute_gps,
-    compute_bates_signatures, compute_bks, compute_ibks,
-    compute_all_descriptors,
-    wesd, wesd_matrix, shapedna_distance,
-    biharmonic_distance, commute_time_distance,
-    diffusion_distance, descriptor_distance,
-    build_geometric_connectome,
-    sgw_transform, sgw_descriptor,
+from spectralbrain.spectral import (
     anisotropic_laplacian,
-    compute_functional_map, shape_difference_operator,
+    biharmonic_distance,
+    build_geometric_connectome,
+    commute_time_distance,
+    compute_all_descriptors,
+    compute_bates_signatures,
+    compute_bks,
+    compute_functional_map,
+    compute_gps,
+    compute_hks,
+    compute_ibks,
+    compute_shapedna,
+    compute_si_hks,
+    compute_wks,
+    descriptor_distance,
+    diffusion_distance,
+    sgw_descriptor,
+    sgw_transform,
+    shape_difference_operator,
+    shapedna_distance,
+    wesd,
+    wesd_matrix,
 )
 
-# ── Backends (lazy — heavy imports deferred) ──
-from spectralbrain.backends import NumpyBackend  # noqa: F401
-
 # ── Utilities ──
-from spectralbrain.utils import (  # noqa: F401
-    ASEG_LABELS, HIPPOCAMPAL_SUBFIELDS, THALAMIC_NUCLEI,
-    get_label_name, get_label_id, list_labels,
-    seed_everything, get_reproducibility_info,
-    timer, Timer,
-    parse_bids_filename, collect_subjects,
+from spectralbrain.utils import (
+    ASEG_LABELS,
+    HIPPOCAMPAL_SUBFIELDS,
+    THALAMIC_NUCLEI,
+    Timer,
+    collect_subjects,
+    get_label_id,
+    get_label_name,
+    get_reproducibility_info,
+    list_labels,
+    parse_bids_filename,
+    seed_everything,
+    timer,
 )
 
 __all__ = [
-    "__version__",
-    # Runtime
-    "get_logger", "set_log_level",
-    "GeometryFormat", "AtlasScheme", "DescriptorType",
-    "AnalysisObjective", "BackendName",
-    # Core
-    "SpectralDecomposition", "BrainMesh", "BrainPointCloud",
-    "compute_centroid", "compute_bounding_box", "compute_pca_axes",
-    "center_points", "normalize_scale", "align_to_pca",
-    "procrustes_align", "farthest_point_sampling",
-    "knn_search", "radius_search",
-    "hausdorff_distance", "chamfer_distance",
-    # I/O
-    "detect_format", "load",
-    "load_freesurfer_surface", "load_freesurfer_annot", "load_freesurfer_morph",
-    "load_gifti_surface", "load_gifti_func", "load_gifti_label",
-    "load_nifti", "load_mesh",
-    "labels_to_pointcloud", "extract_submesh", "apply_parcellation",
-    "remap_parcellation", "aggregate_by_parcellation",
-    "DESIKAN_LOBE_MAP", "SCHAEFER_NETWORK_MAP",
-    "save_hdf5", "load_hdf5", "save_mesh", "save_gifti_func",
-    "save_npz", "save_connectome",
-    # Parcellation
-    "parcellate", "parcellate_batch", "list_atlases",
-    "ParcellationResult", "ATLAS_REGISTRY",
-    # Spectral
-    "compute_shapedna", "compute_hks", "compute_si_hks",
-    "compute_wks", "compute_gps",
-    "compute_bates_signatures", "compute_bks", "compute_ibks",
-    "compute_all_descriptors",
-    "wesd", "wesd_matrix", "shapedna_distance",
-    "biharmonic_distance", "commute_time_distance",
-    "diffusion_distance", "descriptor_distance",
-    "build_geometric_connectome",
-    "sgw_transform", "sgw_descriptor",
-    "anisotropic_laplacian",
-    "compute_functional_map", "shape_difference_operator",
+    # Utils
+    "ASEG_LABELS",
+    "ATLAS_REGISTRY",
+    "DESIKAN_LOBE_MAP",
+    "HIPPOCAMPAL_SUBFIELDS",
+    "SCHAEFER_NETWORK_MAP",
+    "THALAMIC_NUCLEI",
+    "AnalysisObjective",
+    "AtlasScheme",
+    "BackendName",
+    "BrainMesh",
+    "BrainPointCloud",
+    "DescriptorType",
+    "GeometryFormat",
+    "GroupData",
     # Backends
     "NumpyBackend",
-    # Utils
-    "ASEG_LABELS", "HIPPOCAMPAL_SUBFIELDS", "THALAMIC_NUCLEI",
-    "get_label_name", "get_label_id", "list_labels",
-    "seed_everything", "get_reproducibility_info",
-    "timer", "Timer",
-    "parse_bids_filename", "collect_subjects",
+    "ParcellationResult",
+    # Core
+    "SpectralDecomposition",
+    "Timer",
+    "__version__",
+    "aggregate_by_parcellation",
+    "align_to_pca",
+    "anisotropic_laplacian",
+    "apply_parcellation",
+    "biharmonic_distance",
+    "build_geometric_connectome",
+    "center_points",
+    "chamfer_distance",
+    "collect_subjects",
+    "commute_time_distance",
+    "compute_all_descriptors",
+    "compute_bates_signatures",
+    "compute_bks",
+    "compute_bounding_box",
+    "compute_centroid",
+    "compute_functional_map",
+    "compute_gps",
+    "compute_hks",
+    "compute_ibks",
+    "compute_pca_axes",
+    # Spectral
+    "compute_shapedna",
+    "compute_si_hks",
+    "compute_wks",
+    "descriptor_distance",
+    # I/O
+    "detect_format",
+    "diffusion_distance",
+    "discover_bids",
+    "discover_freesurfer",
+    "discover_tractseg_bundles",
+    "discover_tractseg_subjects",
+    "extract_submesh",
+    "farthest_point_sampling",
+    "get_label_id",
+    "get_label_name",
+    # Runtime
+    "get_logger",
+    "get_reproducibility_info",
+    "group_comparison",
+    "hausdorff_distance",
+    "knn_search",
+    "labels_to_pointcloud",
+    "list_atlases",
+    "list_labels",
+    "load",
+    "load_freesurfer_annot",
+    "load_freesurfer_morph",
+    "load_freesurfer_surface",
+    "load_gifti_func",
+    "load_gifti_label",
+    "load_gifti_surface",
+    "load_group",
+    "load_group_freesurfer",
+    "load_hdf5",
+    "load_mesh",
+    "load_nifti",
+    "load_tractseg",
+    "load_tractseg_bundle",
+    "normalize_scale",
+    # Parcellation
+    "parcellate",
+    "parcellate_batch",
+    "parse_bids_filename",
+    "procrustes_align",
+    "radius_search",
+    "remap_parcellation",
+    "resample_to_template",
+    "save_connectome",
+    "save_gifti_func",
+    "save_hdf5",
+    "save_mesh",
+    "save_npz",
+    "seed_everything",
+    "set_log_level",
+    "sgw_descriptor",
+    "sgw_transform",
+    "shape_difference_operator",
+    "shapedna_distance",
+    "timer",
+    "wesd",
+    "wesd_matrix",
 ]

@@ -18,7 +18,8 @@ Kernels
 
 from __future__ import annotations
 
-from typing import Callable, List, Literal, Optional, Sequence, Tuple, Union
+from collections.abc import Callable
+from typing import Literal
 
 import numpy as np
 import scipy.sparse as sp
@@ -26,7 +27,6 @@ import scipy.sparse as sp
 from spectralbrain.core.base import SpectralDecomposition
 from spectralbrain.runtime import (
     DescriptorMatrix,
-    ScalarMap,
     SparseMatrix,
     get_logger,
     progress_simple,
@@ -38,6 +38,7 @@ logger = get_logger(__name__)
 # ======================================================================
 # §1  WAVELET KERNELS
 # ======================================================================
+
 
 def mexican_hat_kernel(x: np.ndarray) -> np.ndarray:
     """Mexican-hat (Ricker) wavelet kernel: g(x) = x · exp(-x).
@@ -79,12 +80,13 @@ def meyer_kernel(x: np.ndarray) -> np.ndarray:
 
 def _nu(x: np.ndarray) -> np.ndarray:
     """Smooth transition function for Meyer wavelet."""
-    return x ** 4 * (35 - 84 * x + 70 * x ** 2 - 20 * x ** 3)
+    return x**4 * (35 - 84 * x + 70 * x**2 - 20 * x**3)
 
 
 # ======================================================================
 # §2  CHEBYSHEV APPROXIMATION OF g(t·L)
 # ======================================================================
+
 
 def _chebyshev_coefficients(
     kernel: Callable[[np.ndarray], np.ndarray],
@@ -112,16 +114,14 @@ def _chebyshev_coefficients(
     ndarray, shape (K,)
     """
     N = max(K + 1, 2 * K)
-    nodes = np.cos(np.pi * (np.arange(N) + 0.5) / N)     # in [-1, 1]
-    x = (nodes + 1) * (b - a) / 2 + a                      # map to [a, b]
+    nodes = np.cos(np.pi * (np.arange(N) + 0.5) / N)  # in [-1, 1]
+    x = (nodes + 1) * (b - a) / 2 + a  # map to [a, b]
     vals = kernel(x)
 
     # DCT-based coefficient estimation.
     coeffs = np.zeros(K, dtype=np.float64)
     for k in range(K):
-        coeffs[k] = (2.0 / N) * np.sum(
-            vals * np.cos(np.pi * k * (np.arange(N) + 0.5) / N)
-        )
+        coeffs[k] = (2.0 / N) * np.sum(vals * np.cos(np.pi * k * (np.arange(N) + 0.5) / N))
     coeffs[0] /= 2.0
     return coeffs
 
@@ -150,7 +150,7 @@ def _chebyshev_apply(
     -------
     ndarray, same shape as signal
     """
-    N = L.shape[0]
+    L.shape[0]
     K = len(coeffs)
 
     # Scale L to [-1, 1]: L̃ = (2L − (a+b)I) / (b−a)
@@ -158,7 +158,7 @@ def _chebyshev_apply(
     d = -(a + b) / (b - a)
 
     # T_0 = I · signal
-    T_prev = signal.copy()                                  # T_0(L̃) · s
+    T_prev = signal.copy()  # T_0(L̃) · s
     result = coeffs[0] * T_prev
 
     if K == 1:
@@ -182,14 +182,15 @@ def _chebyshev_apply(
 # §3  SPECTRAL GRAPH WAVELET TRANSFORM
 # ======================================================================
 
+
 def sgw_transform(
     L: SparseMatrix,
     scales: np.ndarray,
     *,
-    signal: Optional[np.ndarray] = None,
+    signal: np.ndarray | None = None,
     kernel: Callable = mexican_hat_kernel,
     chebyshev_order: int = 30,
-    lam_max: Optional[float] = None,
+    lam_max: float | None = None,
 ) -> np.ndarray:
     """Spectral Graph Wavelet Transform via Chebyshev approximation.
 
@@ -229,6 +230,7 @@ def sgw_transform(
     # Estimate λ_max if not provided.
     if lam_max is None:
         from scipy.sparse.linalg import eigsh
+
         lam_max = float(eigsh(L, k=1, which="LM", return_eigenvectors=False)[0])
         lam_max *= 1.05  # safety margin
 
@@ -237,17 +239,19 @@ def sgw_transform(
 
     is_sparse_signal = sp.issparse(signal)
 
-    results: List[np.ndarray] = []
+    results: list[np.ndarray] = []
     with progress_simple("SGW transform", total=S) as tick:
-        for s_idx, t in enumerate(scales):
+        for _s_idx, t in enumerate(scales):
             # Scaled kernel: g_t(x) = g(t · x)
             def scaled_kernel(x: np.ndarray, _t=t) -> np.ndarray:
                 """Evaluate the wavelet kernel scaled to a given level."""
                 return kernel(_t * x)
 
             coeffs = _chebyshev_coefficients(
-                scaled_kernel, chebyshev_order,
-                a=0.0, b=lam_max,
+                scaled_kernel,
+                chebyshev_order,
+                a=0.0,
+                b=lam_max,
             )
 
             if is_sparse_signal:
@@ -257,27 +261,36 @@ def sgw_transform(
                     e_col = np.zeros(N)
                     e_col[col] = 1.0
                     out[:, col] = _chebyshev_apply(
-                        L, e_col, coeffs, a=0.0, b=lam_max,
+                        L,
+                        e_col,
+                        coeffs,
+                        a=0.0,
+                        b=lam_max,
                     )
                 results.append(out)
             else:
                 out = _chebyshev_apply(
-                    L, signal, coeffs, a=0.0, b=lam_max,
+                    L,
+                    signal,
+                    coeffs,
+                    a=0.0,
+                    b=lam_max,
                 )
                 results.append(out)
 
             tick(1)
 
-    return np.stack(results, axis=0)                        # (S, N, ...)
+    return np.stack(results, axis=0)  # (S, N, ...)
 
 
 # ======================================================================
 # §4  WAVELET DESCRIPTORS FROM EIGENPAIRS
 # ======================================================================
 
+
 def sgw_descriptor(
     decomp: SpectralDecomposition,
-    scales: Optional[np.ndarray] = None,
+    scales: np.ndarray | None = None,
     *,
     n_scales: int = 5,
     kernel: Callable = mexican_hat_kernel,
@@ -333,16 +346,16 @@ def sgw_descriptor(
             scales = np.logspace(np.log10(s_min), np.log10(s_max), n_scales)
 
     scales = np.asarray(scales, dtype=np.float64)
-    S = len(scales)
+    len(scales)
 
     # g(t·λ) for each scale: (S, k)
-    g_tl = np.array([kernel(t * evals) for t in scales])    # (S, k)
+    g_tl = np.array([kernel(t * evals) for t in scales])  # (S, k)
 
     # ψ_t(x) = Σᵢ g(t·λᵢ)·φᵢ(x) = Φ @ g_tl.T
-    psi = evecs @ g_tl.T                                    # (N, S)
+    psi = evecs @ g_tl.T  # (N, S)
 
     if aggregate == "energy":
-        return psi ** 2
+        return psi**2
     elif aggregate == "abs_mean":
         return np.abs(psi)
     elif aggregate == "raw":
@@ -353,13 +366,13 @@ def sgw_descriptor(
 
 # ======================================================================
 
-__all__: List[str] = [
+__all__: list[str] = [
+    "heat_kernel",
     # Kernels
     "mexican_hat_kernel",
-    "heat_kernel",
     "meyer_kernel",
-    # Chebyshev
-    "sgw_transform",
     # Eigenpair-based
     "sgw_descriptor",
+    # Chebyshev
+    "sgw_transform",
 ]

@@ -33,20 +33,14 @@ import shutil
 import subprocess
 import sys
 import urllib.request
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum, auto
 from pathlib import Path
 from typing import (
     Any,
-    Callable,
-    Dict,
-    Generator,
-    List,
-    Optional,
-    Tuple,
     TypeVar,
-    Union,
 )
 
 # ──────────────────────────────────────────────────────────────────────
@@ -86,7 +80,7 @@ Surfaced as ``spectralbrain.__version__`` via the package
 ``__init__.py``.  Build tooling reads this at release time.
 """
 
-VERSION_INFO: Tuple[int, int, int] = (0, 1, 0)
+VERSION_INFO: tuple[int, int, int] = (0, 1, 0)
 """(major, minor, patch) as a comparable tuple."""
 
 
@@ -172,10 +166,10 @@ LabelArray = npt.NDArray[np.integer]
 indices (Schaefer, aseg, etc.).
 """
 
-VolumeImage = Any     # nibabel.nifti1.Nifti1Image (lazy import)
+VolumeImage = Any  # nibabel.nifti1.Nifti1Image (lazy import)
 """NIfTI volume — typed as ``Any`` to avoid hard nibabel dep at import."""
 
-SurfaceImage = Any    # nibabel.gifti.GiftiImage (lazy import)
+SurfaceImage = Any  # nibabel.gifti.GiftiImage (lazy import)
 """GIfTI surface — typed as ``Any`` to avoid hard nibabel dep at import."""
 
 # ── Analysis / connectome ─────────────────────────────────────────────
@@ -190,7 +184,7 @@ NetworkMatrix = npt.NDArray[np.floating]
 
 # ── Generic helpers ───────────────────────────────────────────────────
 
-PathLike = Union[str, os.PathLike]
+PathLike = str | os.PathLike
 """Anything :class:`pathlib.Path` can consume."""
 
 T = TypeVar("T")
@@ -201,24 +195,25 @@ T = TypeVar("T")
 # §2b  SUPPORTED FORMATS, ATLASES, DESCRIPTORS, OBJECTIVES, BACKENDS
 # ======================================================================
 
+
 class GeometryFormat(Enum):
     """Geometry file formats recognised by ``io.loaders``."""
 
-    FREESURFER_SURFACE = auto()   # .white, .pial, .inflated, .sphere
-    FREESURFER_ANNOT = auto()     # .annot parcellation overlay
-    FREESURFER_MORPH = auto()     # .thickness, .curv, .sulc
-    FREESURFER_LABEL = auto()     # .label ROI mask
-    GIFTI_SURFACE = auto()        # .surf.gii
-    GIFTI_FUNC = auto()           # .func.gii, .shape.gii
-    GIFTI_LABEL = auto()          # .label.gii
-    NIFTI_VOLUME = auto()         # .nii, .nii.gz
-    MGZ_VOLUME = auto()           # .mgz, .mgh (FreeSurfer volume)
-    PLY = auto()                  # Stanford .ply
-    OBJ = auto()                  # Wavefront .obj
-    STL = auto()                  # Stereolithography .stl
-    VTK = auto()                  # VTK legacy or XML
-    HDF5 = auto()                 # .h5 — SpectralBrain cache
-    NUMPY = auto()                # .npz (vertices + faces arrays)
+    FREESURFER_SURFACE = auto()  # .white, .pial, .inflated, .sphere
+    FREESURFER_ANNOT = auto()  # .annot parcellation overlay
+    FREESURFER_MORPH = auto()  # .thickness, .curv, .sulc
+    FREESURFER_LABEL = auto()  # .label ROI mask
+    GIFTI_SURFACE = auto()  # .surf.gii
+    GIFTI_FUNC = auto()  # .func.gii, .shape.gii
+    GIFTI_LABEL = auto()  # .label.gii
+    NIFTI_VOLUME = auto()  # .nii, .nii.gz
+    MGZ_VOLUME = auto()  # .mgz, .mgh (FreeSurfer volume)
+    PLY = auto()  # Stanford .ply
+    OBJ = auto()  # Wavefront .obj
+    STL = auto()  # Stereolithography .stl
+    VTK = auto()  # VTK legacy or XML
+    HDF5 = auto()  # .h5 — SpectralBrain cache
+    NUMPY = auto()  # .npz (vertices + faces arrays)
 
 
 class AtlasScheme(Enum):
@@ -299,26 +294,65 @@ class DescriptorType(Enum):
 
 # ── Eligibility registry for recommend_descriptor() ───────────────────
 
-DESCRIPTOR_ELIGIBILITY: Dict[str, List[str]] = {
+DESCRIPTOR_ELIGIBILITY: dict[str, list[str]] = {
     "group_discrimination": [
-        "shapedna", "hks", "wks", "si_hks", "bates_sp",
-        "bks", "wesd", "sgw_mexican_hat", "casorati",
-        "integral_invariant", "zernike_3d", "ect", "fractal_dim",
+        "shapedna",
+        "hks",
+        "wks",
+        "si_hks",
+        "bates_sp",
+        "bks",
+        "wesd",
+        "sgw_mexican_hat",
+        "casorati",
+        "integral_invariant",
+        "zernike_3d",
+        "ect",
+        "fractal_dim",
     ],
     "lateralization": [
-        "shapedna", "hks", "wks", "bates_sp", "gps",
-        "bks", "biharmonic", "sgw_mexican_hat", "casorati",
-        "integral_invariant", "eccentricity", "ect",
+        "shapedna",
+        "hks",
+        "wks",
+        "bates_sp",
+        "gps",
+        "bks",
+        "biharmonic",
+        "sgw_mexican_hat",
+        "casorati",
+        "integral_invariant",
+        "eccentricity",
+        "ect",
     ],
     "longitudinal_change": [
-        "shapedna", "hks", "wks", "bates_sp", "gps",
-        "bks", "wesd", "diffusion", "dwks", "casorati",
-        "integral_invariant", "ect", "fractal_dim",
+        "shapedna",
+        "hks",
+        "wks",
+        "bates_sp",
+        "gps",
+        "bks",
+        "wesd",
+        "diffusion",
+        "dwks",
+        "casorati",
+        "integral_invariant",
+        "ect",
+        "fractal_dim",
     ],
     "subregion_detection": [
-        "hks", "wks", "gps", "bks", "sgw_mexican_hat",
-        "biharmonic", "dwks", "finsler_hks",
-        "shape_index", "casorati", "sdf", "agd", "eccentricity",
+        "hks",
+        "wks",
+        "gps",
+        "bks",
+        "sgw_mexican_hat",
+        "biharmonic",
+        "dwks",
+        "finsler_hks",
+        "shape_index",
+        "casorati",
+        "sdf",
+        "agd",
+        "eccentricity",
     ],
 }
 
@@ -338,13 +372,14 @@ class BackendName(Enum):
     NUMPY = "numpy"
     JAX = "jax"
     CUPY = "cupy"
+    TORCH = "torch"
 
 
 # ======================================================================
 # §3  STRUCTURED LOGGING
 # ======================================================================
 
-_CONSOLE: Optional[Console] = Console(stderr=True) if _HAS_RICH else None
+_CONSOLE: Console | None = Console(stderr=True) if _HAS_RICH else None
 
 _LIB_LOGGER_NAME: str = "spectralbrain"
 
@@ -403,7 +438,7 @@ def get_logger(
     return logger
 
 
-def set_log_level(level: Union[int, str]) -> None:
+def set_log_level(level: int | str) -> None:
     """Set the log level for the entire library.
 
     Parameters
@@ -419,9 +454,10 @@ def set_log_level(level: Union[int, str]) -> None:
 # §4  RICH PROGRESS BARS
 # ======================================================================
 
+
 def _fallback_update_factory(
     description: str,
-    total: Optional[int],
+    total: int | None,
 ) -> Generator[Callable[[int], None], None, None]:
     """Plain-text fallback when Rich is not installed."""
     done = 0
@@ -431,8 +467,7 @@ def _fallback_update_factory(
         nonlocal done
         done += n
         if total and done % max(1, total // 10) == 0:
-            print(f"\r  {description}: {100 * done / total:.0f}%",
-                  end="", flush=True)
+            print(f"\r  {description}: {100 * done / total:.0f}%", end="", flush=True)
 
     yield _update
     print()
@@ -441,7 +476,7 @@ def _fallback_update_factory(
 @contextmanager
 def progress_simple(
     description: str = "Processing",
-    total: Optional[int] = None,
+    total: int | None = None,
 ) -> Generator[Callable[[int], None], None, None]:
     """Simple progress bar with ETA.
 
@@ -490,7 +525,7 @@ def progress_simple(
 @contextmanager
 def progress_parallel(
     description: str = "Parallel jobs",
-    total: Optional[int] = None,
+    total: int | None = None,
 ) -> Generator[Callable[[int], None], None, None]:
     """Thread-safe progress bar for ``joblib.Parallel`` callbacks.
 
@@ -526,8 +561,7 @@ def progress_parallel(
         TimeElapsedColumn(),
         TimeRemainingColumn(),
     ]
-    with Progress(*cols, console=_CONSOLE, transient=False,
-                  refresh_per_second=10) as prog:
+    with Progress(*cols, console=_CONSOLE, transient=False, refresh_per_second=10) as prog:
         tid = prog.add_task(description, total=total)
 
         def _update(n: int = 1) -> None:
@@ -573,9 +607,9 @@ class NestedProgress:
         self.outer_total = outer_total
         self.inner_description = inner_description
         self.inner_total = inner_total
-        self._progress: Optional[Progress] = None
-        self._outer_id: Optional[int] = None
-        self._inner_id: Optional[int] = None
+        self._progress: Progress | None = None
+        self._outer_id: int | None = None
+        self._inner_id: int | None = None
 
     # -- context manager ------------------------------------------------
 
@@ -594,10 +628,12 @@ class NestedProgress:
         self._progress = Progress(*cols, console=_CONSOLE, transient=False)
         self._progress.__enter__()
         self._outer_id = self._progress.add_task(
-            f"[cyan]{self.outer_description}", total=self.outer_total,
+            f"[cyan]{self.outer_description}",
+            total=self.outer_total,
         )
         self._inner_id = self._progress.add_task(
-            f"  [green]{self.inner_description}", total=self.inner_total,
+            f"  [green]{self.inner_description}",
+            total=self.inner_total,
         )
         return self
 
@@ -702,7 +738,7 @@ class ContainerSpec:
 
 # ── Default registry (placeholders until GHCR images are built) ──────
 
-CONTAINER_REGISTRY: Dict[str, ContainerSpec] = {
+CONTAINER_REGISTRY: dict[str, ContainerSpec] = {
     "hdbet": ContainerSpec(
         name="HD-BET",
         sif_filename="spectralbrain_hdbet_v1.0.sif",
@@ -734,14 +770,12 @@ CONTAINER_REGISTRY: Dict[str, ContainerSpec] = {
         ),
         sha256="placeholder",
         size_mb=3500,
-        entrypoint=(
-            "run_fastsurfer.sh --t1 {input} --sd {output} --seg_only"
-        ),
+        entrypoint=("run_fastsurfer.sh --t1 {input} --sd {output} --seg_only"),
     ),
 }
 
 
-def _detect_runtime() -> Optional[str]:
+def _detect_runtime() -> str | None:
     """Find ``apptainer`` or ``singularity`` on PATH."""
     for name in ("apptainer", "singularity"):
         path = shutil.which(name)
@@ -800,13 +834,13 @@ class ContainerManager:
     def __init__(
         self,
         cache_dir: PathLike = _DEFAULT_CACHE_DIR,
-        registry: Optional[Dict[str, ContainerSpec]] = None,
+        registry: dict[str, ContainerSpec] | None = None,
     ) -> None:
         """Initialise the container runner configuration."""
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.registry = registry or CONTAINER_REGISTRY
-        self._runtime: Optional[str] = _detect_runtime()
+        self._runtime: str | None = _detect_runtime()
 
     # ── properties ────────────────────────────────────────────────────
 
@@ -854,9 +888,7 @@ class ContainerManager:
         """
         if tool not in self.registry:
             available = ", ".join(self.registry)
-            raise KeyError(
-                f"Unknown container '{tool}'. Available: {available}"
-            )
+            raise KeyError(f"Unknown container '{tool}'. Available: {available}")
         sif = self._sif_path(tool)
         if sif.exists():
             _logger.info("Container [bold]%s[/] already cached.", tool)
@@ -865,7 +897,8 @@ class ContainerManager:
         spec = self.registry[tool]
         _logger.info(
             "Downloading [bold]%s[/] (~%d MB) — first time only.",
-            spec.name, spec.size_mb,
+            spec.name,
+            spec.size_mb,
         )
         tmp = sif.with_suffix(".part")
         try:
@@ -894,9 +927,9 @@ class ContainerManager:
         *,
         input_path: PathLike,
         output_path: PathLike,
-        extra_binds: Optional[List[str]] = None,
-        extra_args: Optional[List[str]] = None,
-        gpu: Optional[bool] = None,
+        extra_binds: list[str] | None = None,
+        extra_args: list[str] | None = None,
+        gpu: bool | None = None,
     ) -> subprocess.CompletedProcess:
         """Execute a containerised preprocessing tool.
 
@@ -927,7 +960,7 @@ class ContainerManager:
             Container exited with non-zero status.
         """
         if self._runtime is None:
-            raise EnvironmentError(
+            raise OSError(
                 "No container runtime found. Install Apptainer:\n"
                 "  https://apptainer.org/docs/admin/latest/installation.html"
             )
@@ -938,16 +971,13 @@ class ContainerManager:
         out = Path(output_path).resolve()
         out.parent.mkdir(parents=True, exist_ok=True)
 
-        cmd: List[str] = [self._runtime, "exec"]
+        cmd: list[str] = [self._runtime, "exec"]
 
-        use_gpu = gpu if gpu is not None else (
-            spec.gpu_required and _has_nvidia_gpu()
-        )
+        use_gpu = gpu if gpu is not None else (spec.gpu_required and _has_nvidia_gpu())
         if use_gpu:
             cmd.append("--nv")
 
-        cmd += ["--bind", f"{inp.parent}:/input:ro",
-                "--bind", f"{out.parent}:/output:rw"]
+        cmd += ["--bind", f"{inp.parent}:/input:ro", "--bind", f"{out.parent}:/output:rw"]
         for b in extra_binds or []:
             cmd += ["--bind", b]
 
@@ -960,14 +990,15 @@ class ContainerManager:
 
         _logger.info(
             "Running [bold]%s[/] (%s)",
-            spec.name, "GPU" if use_gpu else "CPU",
+            spec.name,
+            "GPU" if use_gpu else "CPU",
         )
         _logger.debug("$ %s", " ".join(cmd))
         return subprocess.run(cmd, check=True, capture_output=True, text=True)
 
-    def status(self) -> Dict[str, Dict[str, Any]]:
+    def status(self) -> dict[str, dict[str, Any]]:
         """Print and return status of all registered containers."""
-        report: Dict[str, Dict[str, Any]] = {}
+        report: dict[str, dict[str, Any]] = {}
         for name, spec in self.registry.items():
             sif = self._sif_path(name)
             report[name] = {
@@ -990,7 +1021,7 @@ class ContainerManager:
                 )
         return report
 
-    def clean(self, tool: Optional[str] = None) -> None:
+    def clean(self, tool: str | None = None) -> None:
         """Remove cached container(s).
 
         Parameters
@@ -1010,32 +1041,52 @@ class ContainerManager:
 # §6  __all__
 # ======================================================================
 
-__all__: List[str] = [
-    # §1 Versioning
-    "__version__",
-    "VERSION_INFO",
-    # §2 Types — geometric
-    "Vertices", "Faces", "Points", "Normals",
-    # §2 Types — spectral
-    "Eigenvalues", "Eigenvectors", "SparseMatrix", "MassMatrix",
-    # §2 Types — descriptors
-    "ScalarMap", "DescriptorMatrix", "GlobalDescriptor", "DistanceMatrix",
-    # §2 Types — neuroimaging
-    "LabelArray", "VolumeImage", "SurfaceImage",
-    # §2 Types — analysis
-    "ConnectomeMatrix", "NetworkMatrix",
-    # §2 Types — generic
-    "PathLike",
-    # §2b Enums
-    "GeometryFormat", "AtlasScheme", "DescriptorType",
-    "AnalysisObjective", "BackendName",
+__all__: list[str] = [
+    "CONTAINER_REGISTRY",
     # §2b Eligibility
     "DESCRIPTOR_ELIGIBILITY",
-    # §3 Logging
-    "get_logger", "set_log_level",
-    # §4 Progress
-    "progress_simple", "progress_parallel",
-    "progress_spinner", "NestedProgress",
+    "VERSION_INFO",
+    "AnalysisObjective",
+    "AtlasScheme",
+    "BackendName",
+    # §2 Types — analysis
+    "ConnectomeMatrix",
+    "ContainerManager",
     # §5 Containers
-    "ContainerSpec", "ContainerManager", "CONTAINER_REGISTRY",
+    "ContainerSpec",
+    "DescriptorMatrix",
+    "DescriptorType",
+    "DistanceMatrix",
+    # §2 Types — spectral
+    "Eigenvalues",
+    "Eigenvectors",
+    "Faces",
+    # §2b Enums
+    "GeometryFormat",
+    "GlobalDescriptor",
+    # §2 Types — neuroimaging
+    "LabelArray",
+    "MassMatrix",
+    "NestedProgress",
+    "NetworkMatrix",
+    "Normals",
+    # §2 Types — generic
+    "PathLike",
+    "Points",
+    # §2 Types — descriptors
+    "ScalarMap",
+    "SparseMatrix",
+    "SurfaceImage",
+    # §2 Types — geometric
+    "Vertices",
+    "VolumeImage",
+    # §1 Versioning
+    "__version__",
+    # §3 Logging
+    "get_logger",
+    "progress_parallel",
+    # §4 Progress
+    "progress_simple",
+    "progress_spinner",
+    "set_log_level",
 ]
