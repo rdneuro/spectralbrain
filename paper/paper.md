@@ -162,7 +162,8 @@ results, reviewed all generated code, and are responsible for the final content.
 # Acknowledgements
 
 We thank colleagues at the Instituto Nacional de Neurociência Translacional and
-the Universidade Federal de Santa Catarina for discussion and testing. [Funding
-sources and grant numbers to be added.]
+the Universidade Federal de Santa Catarina for discussion and testing. Also we thank 
+the CNPq and CAPES by the the grant to doctorate research, allowing us to dedicate
+the time to develop this library.
 
 # References
