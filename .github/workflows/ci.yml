@@ -132,3 +132,34 @@ jobs:
           print(f'SpectralBrain {sb.__version__} imported OK')
           print(f'Subpackages: core, io, spectral, statistics, backends, utils, viz')
           "
+
+  # ── Visualization + Bayesian tests (need vedo/PyMC; run headless) ──
+  viz-bayesian:
+    name: Viz + Bayesian (headless)
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: ">=0.11"
+
+      - name: Install Python 3.11
+        run: uv python install 3.11
+
+      # Install the package with the viz + bayesian extras and the test group.
+      - name: Install package + viz/bayesian extras
+        run: uv sync --group test --extra viz --extra bayesian
+
+      # Offscreen VTK + a virtual framebuffer so vedo can render with no display.
+      - name: Run viz + Bayesian tests under xvfb
+        env:
+          VTK_USE_OFFSCREEN: "1"
+          PYVISTA_OFF_SCREEN: "true"
+        run: |
+          sudo apt-get update && sudo apt-get install -y xvfb libgl1 libxrender1
+          xvfb-run -a uv run pytest tests/test_viz_hipp3d.py tests/test_statistics.py \
+            -v --tb=short
