@@ -3,9 +3,10 @@
 # Continuous Integration — runs on every push and pull request.
 #
 # Jobs:
-#   lint     → ruff check + ruff format --check
-#   test     → pytest across Python 3.11 / 3.12 × ubuntu / macos
-#   coverage → upload to Codecov (ubuntu + py3.11 only)
+#   lint        → ruff check + ruff format --check
+#   test        → pytest across Python 3.11 / 3.12 × ubuntu / macos
+#   build-check → build sdist+wheel, install the wheel in a clean env, import
+#   viz-bayesian→ vedo + PyMC tests, headless under xvfb
 #
 # Uses uv for all dependency resolution (10-50× faster than pip).
 # ──────────────────────────────────────────────────────────────────────
@@ -23,8 +24,8 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-# ── Lint ──────────────────────────────────────────────────────────────
 jobs:
+  # ── Lint ────────────────────────────────────────────────────────────
   lint:
     name: Lint (ruff)
     runs-on: ubuntu-latest
@@ -38,16 +39,16 @@ jobs:
       - name: Install Python 3.11
         run: uv python install 3.11
 
-      - name: Install dev dependencies
+      - name: Install lint dependencies
         run: uv sync --group lint --no-install-workspace
 
       - name: Ruff check
-        run: uv run ruff check src/
-        
-      - name: Ruff format check
-        run: uv run ruff format --check src/
+        run: uv run --no-sync ruff check src/
 
-  # ── Test matrix ───────────────────────────────────────────────────
+      - name: Ruff format check
+        run: uv run --no-sync ruff format --check src/
+
+  # ── Test matrix ─────────────────────────────────────────────────────
   test:
     name: Test (py${{ matrix.python-version }} / ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -71,7 +72,8 @@ jobs:
         run: uv python install ${{ matrix.python-version }}
 
       # Install in locked mode if uv.lock exists, otherwise resolve fresh.
-      # --extra viz is skipped on CI because yabplot/vedo need a display.
+      # Optional extras (viz / bayesian / neuro) are skipped here; tests that
+      # need them call pytest.importorskip and are skipped cleanly.
       - name: Install package + test dependencies
         run: |
           if [ -f uv.lock ]; then
@@ -81,7 +83,7 @@ jobs:
           fi
 
       - name: Run tests
-        run: uv run pytest tests/ -v --tb=short -x
+        run: uv run pytest tests/ -v --tb=short
 
       # Upload coverage only from the primary matrix cell.
       - name: Run tests with coverage
@@ -97,7 +99,7 @@ jobs:
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
-  # ── Build check (ensures the package builds cleanly) ──────────────
+  # ── Build check (ensures the package builds and imports cleanly) ─────
   build-check:
     name: Build check
     runs-on: ubuntu-latest
@@ -122,18 +124,20 @@ jobs:
           echo "--- wheel contents ---"
           python3 -m zipfile -l dist/*.whl | head -30
 
-      # Verify the wheel installs and the package actually imports.
+      # Verify the wheel installs and the package imports, in a clean venv.
+      # NOTE: `uv venv` creates a pip-less environment, so we install with
+      # `uv pip install --python <env>` rather than the venv's own pip.
       - name: Install from wheel and smoke test
         run: |
           uv venv --python 3.11 /tmp/test-env
-          /tmp/test-env/bin/pip install dist/*.whl
+          uv pip install --python /tmp/test-env/bin/python dist/*.whl
           /tmp/test-env/bin/python -c "
           import spectralbrain as sb
           print(f'SpectralBrain {sb.__version__} imported OK')
-          print(f'Subpackages: core, io, spectral, statistics, backends, utils, viz')
+          print('Subpackages: core, io, spectral, statistics, backends, utils, viz')
           "
 
-  # ── Visualization + Bayesian tests (need vedo/PyMC; run headless) ──
+  # ── Visualization + Bayesian tests (need vedo / PyMC; run headless) ──
   viz-bayesian:
     name: Viz + Bayesian (headless)
     runs-on: ubuntu-latest
@@ -150,9 +154,15 @@ jobs:
       - name: Install Python 3.11
         run: uv python install 3.11
 
-      # Install the package with the viz + bayesian extras and the test group.
-      - name: Install package + viz/bayesian extras
-        run: uv sync --group test --extra viz --extra bayesian
+      # The targeted tests only need vedo (viz) and PyMC (bayesian); matplotlib
+      # and scikit-learn are already core deps. We install the reliable
+      # `bayesian` extra plus vedo directly, and deliberately avoid the full
+      # `viz` extra, whose niche packages (hippomaps, brainspace, yabplot, ...)
+      # are not needed here and do not resolve cleanly on CI runners.
+      - name: Install package + bayesian extra and vedo
+        run: |
+          uv sync --group test --extra bayesian
+          uv pip install vedo
 
       # Offscreen VTK + a virtual framebuffer so vedo can render with no display.
       - name: Run viz + Bayesian tests under xvfb
