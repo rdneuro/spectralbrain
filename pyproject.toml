@@ -107,6 +107,7 @@ neuro = [
     "templateflow>=24.0",
     "antspyx>=0.4; platform_system != 'Windows'",
     "brainspace",
+    "robust_laplacian>=0.3",
 ]
 
 notebooks = [
@@ -115,6 +116,7 @@ notebooks = [
     "trame>=3.6",
     "trame-vtk",
     "trame-vuetify",
+    "robust_laplacian>=0.3",
 ]
 
 full = [
@@ -178,7 +180,7 @@ packages = ["src/spectralbrain"]
 [tool.hatch.build.targets.sdist]
 exclude = [
     ".github", "docs/_build", "tests/data/*.nii.gz",
-    "notebooks", "*.egg-info",
+    "notebooks", "*.egg-info", "tutorials",
 ]
 
 # =============================================================================
