@@ -310,7 +310,16 @@ class BayesianModel(abc.ABC):
         """
         self._check_fitted()
         az = _require_arviz()
-        return az.summary(self.trace_, var_names=var_names, hdi_prob=hdi_prob)
+        # ArviZ >= 1.0 renamed ``hdi_prob`` to ``ci_prob``; stay compatible with both.
+        import inspect
+
+        params = inspect.signature(az.summary).parameters
+        kwargs: dict[str, Any] = {"var_names": var_names}
+        if "ci_prob" in params:
+            kwargs["ci_prob"] = hdi_prob
+        elif "hdi_prob" in params:
+            kwargs["hdi_prob"] = hdi_prob
+        return az.summary(self.trace_, **kwargs)
 
     def save(self, path: PathLike) -> Path:
         """Save trace to NetCDF."""
