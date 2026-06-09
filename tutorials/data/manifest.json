@@ -1,0 +1,24 @@
+{
+  "subjects": {
+    "sub01": {
+      "modality": "freesurfer",
+      "note": "cortical pial + aseg + hippocampal subfields + morphometry"
+    },
+    "sub02": {
+      "modality": "freesurfer",
+      "note": "cortical pial + aseg + hippocampal subfields + morphometry"
+    },
+    "sub03": {
+      "modality": "hippunfold",
+      "note": "HippUnfold v2 den-8k hippocampus (L/R)"
+    },
+    "sub04": {
+      "modality": "hippunfold",
+      "note": "HippUnfold v2 den-8k hippocampus (L/R)"
+    },
+    "sub05": {
+      "modality": "tractseg",
+      "note": "15 white-matter bundles (binary masks from TOM) + 1 example TOM"
+    }
+  }
+}

@@ -1,0 +1,31 @@
+# Pre-commit hooks for SpectralBrain.
+# Install once with:  pre-commit install
+# Run on all files:   pre-commit run --all-files
+#
+# Ruff settings (select/ignore, line length, target) are read from
+# pyproject.toml so the hooks and CI stay in sync.
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.5.0
+    hooks:
+      # Lint (with autofix); mirrors `ruff check src/` in CI.
+      - id: ruff
+        args: [--fix]
+      # Format; mirrors `ruff format --check src/` in CI.
+      - id: ruff-format
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      - id: check-yaml
+      - id: check-toml
+      - id: check-added-large-files
+        args: [--maxkb=512]
+      - id: check-merge-conflict
+      - id: debug-statements
+      - id: mixed-line-ending
+        args: [--fix=lf]
