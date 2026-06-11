@@ -1,0 +1,16 @@
+# Documentation build requirements for SpectralBrain.
+# Install with:  pip install -r docs/requirements.txt
+# The package itself is installed separately (see .readthedocs.yaml / Makefile).
+
+sphinx>=7.3
+pydata-sphinx-theme>=0.15
+sphinx-design>=0.6
+myst-nb>=1.1            # pulls in myst-parser; renders Markdown + notebooks
+sphinx-gallery>=0.16
+sphinx-copybutton>=0.5
+
+# Needed at build time so the gallery examples execute and render.
+pyvista>=0.44
+matplotlib>=3.8
+numpy>=1.26
+linkify-it-py>=2.0       # enables MyST "linkify" (auto-link bare URLs)

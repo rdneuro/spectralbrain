@@ -1,0 +1,45 @@
+/* SpectralBrain docs — keep it airy. */
+
+/* More breathing room in the main content column. */
+.bd-article-container {
+  max-width: 60rem;
+}
+
+/* Cards: gentle lift, generous padding, calm borders. */
+.sd-card {
+  border: 1px solid var(--pst-color-border);
+  border-radius: 0.6rem;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.sd-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+}
+.sd-card-body {
+  padding: 1.4rem 1.5rem;
+  line-height: 1.55;
+}
+
+/* Gallery thumbnails: more whitespace between figures. */
+.sphx-glr-thumbcontainer {
+  margin: 14px !important;
+  border-radius: 0.5rem;
+}
+
+/* Code blocks: softer, roomier. */
+div.highlight {
+  border-radius: 0.5rem;
+}
+
+/* Headings: a touch more space above so sections feel separated. */
+.bd-article h2 {
+  margin-top: 2.4rem;
+}
+.bd-article h3 {
+  margin-top: 1.8rem;
+}
+
+/* Hero text spacing on the landing page. */
+.sd-fs-1 {
+  margin-top: 1.5rem;
+}
