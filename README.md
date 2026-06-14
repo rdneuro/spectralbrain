@@ -90,7 +90,8 @@ import spectralbrain.viz as sbviz             # 3D / 2D figures
 ```python
 import spectralbrain as sb
 
-# A BrainMesh from vertices (N, 3) and faces (M, 3); or sb.io.load(...) a file.
+# A BrainMesh from vertices (N, 3) and faces (M, 3).
+vertices, faces = sb.io.load_gifti_surface("path/to/surf/gii")
 mesh   = sb.BrainMesh(vertices, faces)
 decomp = mesh.decompose(k=100)                       # 100 LBO eigenpairs
 
