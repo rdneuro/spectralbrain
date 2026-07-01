@@ -51,8 +51,18 @@ remaining general to any brain surface or point cloud.
   control (max-statistic permutation), FDR, partial correlations with correct
   degrees of freedom, TFCE, the analytic DeLong AUC test, BCa bootstrap, ComBat /
   ComBat-GAM harmonization, and six PyMC Bayesian models.
-- **Publication figures** — a template-free six-view 3D renderer (vedo), plus
-  unfolded flat-maps, cluster overlays, and Bayesian-posterior plots.
+- **Contiguous clustering & atlas comparison** — a distance-dependent Chinese
+  Restaurant Process (ddCRP) with a Normal-Inverse-Wishart collapsed marginal
+  likelihood (spatial and fPCA-functional variants), consensus clustering,
+  data-driven hyperparameter autotuning, and a cluster-vs-atlas suite (ARI/AMI/
+  NMI/VI, Dice/Jaccard, within-parcel homogeneity) reported against **size-matched
+  random parcellations**, plus spatially-aware ARI (spARI) and eigenstrapping/
+  BrainSMASH spatial nulls for bounded surfaces.
+- **Publication figures** — a template-free six-view 3D renderer (vedo), unfolded
+  flat-maps, Bayesian-posterior plots, **advanced 3D tractography** (direction-
+  encoded/scalar streamlines, bundle surfaces with HKS/WKS overlays, multi-POV
+  montages), and **parcellation-vs-clustering grids** (views × labelings) for
+  hippocampi, brains, and bundles.
 
 ## Installation
 
@@ -64,9 +74,10 @@ Optional feature sets (extras):
 
 ```bash
 pip install "spectralbrain[bayesian]"   # PyMC, nutpie, NumPyro, BlackJAX, ArviZ
-pip install "spectralbrain[viz]"        # vedo, scienceplots, hippunfold_plot, …
+pip install "spectralbrain[viz]"        # vedo, fury, trimesh, cmcrameri, …
 pip install "spectralbrain[gpu]"        # torch, CuPy, JAX (CUDA)
 pip install "spectralbrain[neuro]"      # nilearn, dipy, pybids, templateflow, …
+pip install "spectralbrain[tuning]"     # optuna (ddCRP autotuning; random fallback)
 pip install "spectralbrain[full]"       # everything above
 ```
 
@@ -161,6 +172,55 @@ model = HorseshoeRegression(tau_prior=0.5).fit(X, y, sampler="nuts")
 importance = model.feature_importance()   # sparse posterior shrinkage
 ```
 
+### 7 — Contiguous ddCRP clustering + atlas comparison
+
+The sampler maintains **incremental per-component sufficient statistics** (the cluster scatter is never recomputed inside the candidate loop) and caches the NIW marginal per cluster, so it scales to dense surfaces (~1-3 s/draw at ~7k vertices). Pass `n_components` to PCA-whiten the descriptors for a further speedup and better conditioning.
+
+```python
+import spectralbrain.statistics as sbstats
+
+# H : (V, d) per-vertex descriptors (e.g. fused HKS/WKS); vertices/faces from the mesh.
+res = sbstats.cluster_ddcrp(H, faces=faces, vertices=vertices,
+                            decay_kind="exponential")   # decay uses real edge distances
+print(res)                                              # ClusterResult(method='ddcrp', n_clusters=…)
+
+# Tune hyperparameters from the data (optuna if installed, else random search):
+tuned = sbstats.autotune_ddcrp(H, faces=faces, vertices=vertices, n_trials=40)
+final = tuned.cluster_result                            # refit ClusterResult
+
+# Is the partition more atlas-like than a size-matched random parcellation?
+report = sbstats.cluster_atlas_concordance(final.labels, atlas_labels,
+                                           faces=faces, coords=vertices, n_null=1000)
+print(report["metrics"]["ari"], report["ari_null"]["z"], report["spARI"]["spARI"])
+```
+
+### 8 — Tracts in 3D and parcellation-vs-clustering grids (extra: `[viz]`)
+
+```python
+import spectralbrain.viz as sbviz
+
+# (a) advanced 3D tractography from several POVs (FURY; DEC orientation colours)
+sl, _ = sbviz.load_streamlines("CST_left.trk", to_space="world")   # needs dipy
+fig, _ = sbviz.streamlines_multiview(sl, views=("left", "anterior", "superior", "oblique"),
+                                     out_path="cst_multiview.pdf")
+
+# bundle surface from a TractSeg mask, with an HKS overlay
+V, F = sbviz.mask_to_mesh(mask, affine=affine)
+hks = sbviz.spectral_overlay(V, F, kind="hks")
+sbviz.render_bundle_surface(V, F, scalars=hks, view="oblique", out_path="cst_hks.png")
+
+# (b) 3D grid: columns = views, rows = a reference parcellation then each clustering
+fig, meta = sbviz.plot_parcellation_vs_clusters(
+    vertices, faces, parcellation=atlas_labels,
+    clusterings={"ddCRP": res, "Leiden": leiden_res},   # ClusterResult or label arrays
+    views=["left_lateral", "anterior", "superior"],
+    save="parcellation_vs_clusters.png",
+)
+```
+
+The grid works identically for hippocampi, whole brains, and bundle surfaces —
+it operates on any `(vertices, faces)` mesh plus a dict of per-vertex labelings.
+
 ## Loading a cohort
 
 ```python
@@ -205,6 +265,10 @@ Bayesian models accept `sampler="auto" | "nuts" | "nutpie" | "numpyro" |
 | `spectralbrain.statistics` | vertex-wise tests, TFCE, effect sizes, RSA, classification, ComBat(-GAM), normative models, bootstrap & null models, six Bayesian models |
 | `spectralbrain.backends` | CPU / Torch / CuPy / JAX eigensolvers; PyMC / nutpie / NumPyro / BlackJAX samplers |
 | `spectralbrain.viz` | six-view 3D renderer, unfolded flat-maps, cluster overlays, Bayesian-posterior and general scientific plots |
+
+## Validation
+
+`examples/example_clustering_tracts.py` is a runnable end-to-end pipeline (HippUnfold hippocampus -> HKS/WKS -> ddCRP -> atlas stats -> 3D figures; synthetic fallback if no data). `validation/validate_spari.py` checks the spatially-aware Rand index: analytical properties (identity, label invariance, symmetry, **reduction to the exact ARI as the spatial scale vanishes**, chance level, locality monotonicity) run anywhere, plus an R cell-for-cell bridge (`--with-r`) against the published `spARI` package that justifies flipping `validated_against_R=True`.
 
 ## Development
 

@@ -1,0 +1,29 @@
+# requirements-expanded.txt — optional dependencies for spectralbrain.expanded
+# -----------------------------------------------------------------------------
+# These power the non-Laplace–Beltrami operator family (Dirac/Steklov,
+# Hodge/Ricci, persistent homology, graph spectra, elliptic-Fourier/SPHARM).
+# They are imported lazily (only when the descriptor that needs them is
+# called), so the core library never requires them at import time.
+#
+# Equivalent to:  pip install 'spectralbrain[expanded]'
+# Install with:   pip install -r requirements-expanded.txt
+# -----------------------------------------------------------------------------
+
+# ── Topology & persistence (Hodge, persistent Laplacian/homology/Dirac) ──
+gudhi>=3.9
+ripser>=0.6
+persim>=0.3
+
+# ── Discrete curvature (Ollivier / Forman Ricci) ──
+GraphRicciCurvature>=0.5.3
+POT>=0.9                  # optimal transport (import name: ot)
+
+# ── Graph-spectral descriptors (NetLSD, FGSD, resistance, Reeb) ──
+networkx>=3.2
+
+# ── Classic morphometric spectra ──
+pyefd>=1.6                # elliptic Fourier descriptors
+
+# ── Robust / non-manifold operators and intrinsic transport ──
+robust_laplacian>=0.3     # tufted Laplacian (Sharp & Crane)
+potpourri3d>=1.0          # vector heat / geodesics

@@ -96,6 +96,10 @@ viz = [
     "hippunfold-plot",
     "brainspace",
     "hippomaps",
+    # Advanced 3D tractography (spectralbrain.viz.tracts3d)
+    "fury>=0.10",
+    "trimesh>=4.0",
+    "cmcrameri>=1.7",
 ]
 
 neuro = [
@@ -110,6 +114,29 @@ neuro = [
     "robust_laplacian>=0.3",
 ]
 
+# ── Non-LBO operators & descriptors (spectralbrain.expanded) ─────────────────
+# Optional, lazily-imported scientific libraries used by the expanded
+# operator family (Dirac/Steklov, Hodge/Ricci, persistent homology, graph
+# spectra, elliptic-Fourier/SPHARM).  None are imported at `import
+# spectralbrain` time; each is loaded on first use of the descriptor that
+# needs it.  See src/spectralbrain/expanded/_base.py:require_optional.
+expanded = [
+    # Topology & persistence (Hodge, persistent Laplacian/homology/Dirac)
+    "gudhi>=3.9",
+    "ripser>=0.6",
+    "persim>=0.3",
+    # Discrete curvature (Ollivier / Forman Ricci)
+    "GraphRicciCurvature>=0.5.3",
+    "POT>=0.9",                       # optimal transport (import name: ot)
+    # Graph-spectral descriptors (NetLSD, FGSD, resistance, Reeb)
+    "networkx>=3.2",
+    # Classic morphometric spectra
+    "pyefd>=1.6",                     # elliptic Fourier descriptors
+    # Robust / non-manifold operators and intrinsic transport
+    "robust_laplacian>=0.3",          # tufted Laplacian (Sharp & Crane)
+    "potpourri3d>=1.0",               # vector heat / geodesics
+]
+
 notebooks = [
     "jupyterlab>=4.2",
     "ipywidgets>=8.1",
@@ -119,8 +146,15 @@ notebooks = [
     "robust_laplacian>=0.3",
 ]
 
+# ── ddCRP hyperparameter autotuning (spectralbrain.statistics.autotune_ddcrp) ─
+# All optional: autotune_ddcrp falls back to a reproducible random search when
+# none of these are installed. hyperopt/botorch are additional backends.
+tuning = [
+    "optuna>=3.6",
+]
+
 full = [
-    "spectralbrain[gpu,bayesian,viz,neuro,notebooks]",
+    "spectralbrain[gpu,bayesian,viz,neuro,notebooks,expanded,tuning]",
 ]
 
 # =============================================================================
