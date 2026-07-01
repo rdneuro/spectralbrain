@@ -33,7 +33,7 @@ from __future__ import annotations
 try:
     from spectralbrain._version import __version__
 except ImportError:
-    __version__ = "0.1.0"
+    __version__ = "0.0.6"
 
 # ── Runtime configuration ──
 # ── Backends (lazy — heavy imports deferred) ──
