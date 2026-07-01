@@ -8,6 +8,7 @@
   <a href="https://pypi.org/project/spectralbrain/"><img src="https://img.shields.io/pypi/pyversions/spectralbrain.svg" alt="Python"></a>
   <a href="https://github.com/rdneuro/spectralbrain/actions"><img src="https://github.com/rdneuro/spectralbrain/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License"></a>
+  <a href="https://doi.org/10.5281/zenodo.21090748"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.21090748.svg" alt="DOI"></a>
 </p>
 
 ---
@@ -282,9 +283,15 @@ uv run ruff check src/ tests/
 
 ## Citing
 
-If SpectralBrain contributes to your work, please cite it (a JOSS paper is in
-preparation; until then cite the repository and release DOI). See
-[`CITATION.cff`](CITATION.cff).
+If SpectralBrain contributes to your work, please cite it. A JOSS paper is in
+preparation; until then, cite the archived release on Zenodo:
+
+> Debona, R. *SpectralBrain: Spectral Shape Analysis for Brain Structures*.
+> Zenodo. https://doi.org/10.5281/zenodo.21090748
+
+The DOI [10.5281/zenodo.21090748](https://doi.org/10.5281/zenodo.21090748)
+always resolves to the latest release. See [`CITATION.cff`](CITATION.cff) for a
+machine-readable citation — GitHub's **"Cite this repository"** button reads it.
 
 ## License
 

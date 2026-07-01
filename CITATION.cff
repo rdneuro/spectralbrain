@@ -19,6 +19,11 @@ authors:
 license: MIT
 repository-code: "https://github.com/rdneuro/spectralbrain"
 url: "https://github.com/rdneuro/spectralbrain"
+doi: "10.5281/zenodo.21090748"
+identifiers:
+  - type: doi
+    value: "10.5281/zenodo.21090748"
+    description: "Concept DOI (all versions; resolves to the latest release)."
 keywords:
   - neuroscience
   - neuroimaging
@@ -26,5 +31,5 @@ keywords:
   - laplace-beltrami
   - shape-analysis
   - morphometry
-version: 0.1.0
-date-released: "2026-06-05"
+version: 0.0.6
+date-released: "2026-07-01"
