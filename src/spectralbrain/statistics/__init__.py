@@ -120,10 +120,44 @@ from spectralbrain.statistics.surrogates import (  # noqa: F401
     SyntheticPointCloud,
     bootstrap_ci,
     bootstrap_paired_difference,
+    null_brainsmash,
     null_edge_rewiring,
+    null_eigenstrapping,
     null_eigenvalue_permutation,
     null_parametric,
     null_phase_randomisation,
     null_spin_permutation,
     null_subject_permutation,
+)
+
+# ── ddcrp.py (ported from brainmosaic, harmonised) ──
+from spectralbrain.statistics.ddcrp import (  # noqa: F401
+    DDCRPTuningResult,
+    autotune_ddcrp,
+    cluster_consensus,
+    cluster_ddcrp,
+    cluster_ddcrp_functional,
+)
+
+# ── atlas_stats.py (cluster-vs-atlas comparison, ported from brainmosaic) ──
+from spectralbrain.statistics.atlas_stats import (  # noqa: F401
+    adjusted_rand_index,
+    aggregate_across_subjects,
+    cluster_atlas_concordance,
+    compare_partitions,
+    homogeneity_vs_null,
+    normalized_mutual_info,
+    parcel_overlap,
+    random_parcellation,
+    spatial_rand_index,
+    spectral_homogeneity,
+    variation_of_information,
+)
+
+# ── landmarking.py (M-GP active-learning landmarking; SIWKS + HFE) ──
+from spectralbrain.statistics.landmarking import (  # noqa: F401
+    MGPLandmarkResult,
+    compute_si_wks,
+    heat_flow_entropy,
+    mgp_landmarks,
 )

@@ -832,13 +832,77 @@ def _random_sphere_points(n, radius, rng):
     return radius * np.column_stack([r_xy * np.cos(phi), r_xy * np.sin(phi), z])
 
 
+def null_eigenstrapping(data, eigenvalues, eigenvectors, mass, *,
+                        n_surrogates=1000, eigenvalue_tol=1e-3, seed=0):
+    """Null 7: spatial-autocorrelation-preserving surrogates by rotating LBO
+    geometric eigenmodes (Koussis, Pang et al. 2025).
+
+    The recommended null for **bounded** cortical/subcortical surfaces, where the
+    spin test is biased (Bazinet, Liu & Misic 2025). The map is expanded in the
+    M-orthonormal LBO eigenbasis; near-degenerate eigenmodes are grouped and
+    randomly rotated within each group, preserving the power spectrum (hence the
+    spatial autocorrelation) while randomising phase. Built on the same
+    Laplace-Beltrami operator as the HKS/WKS descriptors.
+
+    Parameters
+    ----------
+    data : ndarray, shape (V,)
+        Scalar map on the mesh.
+    eigenvalues : ndarray, shape (K,)
+    eigenvectors : ndarray, shape (V, K)
+        M-orthonormal LBO eigenvectors.
+    mass : ndarray, shape (V,)
+        Lumped mass diagonal (vertex areas).
+    n_surrogates : int
+    eigenvalue_tol : float
+        Relative tolerance for grouping near-degenerate eigenvalues.
+    seed : int
+
+    Returns
+    -------
+    list of ndarray
+        ``n_surrogates`` surrogate maps, each shape (V,).
+    """
+    from spectralbrain.statistics._clustercore.nulls import eigenstrapping_surrogates
+    surr = eigenstrapping_surrogates(
+        data, eigenvalues, eigenvectors, mass, n_surrogates=n_surrogates,
+        eigenvalue_tol=eigenvalue_tol, random_state=seed)
+    return [np.asarray(row) for row in surr]
+
+
+def null_brainsmash(data, distance, *, n_surrogates=1000, seed=0, **kwargs):
+    """Null 8: variogram-matched surrogates (Burt 2020) from a distance matrix.
+
+    A fallback null for parcellated/volumetric/subcortical data where geometric
+    eigenmodes are unavailable; matches the empirical variogram of the map.
+
+    Parameters
+    ----------
+    data : ndarray, shape (V,)
+    distance : ndarray, shape (V, V)
+        Geodesic/Euclidean distance matrix.
+    n_surrogates : int
+    seed : int
+
+    Returns
+    -------
+    list of ndarray
+    """
+    from spectralbrain.statistics._clustercore.nulls import brainsmash_surrogates
+    surr = brainsmash_surrogates(data, distance, n_surrogates=n_surrogates,
+                                 random_state=seed, **kwargs)
+    return [np.asarray(row) for row in surr]
+
+
 __all__ = [
     "SyntheticDescriptors",
     "SyntheticMesh",
     "SyntheticPointCloud",
     "bootstrap_ci",
     "bootstrap_paired_difference",
+    "null_brainsmash",
     "null_edge_rewiring",
+    "null_eigenstrapping",
     "null_eigenvalue_permutation",
     "null_parametric",
     "null_phase_randomisation",

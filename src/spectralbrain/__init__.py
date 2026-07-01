@@ -156,6 +156,8 @@ from spectralbrain.utils import (
 )
 
 __all__ = [
+    # Expanded (non-LBO operators; lazy subpackage)
+    "expanded",
     # Utils
     "ASEG_LABELS",
     "ATLAS_REGISTRY",
@@ -261,3 +263,26 @@ __all__ = [
     "wesd",
     "wesd_matrix",
 ]
+
+
+# ── Lazy access to the optional `expanded` subpackage ──
+# `spectralbrain.expanded` (non-LBO operators) pulls optional, heavy
+# scientific dependencies only when its descriptors are *used*.  We expose
+# it lazily so that `import spectralbrain` stays light: the subpackage is
+# imported on first attribute access (`sb.expanded....`).
+import importlib as _importlib
+from typing import Any as _Any
+
+
+def __getattr__(name: str) -> _Any:
+    """PEP 562 lazy attribute hook for optional subpackages."""
+    if name == "expanded":
+        mod = _importlib.import_module("spectralbrain.expanded")
+        globals()["expanded"] = mod
+        return mod
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    """Include lazily-exposed names in dir()/tab-completion."""
+    return sorted(set(globals()) | {"expanded"})

@@ -148,3 +148,42 @@ from spectralbrain.viz.hipp3d import (  # noqa: F401
     plot_hippocampus_sixview,
     plot_surface_sixview,
 )
+
+# ── tracts3d.py (advanced 3D tractography, neuro-tracts conventions) ──
+from spectralbrain.viz.tracts3d import (  # noqa: F401
+    TRACT_VIEWS,
+    add_glass_brain,
+    compose_tract_panel,
+    load_streamlines,
+    mask_to_mesh,
+    render_bundle_surface,
+    render_streamlines,
+    spectral_overlay,
+    streamlines_multiview,
+)
+
+# ── panels.py (parcellation-vs-clustering 3D grid) ──
+from spectralbrain.viz.panels import (  # noqa: F401
+    plot_parcellation_cluster_grid,
+    plot_parcellation_vs_clusters,
+)
+
+# ── eigenmodes.py (painel de eigenmodes estilo Mode-Based Morphometry, Cao 2024) ──
+from spectralbrain.viz.eigenmodes import (  # noqa: F401
+    assemble_eigenmode_panel,
+    compute_geometric_eigenmodes,
+    eigenmode_wavelength,
+    plot_eigenmode_panel,
+    render_eigenmodes,
+    select_mode_indices,
+    standardize_sign,
+)
+
+# ── spectral_deformation.py (variação espectral L-vs-R, Hu & Hua 2017) ──
+from spectralbrain.viz.spectral_deformation import (  # noqa: F401
+    cotangent_stiffness,
+    lateralization_map,
+    lumped_mass,
+    render_scale_on_mesh,
+    spectral_deformation,
+)
