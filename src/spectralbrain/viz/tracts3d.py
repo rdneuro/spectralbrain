@@ -257,35 +257,37 @@ def _set_fury_camera(scene, view: str) -> None:
 # ──────────────────────────────────────────────────────────────────────
 def mask_to_mesh(mask: np.ndarray, affine: Optional[np.ndarray] = None,
                  level: float = 0.5, smooth_sigma: float = 1.0,
-                 taubin_iter: int = 25):
+                 taubin_iter: int = 25, raw: bool = False):
     """Marching-cubes surface from a binary tract mask, mapped to world coords.
 
-    Light Gaussian smoothing of the mask + Lewiner marching cubes + Taubin
-    (shrink-free) smoothing give a clean surface suitable for spectral overlays.
-    Returns ``(vertices, faces)``.
+    With ``raw=False`` (default) the surface is produced by the shared,
+    open-surface-safe improvement pipeline
+    (:func:`spectralbrain.io.meshing.volume_to_mesh` with ``closed=False``):
+    Gaussian field smoothing + Lewiner marching cubes + Taubin (shrink-free)
+    smoothing, giving a clean surface suitable for spectral overlays. With
+    ``raw=True`` a plain marching-cubes surface (no smoothing) is returned.
+
+    Bundle masks are open / branching, so ``closed=False`` is used: the surface
+    is *not* forced watertight and components are *not* pruned. Returns
+    ``(vertices, faces)``.
     """
-    from scipy import ndimage
-    marching_cubes = _require_skimage_mc()
-    m = np.asarray(mask, float)
-    if smooth_sigma and smooth_sigma > 0:
-        m = ndimage.gaussian_filter(m, sigma=float(smooth_sigma))
-    verts, faces, _n, _v = marching_cubes(m, level=level, method="lewiner",
-                                          allow_degenerate=False)
-    if affine is not None:
+    aff = np.eye(4) if affine is None else np.asarray(affine, float)
+    if raw:
+        marching_cubes = _require_skimage_mc()
+        verts, faces, _n, _v = marching_cubes(
+            np.asarray(mask, float), level=level, method="lewiner",
+            allow_degenerate=False)
         homog = np.c_[verts, np.ones(len(verts))]
-        verts = (np.asarray(affine, float) @ homog.T).T[:, :3]
-    verts = np.asarray(verts, np.float64)
-    faces = np.asarray(faces, np.int64)
-    if taubin_iter and taubin_iter > 0:
-        try:
-            import trimesh
-            tm = trimesh.Trimesh(vertices=verts, faces=faces, process=False)
-            trimesh.smoothing.filter_taubin(tm, iterations=taubin_iter)
-            verts = np.asarray(tm.vertices, np.float64)
-            faces = np.asarray(tm.faces, np.int64)
-        except Exception:
-            logger.info("trimesh unavailable; skipping Taubin smoothing.")
-    return verts, faces
+        verts = (aff @ homog.T).T[:, :3]
+        return np.asarray(verts, np.float64), np.asarray(faces, np.int64)
+
+    from spectralbrain.io.meshing import volume_to_mesh
+    verts, faces = volume_to_mesh(
+        np.asarray(mask), aff, raw=False, closed=False, level=level,
+        field_mode="gaussian", sigma_vox=float(smooth_sigma),
+        taubin_iterations=int(taubin_iter),
+    )
+    return np.asarray(verts, np.float64), np.asarray(faces, np.int64)
 
 
 def render_bundle_surface(vertices: np.ndarray, faces: np.ndarray, *,

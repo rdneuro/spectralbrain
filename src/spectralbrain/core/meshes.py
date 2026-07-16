@@ -17,6 +17,7 @@ Dependencies
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any, Literal
 
 import numpy as np
@@ -91,6 +92,65 @@ class BrainMesh:
         self._L: SparseMatrix | None = None
         self._M: MassMatrix | None = None
         self._area: float | None = None
+
+    # ── Constructors ──────────────────────────────────────────────────
+
+    @classmethod
+    def from_volume(
+        cls,
+        volume: np.ndarray,
+        affine: np.ndarray,
+        *,
+        raw: bool = False,
+        label: int | Sequence[int] | None = None,
+        metadata: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> BrainMesh:
+        """Build a mesh from a (label) volume, improved by default for the LBO.
+
+        Thin wrapper over :func:`spectralbrain.io.meshing.volume_to_mesh`. With
+        ``raw=False`` (default) the volume is turned into a well-conditioned,
+        LBO-ready surface (sub-voxel iso-surface, topology cleanup, Taubin
+        smoothing, isotropic remeshing). With ``raw=True`` it reproduces the
+        legacy plain-marching-cubes path exactly.
+
+        Parameters
+        ----------
+        volume : ndarray, shape (X, Y, Z)
+            Intensity or integer-label volume.
+        affine : ndarray, shape (4, 4)
+            Voxel-to-world affine.
+        raw : bool
+            Skip the improvement pipeline (legacy behaviour) if True.
+        label : int or sequence of int, optional
+            Restrict to these label id(s) before meshing.
+        metadata : dict, optional
+            Provenance stored on the returned mesh.
+        **kwargs
+            Forwarded to :func:`~spectralbrain.io.meshing.volume_to_mesh`
+            (e.g. ``closed``, ``level``, ``field_mode``, ``taubin_iterations``,
+            ``remesh``, ``target_edge_mm``).
+
+        Returns
+        -------
+        BrainMesh
+
+        Examples
+        --------
+        >>> seg, affine = sb.io.load_nifti("aseg.mgz")
+        >>> hippo = BrainMesh.from_volume(seg, affine, label=17)  # improved
+        >>> raw = BrainMesh.from_volume(seg, affine, label=17, raw=True)
+        """
+        # Local import avoids the io <-> core import cycle at module load.
+        from spectralbrain.io.meshing import volume_to_mesh
+
+        verts, faces, info = volume_to_mesh(
+            volume, affine, raw=raw, label=label, return_info=True, **kwargs
+        )
+        meta = {"source": "volume", **info}
+        if metadata:
+            meta.update(metadata)
+        return cls(verts, faces, metadata=meta)
 
     # ── GeometricObject protocol ──────────────────────────────────────
 

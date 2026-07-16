@@ -59,6 +59,10 @@ from spectralbrain.io.loaders import (  # noqa: F401
     load_nifti,
     remap_parcellation,
 )
+from spectralbrain.io.meshing import (  # noqa: F401
+    refine_mesh,
+    volume_to_mesh,
+)
 from spectralbrain.io.parcellate import (  # noqa: F401
     ATLAS_REGISTRY,
     AtlasSpec,

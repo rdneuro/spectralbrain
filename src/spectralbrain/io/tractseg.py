@@ -152,6 +152,7 @@ def load_tractseg_bundle(
     jitter_scale: float = 0.25,
     seed: int | None = None,
     step_size: int = 1,
+    raw: bool = False,
 ) -> Any:
     """Load one TractSeg bundle mask as a point cloud or isosurface mesh.
 
@@ -170,7 +171,12 @@ def load_tractseg_bundle(
         Point-cloud only — optional sub-voxel jitter to break the regular
         grid (helps point-cloud Laplacian estimation).
     step_size : int
-        Mesh only — marching-cubes step (larger = coarser/faster).
+        Mesh only — marching-cubes step (larger = coarser/faster; raw path).
+    raw : bool
+        Mesh only — if ``False`` (default) the isosurface is improved for
+        spectral analysis (open-surface-safe: field smoothing + Taubin, no
+        watertight forcing or component pruning). If ``True``, reproduce the
+        legacy plain marching-cubes mesh exactly.
 
     Returns
     -------
@@ -202,13 +208,18 @@ def load_tractseg_bundle(
         return BrainPointCloud(pts, metadata={**meta, "n_voxels": int(binary.sum())})
 
     if output == "mesh":
-        from spectralbrain.core.base import marching_cubes
         from spectralbrain.core.meshes import BrainMesh
+        from spectralbrain.io.meshing import volume_to_mesh
 
-        verts, faces = marching_cubes(
-            binary.astype(np.float32), affine, level=0.5, step_size=step_size
+        # Bundle masks are open / branching / possibly multi-part surfaces, so
+        # closed=False: no watertight forcing and no largest-component pruning
+        # (which would amputate branches). raw=True reproduces the legacy plain
+        # marching-cubes mesh exactly.
+        verts, faces, info = volume_to_mesh(
+            binary.astype(np.float32), affine, raw=raw, closed=False,
+            level=0.5, step_size=step_size, return_info=True,
         )
-        return BrainMesh(verts, faces, metadata=meta)
+        return BrainMesh(verts, faces, metadata={**meta, **info})
 
     raise ValueError(f"Unknown output {output!r}; use 'pointcloud' or 'mesh'.")
 

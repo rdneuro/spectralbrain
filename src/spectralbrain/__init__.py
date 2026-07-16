@@ -93,6 +93,8 @@ from spectralbrain.io import (
     # Parcellation pipeline
     parcellate,
     parcellate_batch,
+    # Volume -> mesh (improved-by-default; pass raw=True for legacy)
+    refine_mesh,
     remap_parcellation,
     resample_to_template,
     save_connectome,
@@ -100,6 +102,7 @@ from spectralbrain.io import (
     save_hdf5,
     save_mesh,
     save_npz,
+    volume_to_mesh,
 )
 from spectralbrain.runtime import (  # noqa: F401
     AnalysisObjective,
@@ -246,6 +249,7 @@ __all__ = [
     "parse_bids_filename",
     "procrustes_align",
     "radius_search",
+    "refine_mesh",
     "remap_parcellation",
     "resample_to_template",
     "save_connectome",
@@ -260,6 +264,7 @@ __all__ = [
     "shape_difference_operator",
     "shapedna_distance",
     "timer",
+    "volume_to_mesh",
     "wesd",
     "wesd_matrix",
 ]
