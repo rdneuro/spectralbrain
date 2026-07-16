@@ -283,8 +283,7 @@ uv run ruff check src/ tests/
 
 ## Citing
 
-If SpectralBrain contributes to your work, please cite it. A JOSS paper is in
-preparation; until then, cite the archived release on Zenodo:
+If SpectralBrain contributes to your work, please cite it. Maybe someday JOSS will accept a rumble paperabout this library; until then, cite the archived release on Zenodo:
 
 > Debona, R. *SpectralBrain: Spectral Shape Analysis for Brain Structures*.
 > Zenodo. https://doi.org/10.5281/zenodo.21090748
