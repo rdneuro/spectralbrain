@@ -1,4 +1,8 @@
 <p align="center">
+  <img src="assets/sb_logo_light_nobg.png" alt="SpectralBrain" width="400">
+</p>
+
+<p align="center">
   <strong>SpectralBrain</strong><br>
   <em>Spectral Shape Analysis for Brain Structures</em>
 </p>
@@ -19,6 +23,17 @@ subfields, white-matter tracts, and point clouds from volumetric segmentations.
 It connects spectral geometry (the Laplace–Beltrami operator) to clinical
 neuroimaging, with one pipeline from FreeSurfer / HippUnfold output through
 statistically rigorous analysis to publication-ready figures.
+
+<p align="center">
+  <img src="assets/spectralbrain_concept.png" alt="SpectralBrain concept: input geometry → Laplace–Beltrami operator → spectral signature → descriptors" width="640">
+</p>
+
+<p align="center">
+  <em>The core idea: any input geometry — cortical surface, subcortical/hippocampal
+  mesh, tract, or point cloud — is passed through the Laplace–Beltrami operator to
+  obtain its eigenpairs {λ, φ}, from which pose- and mesh-free spectral descriptors
+  (ShapeDNA, HKS, SI-HKS, WKS, GPS, BKS, functional maps, wavelets) are read out.</em>
+</p>
 
 ## Statement of need
 
@@ -257,6 +272,24 @@ decomp = mesh.decompose(k=200, backend=TorchBackend())  # GPU eigsolve
 Bayesian models accept `sampler="auto" | "nuts" | "nutpie" | "numpyro" |
 "blackjax"`.
 
+## Structure & workflow
+
+From inputs to inference, SpectralBrain is one coherent pipeline —
+**load geometry → build the LBO & decompose → compute descriptors → group
+statistics → assess & visualize** — assembled from a small set of focused,
+independently usable subpackages.
+
+<p align="center">
+  <img src="assets/spectralbrain_workflow.png" alt="SpectralBrain workflow: inputs, main five-step workflow, and modular subpackage structure" width="880">
+</p>
+
+<p align="center">
+  <em>(a) inputs — geometry, operator, cohort, atlas, spectral descriptors, and
+  inference; (b) the five-step main workflow, ending in a lateralization
+  effect-size read-out; (c) the modular structure —
+  <code>core · spectral · io · statistics · viz · backends</code>.</em>
+</p>
+
 ## Documentation map
 
 | Subpackage | What it provides |
@@ -283,7 +316,7 @@ uv run ruff check src/ tests/
 
 ## Citing
 
-If SpectralBrain contributes to your work, please cite it. Maybe someday JOSS will accept a rumble paperabout this library; until then, cite the archived release on Zenodo:
+If SpectralBrain contributes to your work, please cite it. Someday, maybe, if we feel lucky, a JOSS paper will be submited; until then, cite the archived release on Zenodo:
 
 > Debona, R. *SpectralBrain: Spectral Shape Analysis for Brain Structures*.
 > Zenodo. https://doi.org/10.5281/zenodo.21090748
