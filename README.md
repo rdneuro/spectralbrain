@@ -290,6 +290,32 @@ independently usable subpackages.
   <code>core · spectral · io · statistics · viz · backends</code>.</em>
 </p>
 
+## The pipeline in practice
+
+The five stages above are not just a diagram — they run end to end on real
+study designs. The figure below carries two analyses through the whole pipeline
+side by side and adds a parallel **Bayesian lane**, so the same data are assessed
+with both frequentist tools (max-statistic permutation, TFCE, DeLong AUC) and
+Bayesian ones (hierarchical models, horseshoe priors, HDI + ROPE, LOO).
+
+<p align="center">
+  <img src="assets/spectralbrain_demo.png" alt="SpectralBrain end-to-end demonstration: hippocampal lateralization, cortical morphometry, and a Bayesian inference lane carried across the five pipeline stages" width="900">
+</p>
+
+<p align="center">
+  <em>An end-to-end walkthrough. <strong>Columns</strong> are worked analyses —
+  hippocampal lateralization in MTLE-HS (HippUnfold <code>den-8k</code> surfaces,
+  L vs R), cortical morphometry (MTLE-HS vs. controls, FreeSurfer / Schaefer-200),
+  and a Bayesian lane (hierarchical model → horseshoe priors → variable selection
+  → posterior effect size with HDI + ROPE → posterior-predictive check and LOO
+  model comparison). <strong>Rows</strong> are the five pipeline stages — load
+  geometry → decompose → descriptors → group statistics → assess — tied on the
+  left to the subpackages that implement them
+  (<code>io · core · spectral · statistics · viz</code>). Panels are illustrative,
+  generated from synthetic example data to show the shape and flow of an analysis,
+  not empirical results.</em>
+</p>
+
 ## Documentation map
 
 | Subpackage | What it provides |
