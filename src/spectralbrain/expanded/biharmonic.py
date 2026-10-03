@@ -39,20 +39,18 @@ Rustamov RM, Lipman Y, Funkhouser T. "Multiscale biharmonic kernels."
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any
 
 import numpy as np
 
 from spectralbrain.core.base import SpectralDecomposition
+from spectralbrain.expanded._base import BackendSpec
 from spectralbrain.runtime import (
     DescriptorMatrix,
     Faces,
-    ScalarMap,
     Vertices,
     get_logger,
 )
-
-from spectralbrain.expanded._base import BackendSpec
 
 logger = get_logger(__name__)
 

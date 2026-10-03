@@ -37,12 +37,11 @@ import numpy as np
 import scipy.sparse as sp
 
 from spectralbrain.core.base import SpectralDecomposition
+from spectralbrain.expanded._base import BackendSpec, operator_eigensystem
 from spectralbrain.runtime import (
     GlobalDescriptor,
     get_logger,
 )
-
-from spectralbrain.expanded._base import BackendSpec, operator_eigensystem
 
 logger = get_logger(__name__)
 
@@ -70,13 +69,19 @@ def _to_sparse_adjacency(adjacency: Any) -> sp.csr_matrix:
 def _graph_laplacian(
     A: sp.csr_matrix, *, normalized: bool
 ) -> sp.csr_matrix:
-    """Combinatorial ``L = D − A`` or symmetric-normalised Laplacian."""
+    """Combinatorial ``L = D − A`` or symmetric-normalised Laplacian.
+
+    For the normalised Laplacian, isolated (degree-0) nodes get a zero row
+    (``L_ii = 0``, the standard convention, Chung 1997), so each isolated
+    node contributes a zero eigenvalue — one per connected component.
+    """
     A = 0.5 * (A + A.T)  # symmetrise
     deg = np.asarray(A.sum(axis=1)).ravel()
     if normalized:
-        dis = 1.0 / np.sqrt(np.clip(deg, _EPS, None))
-        n = A.shape[0]
-        L = sp.identity(n, format="csr") - sp.diags(dis) @ A @ sp.diags(dis)
+        has_edge = deg > _EPS
+        dis = np.zeros_like(deg)
+        dis[has_edge] = 1.0 / np.sqrt(deg[has_edge])
+        L = sp.diags(has_edge.astype(np.float64)) - sp.diags(dis) @ A @ sp.diags(dis)
     else:
         L = sp.diags(deg) - A
     return sp.csr_matrix(0.5 * (L + L.T))
@@ -168,7 +173,9 @@ def netlsd(
         if ``None``).
     normalize : str
         ``"none"``; ``"empty"`` divides by the empty-graph trace ``N``;
-        ``"complete"`` normalises by the complete-graph trace.
+        ``"complete"`` normalises by the complete-graph ``K_N`` trace of the
+        same kind (normalised-Laplacian spectrum ``{0, N/(N−1) ×(N−1)}``):
+        heat ``1 + (N−1)e^{−tN/(N−1)}``, wave ``1 + (N−1)cos(tN/(N−1))``.
 
     Returns
     -------
@@ -196,8 +203,23 @@ def netlsd(
     if normalize == "empty":
         trace = trace / n
     elif normalize == "complete":
-        comp = np.exp(-np.outer(t, np.full(n, n))).sum(axis=1) + 1.0
+        lam_k = n / max(n - 1, 1)
+        if kind == "heat":
+            comp = 1.0 + (n - 1) * np.exp(-t * lam_k)
+        else:
+            comp = 1.0 + (n - 1) * np.cos(t * lam_k)
+            tiny = np.abs(comp) < _EPS
+            if np.any(tiny):
+                logger.warning(
+                    "netlsd(kind='wave', normalize='complete'): the complete-"
+                    "graph wave trace vanishes at %d timescale(s); those "
+                    "entries are NaN.",
+                    int(tiny.sum()),
+                )
+                comp = np.where(tiny, np.nan, comp)
         trace = trace / comp
+    elif normalize != "none":
+        raise ValueError(f"Unknown normalize {normalize!r}.")
     return trace
 
 
@@ -211,16 +233,16 @@ def fgsd(
     *,
     bins: int = 200,
     hist_range: tuple[float, float] | None = None,
-    f: Literal["biharmonic", "heat"] = "biharmonic",
+    f: Literal["biharmonic", "harmonic", "heat"] = "biharmonic",
     density: bool = True,
 ) -> GlobalDescriptor:
     """Family-of-Graph-Spectral-Distances histogram descriptor.
 
     Computes a pairwise spectral distance ``S(x, y) = Σ_{k≥1} f(λ_k)
     (φ_k(x) − φ_k(y))²`` and returns its histogram over all node pairs.
-    With ``f = 1/λ`` (``"biharmonic"``) this is the effective-resistance /
-    biharmonic distance; with ``f = e^{-λ}`` (``"heat"``) a diffusion
-    distance.
+    With ``f = 1/λ²`` (``"biharmonic"``) this is the (squared) biharmonic
+    distance; ``f = 1/λ`` (``"harmonic"``) gives the effective-resistance
+    / commute distance; ``f = e^{-λ}`` (``"heat"``) a diffusion distance.
 
     Parameters
     ----------
@@ -228,10 +250,12 @@ def fgsd(
     bins : int
         Number of histogram bins.
     hist_range : (float, float), optional
-        Histogram range (auto from the data if ``None``).
+        Histogram range.  ``None`` = auto from *this* graph's distances —
+        the bins then differ between graphs (a warning is logged); pass a
+        shared range to compare fingerprints across graphs.
     f : str
-        Spectral filter: ``"biharmonic"`` (``1/λ``) or ``"heat"``
-        (``e^{-λ}``).
+        Spectral filter: ``"biharmonic"`` (``1/λ²``), ``"harmonic"``
+        (``1/λ``) or ``"heat"`` (``e^{-λ}``).
     density : bool
         Normalise the histogram to a density.
 
@@ -247,11 +271,13 @@ def fgsd(
     w_nz, V_nz = w[nz], V[:, nz]
 
     if f == "biharmonic":
+        filt = 1.0 / w_nz**2
+    elif f == "harmonic":
         filt = 1.0 / w_nz
     elif f == "heat":
         filt = np.exp(-w_nz)
     else:
-        raise ValueError(f"f must be 'biharmonic' or 'heat', got {f!r}.")
+        raise ValueError(f"f must be 'biharmonic', 'harmonic' or 'heat', got {f!r}.")
 
     # S(x,y) = Σ filt_k (φ_kx − φ_ky)² = g_xx + g_yy − 2 g_xy with
     # g = V_nz diag(filt) V_nzᵀ
@@ -262,6 +288,11 @@ def fgsd(
     dists = S[iu]
 
     if hist_range is None:
+        logger.warning(
+            "fgsd: hist_range=None → bins fitted to this graph's distances; "
+            "histograms are not comparable across graphs unless a shared "
+            "hist_range is passed."
+        )
         hist_range = (float(dists.min()), float(dists.max()) + _EPS)
     hist, _ = np.histogram(dists, bins=bins, range=hist_range, density=density)
     return hist

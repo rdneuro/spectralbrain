@@ -140,7 +140,8 @@ def _chebyshev_apply(
 
     Parameters
     ----------
-    L : SparseMatrix, shape (N, N)
+    L : SparseMatrix, shape (N, N), or callable
+        The operator, or a function ``x ↦ L x`` (e.g. ``M⁻¹ L x``).
     signal : ndarray, shape (N,) or (N, d)
     coeffs : ndarray, shape (K,)
     a, b : float
@@ -150,8 +151,8 @@ def _chebyshev_apply(
     -------
     ndarray, same shape as signal
     """
-    L.shape[0]
     K = len(coeffs)
+    apply_L = L if callable(L) else (lambda x: L @ x)
 
     # Scale L to [-1, 1]: L̃ = (2L − (a+b)I) / (b−a)
     c = 2.0 / (b - a)
@@ -165,12 +166,12 @@ def _chebyshev_apply(
         return result
 
     # T_1 = L̃ · signal
-    T_curr = c * (L @ signal) + d * signal
+    T_curr = c * apply_L(signal) + d * signal
     result = result + coeffs[1] * T_curr
 
     # Recurrence.
     for k in range(2, K):
-        T_next = 2.0 * (c * (L @ T_curr) + d * T_curr) - T_prev
+        T_next = 2.0 * (c * apply_L(T_curr) + d * T_curr) - T_prev
         result = result + coeffs[k] * T_next
         T_prev = T_curr
         T_curr = T_next
@@ -191,16 +192,21 @@ def sgw_transform(
     kernel: Callable = mexican_hat_kernel,
     chebyshev_order: int = 30,
     lam_max: float | None = None,
+    mass: SparseMatrix | None = None,
 ) -> np.ndarray:
     """Spectral Graph Wavelet Transform via Chebyshev approximation.
 
-    Computes T_g^{t_j} f = g(t_j · L) · f for each scale t_j,
-    **without** eigendecomposition.
+    Computes T_g^{t_j} f = g(t_j · Δ) · f for each scale t_j,
+    **without** eigendecomposition, where Δ = M⁻¹L is the generalised
+    (FEM) Laplace–Beltrami operator when *mass* is given, or Δ = L for a
+    graph Laplacian.
 
     Parameters
     ----------
     L : SparseMatrix, shape (N, N)
-        Laplacian (stiffness matrix).
+        Laplacian (stiffness matrix).  For a FEM cotangent stiffness also
+        pass *mass*; otherwise the stiffness alone is not the LBO and its
+        spectrum (hence the wavelet scales) is meaningless.
     scales : ndarray, shape (S,)
         Wavelet scales (positive reals).
     signal : ndarray, shape (N,) or (N, d), optional
@@ -211,8 +217,11 @@ def sgw_transform(
     chebyshev_order : int
         Polynomial approximation order (higher = more accurate).
     lam_max : float, optional
-        Upper bound on eigenvalues of L.  ``None`` = estimate via
-        power iteration.
+        Upper bound on eigenvalues of Δ.  ``None`` = estimate via
+        ARPACK (generalised problem ``L v = λ M v`` when *mass* is given).
+    mass : SparseMatrix, shape (N, N), optional
+        Mass matrix M.  When given, the wavelets are those of the
+        generalised operator ``M⁻¹ L`` (the discrete LBO).
 
     Returns
     -------
@@ -227,14 +236,50 @@ def sgw_transform(
     N = L.shape[0]
     S = len(scales)
 
+    if mass is None:
+        apply_L = L
+    else:
+        M = sp.csc_matrix(mass, dtype=np.float64)
+        m_diag = M.diagonal()
+        if (M - sp.diags(m_diag)).count_nonzero() == 0:
+            inv_m = 1.0 / np.clip(m_diag, 1e-300, None)
+
+            def apply_L(x: np.ndarray, _L=L, _im=inv_m) -> np.ndarray:
+                """Apply M⁻¹L for a diagonal (lumped) mass matrix."""
+                y = _L @ x
+                return y * (_im if y.ndim == 1 else _im[:, None])
+        else:
+            from scipy.sparse.linalg import factorized
+
+            solve_m = factorized(M)
+
+            def apply_L(x: np.ndarray, _L=L) -> np.ndarray:
+                """Apply M⁻¹L for a consistent (non-diagonal) mass matrix."""
+                y = _L @ x
+                if y.ndim == 1:
+                    return solve_m(y)
+                return np.column_stack([solve_m(y[:, j]) for j in range(y.shape[1])])
+
     # Estimate λ_max if not provided.
     if lam_max is None:
         from scipy.sparse.linalg import eigsh
 
-        lam_max = float(eigsh(L, k=1, which="LM", return_eigenvectors=False)[0])
+        if mass is None:
+            lam_max = float(eigsh(L, k=1, which="LM", return_eigenvectors=False)[0])
+        else:
+            lam_max = float(
+                eigsh(L, k=1, M=sp.csc_matrix(mass), which="LM", return_eigenvectors=False)[0]
+            )
         lam_max *= 1.05  # safety margin
 
     if signal is None:
+        if N > 20000:
+            logger.warning(
+                "sgw_transform(signal=None) builds a dense (S, N, N) array: "
+                "N=%d → %.1f GB per scale.",
+                N,
+                N * N * 8 / 1e9,
+            )
         signal = sp.eye(N, format="csc")
 
     is_sparse_signal = sp.issparse(signal)
@@ -261,7 +306,7 @@ def sgw_transform(
                     e_col = np.zeros(N)
                     e_col[col] = 1.0
                     out[:, col] = _chebyshev_apply(
-                        L,
+                        apply_L,
                         e_col,
                         coeffs,
                         a=0.0,
@@ -270,7 +315,7 @@ def sgw_transform(
                 results.append(out)
             else:
                 out = _chebyshev_apply(
-                    L,
+                    apply_L,
                     signal,
                     coeffs,
                     a=0.0,
@@ -301,18 +346,18 @@ def sgw_descriptor(
     Faster than Chebyshev-based SGW when the eigenpairs are already
     available (from HKS/WKS computation).
 
-    .. math::
-
-        \\psi_{t}(x) = \\sum_{i=0}^{k}
-            g(t \\cdot \\lambda_i)\\, \\varphi_i(x)
-
-    The per-vertex wavelet energy at scale *t* is:
+    The descriptor is the wavelet *centred at x* evaluated at x (the
+    diagonal of the wavelet operator, cf. HKS = diagonal of the heat
+    kernel):
 
     .. math::
 
-        W(x, t) = \\psi_t^2(x) = \\left(
-            \\sum_i g(t \\lambda_i) \\varphi_i(x)
-        \\right)^2
+        \\psi_{t}(x) = \\psi_{t,x}(x) = \\sum_{i=0}^{k}
+            g(t \\cdot \\lambda_i)\\, \\varphi_i(x)^2
+
+    It depends on the eigenfunctions only through φ², so it is invariant
+    to their arbitrary signs.  The per-vertex wavelet energy at scale *t*
+    is W(x, t) = ψ_t(x)².
 
     Parameters
     ----------
@@ -325,7 +370,7 @@ def sgw_descriptor(
         Wavelet kernel g(x).
     aggregate : str
         ``"energy"`` — ψ²(x, t), wavelet energy per vertex per scale.
-        ``"raw"`` — ψ(x, t), raw wavelet coefficients (signed).
+        ``"raw"`` — ψ(x, t), raw wavelet coefficients (signed when g is).
         ``"abs_mean"`` — |ψ(x, t)|, absolute coefficients.
 
     Returns
@@ -346,13 +391,12 @@ def sgw_descriptor(
             scales = np.logspace(np.log10(s_min), np.log10(s_max), n_scales)
 
     scales = np.asarray(scales, dtype=np.float64)
-    len(scales)
 
     # g(t·λ) for each scale: (S, k)
     g_tl = np.array([kernel(t * evals) for t in scales])  # (S, k)
 
-    # ψ_t(x) = Σᵢ g(t·λᵢ)·φᵢ(x) = Φ @ g_tl.T
-    psi = evecs @ g_tl.T  # (N, S)
+    # ψ_{t,x}(x) = Σᵢ g(t·λᵢ)·φᵢ(x)² = Φ² @ g_tl.T  (sign-invariant)
+    psi = (evecs**2) @ g_tl.T  # (N, S)
 
     if aggregate == "energy":
         return psi**2

@@ -38,6 +38,23 @@ from spectralbrain.runtime import (
 
 logger = get_logger(__name__)
 
+_ZERO_TOL = 1e-10
+"""Eigenvalues ≤ this are treated as the (numerically) zero modes."""
+
+_WARNED_AUTO_TIMES = False
+
+
+def _warn_auto_times_once() -> None:
+    """Warn (once per session) that auto HKS times are shape-specific."""
+    global _WARNED_AUTO_TIMES
+    if not _WARNED_AUTO_TIMES:
+        logger.warning(
+            "HKS/Bates: time scales auto-derived from THIS shape's spectrum. "
+            "For cross-subject / cross-parcel comparison pass a shared grid, "
+            "e.g. t_values=shared_hks_times([decomp_a, decomp_b, ...])."
+        )
+        _WARNED_AUTO_TIMES = True
+
 
 # ======================================================================
 # §1  ShapeDNA  (Reuter, Wolter & Peinecke, 2006)
@@ -93,9 +110,12 @@ def compute_shapedna(
     elif normalize == "volume":
         raise NotImplementedError("Volume normalisation requires volumetric eigendecomposition.")
     elif normalize == "fiedler":
-        if dna[0] <= 0:
+        # The Fiedler value is the first *non-zero* eigenvalue λ₁ — not
+        # dna[0], which is λ₀ ≈ 0 when ``skip_zero=False``.
+        nonzero = evals[evals > _ZERO_TOL]
+        if nonzero.size == 0:
             raise ValueError("Fiedler value is zero.")
-        dna = dna / dna[0]
+        dna = dna / nonzero[0]
     elif normalize != "none":
         raise ValueError(f"Unknown normalisation: {normalize!r}")
 
@@ -129,6 +149,41 @@ def _auto_hks_times(
     return np.logspace(np.log10(t_min), np.log10(t_max), n_times)
 
 
+def shared_hks_times(
+    decomps: list[SpectralDecomposition] | SpectralDecomposition,
+    n_times: int = 100,
+) -> np.ndarray:
+    """A common log-spaced HKS time grid for a collection of shapes.
+
+    Uses the Sun et al. (2009) bounds over the *pooled* spectra:
+    ``t_min = 4 ln10 / max_s λ_max(s)`` and ``t_max = 4 ln10 / min_s λ₁(s)``,
+    so every shape is evaluated at the same times and the HKS columns are
+    comparable across subjects / parcels.
+
+    Parameters
+    ----------
+    decomps : SpectralDecomposition or list of them
+    n_times : int
+
+    Returns
+    -------
+    ndarray, shape (n_times,)
+    """
+    if isinstance(decomps, SpectralDecomposition):
+        decomps = [decomps]
+    lam_max: list[float] = []
+    lam_1: list[float] = []
+    for d in decomps:
+        nz = np.asarray(d.eigenvalues)[np.asarray(d.eigenvalues) > _ZERO_TOL]
+        if nz.size:
+            lam_max.append(float(nz.max()))
+            lam_1.append(float(nz.min()))
+    if not lam_max:
+        return np.logspace(-2, 2, n_times)
+    pooled = np.array([min(lam_1), max(lam_max)])
+    return _auto_hks_times(np.concatenate([[0.0], pooled]), n_times)
+
+
 def compute_hks(
     decomp: SpectralDecomposition,
     t_values: np.ndarray | None = None,
@@ -151,7 +206,9 @@ def compute_hks(
     ----------
     decomp : SpectralDecomposition
     t_values : ndarray, shape (T,), optional
-        Time scales.  ``None`` = auto log-spaced from eigenvalues.
+        Time scales.  ``None`` = auto log-spaced from *this shape's*
+        eigenvalues (a warning is logged once: such grids differ between
+        shapes — use :func:`shared_hks_times` for group comparisons).
     n_times : int
         Number of auto time scales (ignored if *t_values* given).
     normalize : bool
@@ -172,6 +229,7 @@ def compute_hks(
     evecs = decomp.eigenvectors  # (N, k)
 
     if t_values is None:
+        _warn_auto_times_once()
         t_values = _auto_hks_times(evals, n_times)
     t_values = np.asarray(t_values, dtype=np.float64)
 
@@ -443,7 +501,9 @@ def compute_gps(
     ----------
     decomp : SpectralDecomposition
     skip_zero : bool
-        Exclude the constant eigenfunction (λ₀ ≈ 0).
+        Exclude the constant eigenfunction (λ₀ ≈ 0).  Any remaining null
+        mode (λ ≤ 1e-10, e.g. λ₀ when ``skip_zero=False`` or extra
+        components) yields an all-zero column.
 
     Returns
     -------
@@ -462,8 +522,20 @@ def compute_gps(
     evals_sel = evals[start:]
     evecs_sel = evecs[:, start:]
 
-    # Avoid division by zero for near-zero eigenvalues.
-    inv_sqrt_lam = 1.0 / np.sqrt(np.clip(evals_sel, 1e-10, None))
+    # Null modes (λ ≈ 0: the constant mode, or one per extra connected
+    # component) have no finite GPS coordinate — 1/√λ diverges.  Their
+    # columns are set to 0 (shape is preserved) instead of being blown up
+    # by 1/√(clip(λ)) ≈ 1e5.
+    null = evals_sel <= _ZERO_TOL
+    if np.any(null):
+        logger.warning(
+            "GPS: %d null eigenmode(s) (λ ≤ %.0e) have no finite GPS "
+            "coordinate; their columns are set to 0.",
+            int(null.sum()),
+            _ZERO_TOL,
+        )
+    inv_sqrt_lam = np.zeros_like(evals_sel, dtype=np.float64)
+    inv_sqrt_lam[~null] = 1.0 / np.sqrt(evals_sel[~null])
 
     gps = evecs_sel * inv_sqrt_lam[None, :]  # (N, d)
 
@@ -485,10 +557,11 @@ def compute_bates_signatures(
 ) -> DescriptorMatrix:
     """Symmetric polynomial signatures — sign/ordering invariant.
 
-    Construct weighted eigenfunctions w_j(x, t) = exp(-λ_j·t)·φ_j(x),
-    then compute elementary symmetric polynomials e_p of the weights.
-    These are provably invariant under sign flips and permutations of
-    the eigenfunctions.
+    Construct per-mode heat weights w_j(x, t) = exp(-λ_j·t)·φ_j(x)², then
+    compute elementary symmetric polynomials e_p of the weights.  Because
+    each w_j depends on φ_j only through φ_j², the signatures are invariant
+    under eigenvector sign flips; being symmetric polynomials, they are
+    invariant under permutations of (e.g. degenerate) eigenfunctions.
 
     .. math::
 
@@ -529,7 +602,10 @@ def compute_bates_signatures(
     evecs = decomp.eigenvectors
     N, _k = evecs.shape
 
+    if order not in (1, 2, 3):
+        raise ValueError(f"order must be 1, 2 or 3, got {order}.")
     if t_values is None:
+        _warn_auto_times_once()
         t_values = _auto_hks_times(evals, n_times)
     t_values = np.asarray(t_values, dtype=np.float64)
     T = len(t_values)
@@ -538,11 +614,11 @@ def compute_bates_signatures(
 
     with progress_simple("Bates SP signatures", total=T) as tick:
         for _ti, t in enumerate(t_values):
-            # Weighted eigenfunctions: w_j(x) = exp(-λ_j·t) · φ_j(x)
+            # Sign-invariant weights: w_j(x) = exp(-λ_j·t) · φ_j(x)²
             weights = np.exp(-evals * t)  # (k,)
-            w = evecs * weights[None, :]  # (N, k)
+            w = (evecs**2) * weights[None, :]  # (N, k)
 
-            # e_1 = Σ w_j (equivalent to HKS diagonal)
+            # e_1 = Σ w_j (= HKS at time t)
             e1 = w.sum(axis=1)  # (N,)
             results.append(e1)
 
@@ -785,4 +861,5 @@ __all__: list[str] = [
     "compute_shapedna",
     "compute_si_hks",
     "compute_wks",
+    "shared_hks_times",
 ]

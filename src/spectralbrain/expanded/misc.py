@@ -196,7 +196,7 @@ def eigenshape_analysis(
 
 def _tps_kernel(landmarks: np.ndarray) -> np.ndarray:
     """Thin-plate-spline kernel ``U(r) = r² ln r`` over landmark pairs."""
-    p = landmarks.shape[0]
+    landmarks.shape[0]
     diff = landmarks[:, None, :] - landmarks[None, :, :]
     r2 = np.sum(diff**2, axis=2)
     with np.errstate(divide="ignore", invalid="ignore"):

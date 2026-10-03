@@ -22,6 +22,7 @@ from spectralbrain.spectral.descriptors import (  # noqa: F401
     compute_shapedna,
     compute_si_hks,
     compute_wks,
+    shared_hks_times,
 )
 from spectralbrain.spectral.distances import (  # noqa: F401
     aggregate_to_networks,

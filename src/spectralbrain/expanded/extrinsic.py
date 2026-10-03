@@ -7,12 +7,18 @@ gyrification, hippocampal infolding, and subcortical bossing are
 spectral views:
 
 Dirac operator
-    A quaternionic first-order operator whose **real (scalar) part is
-    exactly the cotangent Laplacian** and whose imaginary part encodes the
-    surface normal via edge cross-products.  Its signed spectrum and the
-    derived **Dirac Kernel Signature** capture extrinsic bending that the
-    LBO cannot see (Liu, Jacobson & Crane, *SGP* 2017; Crane, Pinkall &
-    Schröder, *SIGGRAPH* 2011).
+    The quaternionic (Crane–Pinkall–Schröder) Dirac operator assembled on
+    vertices as ``𝒟 = D_fᴴ M_F D_f``, where ``D_f`` maps vertex spinors to
+    faces via the edge quaternions.  Its **real (scalar) part is exactly
+    the cotangent Laplacian** and its imaginary part encodes the surface
+    normal via edge cross-products.  Being a Gram matrix (each face adds a
+    rank-1 Hermitian term ``u uᴴ / 4A``) it is **positive semi-definite**:
+    its eigenvalues ``μ ≥ 0`` are the *squared* first-order Dirac
+    eigenvalues ``μ = λ_D²`` (the first-order operator, acting between
+    vertices and faces, has the symmetric signed spectrum ``±√μ``).  The
+    derived **Dirac Kernel Signature** ``Σ e^{−tμ}|ψ|²`` captures
+    extrinsic bending that the LBO cannot see (Liu, Jacobson & Crane,
+    *SGP* 2017; Crane, Pinkall & Schröder, *SIGGRAPH* 2011).
 
 Steklov / Dirichlet-to-Neumann
     For meshes **with boundary**, the DtN operator maps boundary values to
@@ -27,9 +33,9 @@ Shape operator (Weingarten map)
     :mod:`spectralbrain.expanded._base`.
 
 All operators thread the multi-backend solver
-(:func:`spectralbrain.expanded._base.solve_eigsh`); the Dirac operator is
-**indefinite**, so its spectrum is solved without the non-negativity
-clamping used for the Laplacian.
+(:func:`spectralbrain.expanded._base.solve_eigsh`).  The Dirac spectrum is
+solved without the non-negativity clamping (round-off may give tiny
+negative values around the 4-fold null space).
 
 References
 ----------
@@ -49,6 +55,15 @@ import numpy as np
 import scipy.sparse as sp
 
 from spectralbrain.core.base import SpectralDecomposition
+from spectralbrain.expanded._base import (
+    BackendSpec,
+    _shape_index_from_k,
+    _validate_mesh,
+    face_areas,
+    principal_curvatures,
+    resolve_backend,
+    solve_eigsh,
+)
 from spectralbrain.runtime import (
     DescriptorMatrix,
     Faces,
@@ -56,15 +71,6 @@ from spectralbrain.runtime import (
     SparseMatrix,
     Vertices,
     get_logger,
-)
-
-from spectralbrain.expanded._base import (
-    BackendSpec,
-    _validate_mesh,
-    face_areas,
-    principal_curvatures,
-    resolve_backend,
-    solve_eigsh,
 )
 
 logger = get_logger(__name__)
@@ -121,10 +127,7 @@ def shape_operator_descriptor(
     """
     k1, k2, _, _ = principal_curvatures(vertices, faces)
     casor = np.sqrt(0.5 * (k1**2 + k2**2))
-    denom = k1 - k2
-    shape_idx = np.zeros_like(k1)
-    nz = np.abs(denom) > _EPS
-    shape_idx[nz] = (2.0 / np.pi) * np.arctan((k1[nz] + k2[nz]) / denom[nz])
+    shape_idx = _shape_index_from_k(k1, k2)
 
     available: dict[str, np.ndarray] = {
         "k1": k1,
@@ -188,8 +191,9 @@ def dirac_operator(
     -------
     D4 : sparse matrix, shape (4N, 4N)
         Symmetric real representation of the Hermitian quaternionic Dirac
-        operator.  Its scalar channel ``D4[::4, ::4]`` equals the cotangent
-        Laplacian.
+        operator ``𝒟 = D_fᴴ M_F D_f``.  Its scalar channel ``D4[::4, ::4]``
+        equals the cotangent Laplacian.  It is positive semi-definite (its
+        eigenvalues are the squared first-order Dirac eigenvalues).
     M4 : sparse matrix, shape (4N, 4N)
         Block mass matrix ``diag(area) ⊗ I₄`` (lumped vertex areas).
     """
@@ -265,7 +269,8 @@ def dirac_decompose(
     ----------
     vertices, faces : arrays
     k : int
-        Number of Dirac modes nearest 0 (the spectrum clusters around 0).
+        Number of Dirac modes nearest 0 — i.e. the ``k`` smallest, since
+        the assembled operator is positive semi-definite.
     backend : str or backend object
         Multi-backend solver selector (the Dirac problem is indefinite).
     sigma : float
@@ -274,12 +279,13 @@ def dirac_decompose(
     Returns
     -------
     SpectralDecomposition
-        ``eigenvalues`` are the **signed** Dirac eigenvalues (k,) — each
-        physical eigenvalue carries the Kramers ×2 degeneracy of the real
-        representation; ``eigenvectors`` hold the per-vertex spinor
-        magnitudes ``|ψ(x)|`` (N, k), non-negative — **not** scalar LBO
-        eigenvectors — suitable for the Dirac Kernel Signature.
-        ``metadata["operator"] == "dirac"``.
+        ``eigenvalues`` (k,) are the eigenvalues ``μ = λ_D² ≥ 0`` of the
+        assembled (squared) Dirac operator — each carries the ×4
+        quaternionic degeneracy of the real representation;
+        ``eigenvectors`` hold the per-vertex spinor magnitudes ``|ψ(x)|``
+        (N, k), non-negative — **not** scalar LBO eigenvectors — suitable
+        for the Dirac Kernel Signature.  ``metadata["operator"] ==
+        "dirac"`` and ``metadata["squared_dirac"] is True``.
     """
     v, f = _validate_mesh(vertices, faces)
     n = v.shape[0]
@@ -306,6 +312,7 @@ def dirac_decompose(
             "backend": getattr(be, "name", str(be)),
             "n_vertices": int(n),
             "spinor_magnitude": True,
+            "squared_dirac": True,
         },
     )
 
@@ -324,11 +331,14 @@ def compute_dks(
 
     Defines, for each vertex ``x`` and scale ``t``,
 
-        DKS_t(x) = Σ_k e^{-t λ_k²} · |ψ_k(x)|²,
+        DKS_t(x) = Σ_k e^{-t λ_k²} · |ψ_k(x)|² = Σ_k e^{-t μ_k} · |ψ_k(x)|²,
 
-    where ``(λ_k, ψ_k)`` are the Dirac eigenpairs.  The ``λ²`` weighting
-    handles the signed Dirac spectrum and makes the signature analogous to
-    the heat kernel signature but **extrinsic** (sensitive to bending).
+    where ``λ_k`` are the (signed) first-order Dirac eigenvalues and
+    ``μ_k = λ_k²`` the eigenvalues returned by :func:`dirac_decompose`
+    (the assembled operator is already the squared Dirac, so ``μ`` is used
+    directly — squaring it again would give ``e^{-tλ⁴}``).  The signature
+    is the heat kernel signature of the squared Dirac operator, but
+    **extrinsic** (sensitive to bending).
 
     Parameters
     ----------
@@ -350,9 +360,9 @@ def compute_dks(
         Non-negative extrinsic signature.
     """
     decomp = dirac_decompose(vertices, faces, k=k, backend=backend)
-    lam = decomp.eigenvalues  # (k,) signed
+    # μ = λ_D² (squared Dirac); round-off negatives near the null space → 0
+    lam_sq = np.clip(decomp.eigenvalues, 0.0, None)  # (k,)
     mag = decomp.eigenvectors  # (N, k) magnitudes
-    lam_sq = lam**2
 
     if t_values is None:
         nz = lam_sq[lam_sq > _EPS]
@@ -511,7 +521,7 @@ def _dense_geigh(
 
             w_j, V_j = jnp.linalg.eigh(jnp.asarray(A))
             w, V = np.asarray(w_j), np.asarray(V_j)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.debug("Steklov GPU eigh failed (%s) → SciPy", exc)
         w = None
     if w is None:

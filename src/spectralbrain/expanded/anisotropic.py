@@ -46,6 +46,13 @@ import numpy as np
 import scipy.sparse as sp
 
 from spectralbrain.core.base import SpectralDecomposition
+from spectralbrain.expanded._base import (
+    BackendSpec,
+    _validate_mesh,
+    face_areas,
+    operator_eigensystem,
+    principal_curvatures,
+)
 from spectralbrain.runtime import (
     DescriptorMatrix,
     Faces,
@@ -54,14 +61,6 @@ from spectralbrain.runtime import (
     Vertices,
     get_logger,
     progress_simple,
-)
-
-from spectralbrain.expanded._base import (
-    BackendSpec,
-    _validate_mesh,
-    face_areas,
-    operator_eigensystem,
-    principal_curvatures,
 )
 
 logger = get_logger(__name__)
@@ -88,7 +87,7 @@ def _face_principal_direction(
     directions are sign-aligned within each face before averaging, then
     projected onto the face plane and renormalised.
     """
-    k1, k2, dir1, dir2 = principal_curvatures(vertices, faces)
+    _k1, _k2, dir1, dir2 = principal_curvatures(vertices, faces)
     dvert = dir1 if which == "max_curvature" else dir2  # (N, 3)
 
     i0, i1, i2 = faces[:, 0], faces[:, 1], faces[:, 2]
@@ -169,9 +168,24 @@ def finsler_laplacian(
         d1 = d1 * np.sign(np.sum(d1 * d0, axis=1, keepdims=True) + _EPS)
         d2 = d2 * np.sign(np.sum(d2 * d0, axis=1, keepdims=True) + _EPS)
         df = d0 + d1 + d2
+        # project onto the face plane (tangent) and normalise
+        p0, p1, p2 = v[i0], v[i1], v[i2]
+        nf_c = np.cross(p1 - p0, p2 - p0)
+        nf_c /= np.clip(np.linalg.norm(nf_c, axis=1, keepdims=True), _EPS, None)
+        df = df - nf_c * np.sum(df * nf_c, axis=1, keepdims=True)
         df /= np.clip(np.linalg.norm(df, axis=1, keepdims=True), _EPS, None)
     else:
         df = _face_principal_direction(v, f, direction)  # (F, 3)
+
+    # The P1 hat-function gradient on a face is ∇φ_a = (n × e_a) / (2A),
+    # i.e. the opposite edge rotated by 90° in the face plane.  The
+    # stiffness entry ∫ ∇φ_aᵀ G ∇φ_b with G = I + (g−1) d dᵀ therefore needs
+    # (n × e_a)·d = e_a·(d × n): project the *edges* onto d⊥ = d × n so the
+    # conductivity g acts along d itself (not perpendicular to it).
+    q0, q1, q2 = v[i0], v[i1], v[i2]
+    nf = np.cross(q1 - q0, q2 - q0)
+    nf /= np.clip(np.linalg.norm(nf, axis=1, keepdims=True), _EPS, None)
+    d_perp = np.cross(df, nf)  # (F, 3), unit, in-plane
 
     idx = {0: i0, 1: i1, 2: i2}
     rows: list[np.ndarray] = []
@@ -179,11 +193,11 @@ def finsler_laplacian(
     vals: list[np.ndarray] = []
     for a in range(3):
         ea = e[a]
-        ea_d = np.sum(ea * df, axis=1)  # (F,)
+        ea_d = np.sum(ea * d_perp, axis=1)  # (F,)
         for b in range(3):
             eb = e[b]
-            # e_aᵀ G e_b = e_a·e_b + (g-1)(e_a·d)(e_b·d)
-            eb_d = np.sum(eb * df, axis=1)
+            # (n×e_a)ᵀ G (n×e_b) = e_a·e_b + (g-1)(e_a·d⊥)(e_b·d⊥)
+            eb_d = np.sum(eb * d_perp, axis=1)
             wab = (np.sum(ea * eb, axis=1) + (g - 1.0) * ea_d * eb_d) * inv4a
             rows.append(idx[a])
             cols.append(idx[b])

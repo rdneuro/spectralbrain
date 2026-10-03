@@ -54,6 +54,13 @@ import numpy as np
 import scipy.sparse as sp
 
 from spectralbrain.core.base import SpectralDecomposition
+from spectralbrain.expanded._base import (
+    BackendSpec,
+    casorati_curvature,
+    mean_curvature,
+    operator_eigensystem,
+    principal_curvatures,
+)
 from spectralbrain.runtime import (
     DescriptorMatrix,
     Faces,
@@ -62,14 +69,6 @@ from spectralbrain.runtime import (
     SparseMatrix,
     Vertices,
     get_logger,
-)
-
-from spectralbrain.expanded._base import (
-    BackendSpec,
-    casorati_curvature,
-    mean_curvature,
-    operator_eigensystem,
-    principal_curvatures,
 )
 
 logger = get_logger(__name__)
@@ -122,7 +121,13 @@ def build_potential(
     the Hamiltonian positive semi-definite, which is numerically the safest
     choice for the shift-invert eigensolver and gives a clean heat/wave
     interpretation.  Signed potentials localise eigenfunctions toward
-    curvature extrema of one sign.
+    curvature extrema of one sign; :func:`hamiltonian_decompose` then
+    solves the unclamped spectrum (eigenvalues may be negative).
+
+    With ``normalize=True`` the potential is dimensionless (mean ``|V|``
+    = 1) while the LBO eigenvalues carry units of 1/length²; choose
+    ``scale`` relative to the spectrum (e.g. a multiple of λ₁) when the
+    mesh is in physical units such as mm.
     """
     n = vertices.shape[0]
     if kind == "zero":
@@ -273,17 +278,36 @@ def hamiltonian_decompose(
     H = hamiltonian_operator(W, A, v)
     sa = mesh.surface_area()
 
+    sigma, clamp = _hamiltonian_shift(v)
     return operator_eigensystem(
         H,
         A,
         k=k,
         backend=backend,
-        sigma=-0.01,
+        sigma=sigma,
         which="LM",
+        clamp_nonneg=clamp,
         surface_area=sa,
         operator="hamiltonian",
         metadata={"potential": pot_tag, "potential_scale": potential_scale},
     )
+
+
+def _hamiltonian_shift(v: np.ndarray) -> tuple[float, bool]:
+    """Shift-invert target and clamping mode for ``H = W + A·diag(V)``.
+
+    The Rayleigh quotient of ``H`` w.r.t. the lumped mass is bounded below
+    by ``min(V)`` (``W`` is PSD).  For ``V ≥ 0`` the operator is PSD and the
+    standard clamped path (σ = −0.01) applies.  For a **signed** potential
+    the spectrum can be negative: we must neither clamp it to 0 nor target
+    σ = −0.01 (which would return the eigenvalues nearest −0.01 and miss
+    the lowest ones).  Placing σ strictly below ``min(V)`` makes the
+    ``k`` eigenvalues nearest σ exactly the ``k`` smallest.
+    """
+    vmin = float(np.min(v)) if v.size else 0.0
+    if vmin >= 0.0:
+        return -0.01, True
+    return vmin - 0.01 * (abs(vmin) + 1.0), False
 
 
 # ======================================================================
@@ -339,19 +363,28 @@ def compute_siwks(
         backend=backend,
     )
 
-    # Scale-invariance: normalise eigenvalues by the largest finite one so
-    # the WKS log-energy band is comparable across shapes/sizes.
+    # Scale-invariance.  Under a uniform scaling x → βx the eigenvalues
+    # scale as β⁻² and the M-orthonormal eigenfunctions as φ² ∝ 1/area.
+    # (i) Normalise the eigenvalues by the spectrum's own scale (largest
+    #     positive eigenvalue).  Note that WKS with *auto* energies is
+    #     already invariant to a uniform eigenvalue rescale, so this step
+    #     matters for the recorded ``siwks_scale`` and for any caller-fixed
+    #     energy grid; it is kept for that reason.
+    # (ii) Normalise the amplitude by the surface area (φ̃ = √area · φ) so
+    #     the WKS values themselves — not only their column-normalised
+    #     profile — are comparable across shapes of different size.
     evals = decomp.eigenvalues.copy()
     pos = evals[evals > _EPS]
     if pos.size:
         scale = float(pos.max())
+        area = float(decomp.surface_area) if decomp.surface_area else 1.0
         decomp = SpectralDecomposition(
             eigenvalues=evals / scale,
-            eigenvectors=decomp.eigenvectors,
+            eigenvectors=decomp.eigenvectors * np.sqrt(max(area, _EPS)),
             stiffness=decomp.stiffness,
             mass=decomp.mass,
             surface_area=decomp.surface_area,
-            metadata={**decomp.metadata, "siwks_scale": scale},
+            metadata={**decomp.metadata, "siwks_scale": scale, "siwks_area": area},
         )
     return compute_wks(decomp, n_energies=n_energies)
 
@@ -465,19 +498,28 @@ def compute_compressed_modes(
     mesh = BrainMesh(vertices, faces)
     W, A = mesh.compute_laplacian(method="cotangent")
     sa = mesh.surface_area()
-    n = W.shape[0]
+    W.shape[0]
 
     # Start from the LBO basis (V = 0).
     decomp = operator_eigensystem(
         W, A, k=k, backend=backend, surface_area=sa, operator="lbo"
     )
 
+    # Spectral scale of the LBO: the potential must be commensurate with the
+    # eigenvalues (units 1/length²), otherwise it is either negligible or a
+    # pure constant shift that leaves the eigenvectors unchanged.
+    pos = decomp.eigenvalues[decomp.eigenvalues > _EPS]
+    lam_scale = float(np.median(pos)) if pos.size else 1.0
+
     with progress_simple("Compressed modes", total=n_iter) as tick:
         for _ in range(n_iter):
             phi = decomp.eigenvectors  # (N, k)
-            # Reweighting potential favouring spatial concentration.
+            # Reweighting potential favouring spatial concentration.  The
+            # eigenfunction magnitude (∝ 1/√area) is made dimensionless by
+            # its mean so that μ has a mesh-independent meaning.
             spread = np.mean(np.abs(phi), axis=1)  # (N,)
-            v = mu / (1.0 / max(mu, _EPS) + spread)  # (N,)
+            spread = spread / max(float(spread.mean()), _EPS)
+            v = lam_scale * mu / (1.0 / max(mu, _EPS) + spread)  # (N,)
             H = hamiltonian_operator(W, A, v)
             decomp = operator_eigensystem(
                 H,
@@ -486,7 +528,7 @@ def compute_compressed_modes(
                 backend=backend,
                 surface_area=sa,
                 operator="compressed_modes",
-                metadata={"mu": mu},
+                metadata={"mu": mu, "lambda_scale": lam_scale},
             )
             tick(1)
 
