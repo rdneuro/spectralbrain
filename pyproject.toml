@@ -211,7 +211,7 @@ Changelog     = "https://github.com/rdneuro/spectralbrain/blob/main/CHANGELOG.md
 # =============================================================================
 [tool.hatch.version]
 source = "vcs"
-fallback-version = "0.0.6"
+fallback-version = "0.0.8"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/spectralbrain"]
