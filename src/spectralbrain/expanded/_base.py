@@ -180,7 +180,7 @@ def resolve_backend(backend: BackendSpec | Any = "auto") -> Any:
                 from spectralbrain.backends.gpu import get_gpu_backend
 
                 be = get_gpu_backend(cand)
-            except Exception as exc:  # noqa: BLE001 - any failure → next cand
+            except Exception as exc:
                 logger.debug("expanded: backend %s unavailable (%s)", cand, exc)
                 continue
             logger.info("expanded: auto backend → %s", be.name)
@@ -210,7 +210,7 @@ def gpu_memory_guard(label: str = "expanded op") -> Generator[None, None, None]:
     """
     try:
         from spectralbrain.backends.gpu import vram_guard
-    except Exception:  # noqa: BLE001 - GPU stack absent → no-op
+    except Exception:
         with nullcontext():
             yield
         return
@@ -224,7 +224,7 @@ def free_gpu_memory() -> None:
         from spectralbrain.backends.gpu import vram_gc
 
         vram_gc()
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass
 
 
@@ -320,7 +320,7 @@ def _gpu_eigh_nearest(
             V = np.asarray(V_j)
         else:  # unknown GPU-ish backend → CPU
             return _scipy_eigsh_nearest(A, M, k, sigma=sigma)
-    except Exception as exc:  # noqa: BLE001 - any device failure → CPU
+    except Exception as exc:
         logger.debug("indefinite GPU eigh failed (%s) → CPU shift-invert", exc)
         return _scipy_eigsh_nearest(A, M, k, sigma=sigma)
 
@@ -395,9 +395,7 @@ def _validate_operator_pair(
     if M is not None:
         M = sp.csc_matrix(M).astype(np.float64)
         if M.shape != A.shape:
-            raise ValueError(
-                f"Mass matrix shape {M.shape} != operator shape {A.shape}."
-            )
+            raise ValueError(f"Mass matrix shape {M.shape} != operator shape {A.shape}.")
         if not np.all(np.isfinite(M.data)):
             raise ValueError("Mass matrix M contains non-finite entries.")
     return A, M
@@ -480,9 +478,7 @@ def operator_eigensystem(
         A = sp.csc_matrix(A)
 
     be = resolve_backend(backend)
-    evals, evecs = solve_eigsh(
-        be, A, M, k_eff, sigma=sigma, which=which, clamp_nonneg=clamp_nonneg
-    )
+    evals, evecs = solve_eigsh(be, A, M, k_eff, sigma=sigma, which=which, clamp_nonneg=clamp_nonneg)
 
     meta = {
         "operator": operator,
@@ -572,9 +568,7 @@ def _validate_mesh(vertices: Vertices, faces: Faces) -> tuple[np.ndarray, np.nda
     if f.ndim != 2 or f.shape[1] != 3:
         raise ValueError(f"faces must be (F, 3) triangles, got {f.shape}.")
     if f.size and f.max() >= v.shape[0]:
-        raise ValueError(
-            f"face index {int(f.max())} out of range for {v.shape[0]} vertices."
-        )
+        raise ValueError(f"face index {int(f.max())} out of range for {v.shape[0]} vertices.")
     if f.size and f.min() < 0:
         raise ValueError("faces contain negative indices.")
     return v, f
@@ -615,7 +609,7 @@ def vertex_normals(vertices: Vertices, faces: Faces) -> Normals:
         from spectralbrain.core.meshes import _vertex_normals
 
         return np.asarray(_vertex_normals(v, f), dtype=np.float64)
-    except Exception:  # noqa: BLE001 - fall back to local implementation
+    except Exception:
         pass
 
     p0, p1, p2 = v[f[:, 0]], v[f[:, 1]], v[f[:, 2]]
@@ -664,7 +658,8 @@ def _rotate_coord_sys(
         new_up[flip] = -up[flip]
         new_vp[flip] = -vp[flip]
 
-    perp = old_norm - new_norm * ndot  # (F, 3)
+    # Rusinkiewicz: perp_old = new_norm − (old_norm·new_norm)·old_norm
+    perp = new_norm - old_norm * ndot  # (F, 3)
     denom = 1.0 + ndot  # (F, 1)
     dperp = (old_norm + new_norm) / np.clip(denom, _EPS, None)  # (F, 3)
 
@@ -815,9 +810,7 @@ def principal_curvatures(
 
     for c in range(3):
         vidx = f[:, c]
-        nku, nkuv, nkv = _project_curvature(
-            uf, vf, fku, fkuv, fkv, pdir1[vidx], pdir2[vidx]
-        )
+        nku, nkuv, nkv = _project_curvature(uf, vf, fku, fkuv, fkv, pdir1[vidx], pdir2[vidx])
         w = fa / (3.0 * point_area[vidx])  # corner weight (Rusinkiewicz)
         np.add.at(acc_ku, vidx, w * nku)
         np.add.at(acc_kuv, vidx, w * nkuv)
@@ -890,16 +883,27 @@ def shape_index(vertices: Vertices, faces: Faces) -> ScalarMap:
     ``S = (2/π)·arctan((κ₁ + κ₂) / (κ₁ − κ₂))`` with ``κ₁ ≥ κ₂`` — a
     scale-invariant descriptor of *local shape* independent of curvature
     magnitude: spherical cap → +1, ridge → +½, saddle → 0, rut → −½,
-    spherical cup → −1.  Returns 0 at umbilic/flat points (κ₁ = κ₂).
+    spherical cup → −1.  Umbilic points (κ₁ = κ₂ ≠ 0) give ±1; flat
+    points (κ₁ = κ₂ = 0) give 0.
 
     Signs follow the mesh's normal orientation (outward for FreeSurfer /
     HippUnfold surfaces ⇒ convex regions read positive).
     """
     k1, k2, _, _ = principal_curvatures(vertices, faces)
-    denom = k1 - k2  # ≥ 0 since k1 ≥ k2
-    s = np.zeros_like(k1)
-    nz = np.abs(denom) > _EPS
-    s[nz] = (2.0 / np.pi) * np.arctan((k1[nz] + k2[nz]) / denom[nz])
+    return _shape_index_from_k(k1, k2)
+
+
+def _shape_index_from_k(k1: np.ndarray, k2: np.ndarray) -> np.ndarray:
+    """Koenderink shape index from principal curvatures (κ₁ ≥ κ₂).
+
+    Uses ``arctan2`` so umbilic points (κ₁ = κ₂ ≠ 0) map to ±1 (cap/cup)
+    and only truly flat points (κ₁ = κ₂ = 0) map to 0.
+    """
+    num = k1 + k2
+    denom = np.clip(k1 - k2, 0.0, None)  # ≥ 0 since k1 ≥ k2
+    s = (2.0 / np.pi) * np.arctan2(num, denom)
+    flat = (np.abs(num) <= _EPS) & (denom <= _EPS)
+    s[flat] = 0.0
     return s
 
 

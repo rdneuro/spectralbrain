@@ -11,14 +11,13 @@ the spatial-autocorrelation bias.
 from __future__ import annotations
 
 import logging
-from typing import Dict, Optional
 
 import numpy as np
 
 logger = logging.getLogger("brainmosaic.statistics.cluster_stats")
 
 
-def intra_inter_homogeneity(features: np.ndarray, labels: np.ndarray) -> Dict[str, float]:
+def intra_inter_homogeneity(features: np.ndarray, labels: np.ndarray) -> dict[str, float]:
     """Within- vs between-cluster feature homogeneity.
 
     Returns
@@ -29,6 +28,7 @@ def intra_inter_homogeneity(features: np.ndarray, labels: np.ndarray) -> Dict[st
         ``ratio`` (intra / inter; higher is better-separated).
     """
     from sklearn.metrics import pairwise_distances
+
     X = np.asarray(features, float)
     labels = np.asarray(labels)
     D = pairwise_distances(X)
@@ -42,9 +42,12 @@ def intra_inter_homogeneity(features: np.ndarray, labels: np.ndarray) -> Dict[st
     return {"intra": intra, "inter": inter, "ratio": ratio}
 
 
-def spatial_silhouette(features: np.ndarray, labels: np.ndarray,
-                       spatial_distance: Optional[np.ndarray] = None,
-                       alpha: float = 0.5) -> float:
+def spatial_silhouette(
+    features: np.ndarray,
+    labels: np.ndarray,
+    spatial_distance: np.ndarray | None = None,
+    alpha: float = 0.5,
+) -> float:
     """Silhouette score on a feature/spatial blended distance.
 
     Parameters
@@ -62,6 +65,7 @@ def spatial_silhouette(features: np.ndarray, labels: np.ndarray,
         Mean silhouette in [-1, 1].
     """
     from sklearn.metrics import pairwise_distances, silhouette_score
+
     X = np.asarray(features, float)
     labels = np.asarray(labels)
     if len(np.unique(labels)) < 2:
@@ -94,6 +98,7 @@ def energy_distance(sample_a: np.ndarray, sample_b: np.ndarray) -> float:
         Non-negative energy distance (0 iff distributions coincide).
     """
     from sklearn.metrics import pairwise_distances
+
     A = np.atleast_2d(np.asarray(sample_a, float))
     B = np.atleast_2d(np.asarray(sample_b, float))
     d_ab = pairwise_distances(A, B).mean()
@@ -117,11 +122,15 @@ def rsa_compare(rdm_a: np.ndarray, rdm_b: np.ndarray, method: str = "spearman") 
     float
         Correlation coefficient between the off-diagonal entries.
     """
-    from scipy.stats import spearmanr, pearsonr, kendalltau
     a = np.asarray(rdm_a, float)
     b = np.asarray(rdm_b, float)
     iu = np.triu_indices(a.shape[0], k=1)
-    va, vb = a[iu], b[iu]
+    return _corr_vec(a[iu], b[iu], method)
+
+
+def _corr_vec(va: np.ndarray, vb: np.ndarray, method: str) -> float:
+    from scipy.stats import kendalltau, pearsonr, spearmanr
+
     if method == "spearman":
         return float(spearmanr(va, vb).correlation)
     if method == "pearson":
@@ -131,8 +140,13 @@ def rsa_compare(rdm_a: np.ndarray, rdm_b: np.ndarray, method: str = "spearman") 
     raise ValueError(f"Unknown method {method!r}.")
 
 
-def mantel_test(rdm_a: np.ndarray, rdm_b: np.ndarray, n_perm: int = 10000,
-                method: str = "spearman", random_state: int = 0):
+def mantel_test(
+    rdm_a: np.ndarray,
+    rdm_b: np.ndarray,
+    n_perm: int = 10000,
+    method: str = "spearman",
+    random_state: int = 0,
+):
     """Mantel test: permutation significance of an RDM-RDM correlation.
 
     Returns
@@ -153,11 +167,8 @@ def mantel_test(rdm_a: np.ndarray, rdm_b: np.ndarray, n_perm: int = 10000,
     for _ in range(n_perm):
         perm = rng.permutation(n)
         bp = b[np.ix_(perm, perm)][iu]
-        from scipy.stats import spearmanr, pearsonr
-        if method == "spearman":
-            r = spearmanr(va, bp).correlation
-        else:
-            r = pearsonr(va, bp)[0]
+        # The null statistic must be the same statistic as the observed one.
+        r = _corr_vec(va, bp, method)
         if abs(r) >= abs(r_obs):
             count += 1
     return float(r_obs), float((count + 1) / (n_perm + 1))

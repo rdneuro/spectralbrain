@@ -110,8 +110,10 @@ def _resolve_cmap(scalar_name: str | None, cmap: str | None) -> str:
     if cmap is not None:
         return cmap
     if scalar_name is not None:
-        key = scalar_name.lower().split("_")[0]
-        return _SCALAR_CMAPS.get(key, "inferno")
+        full = scalar_name.lower().replace(" ", "_").replace("-", "_")
+        if full in _SCALAR_CMAPS:  # exact keys first (e.g. "z_score")
+            return _SCALAR_CMAPS[full]
+        return _SCALAR_CMAPS.get(full.split("_")[0], "inferno")
     return "inferno"
 
 
@@ -379,6 +381,7 @@ def plot_clusters(
     centroid_size: int = 14,
     cmap: str = "Set1",
     point_size: int = 5,
+    noise_color: str = "lightgray",
     title: str | None = None,
     bg: str = _DEFAULT_BG,
     size: tuple[int, int] = _DEFAULT_SIZE,
@@ -405,7 +408,10 @@ def plot_clusters(
     centroid_size : int
         Centroid marker size in pixels.
     cmap : str
-        Categorical colourmap for cluster colouring.
+        Categorical colourmap for cluster colouring (one discrete colour per
+        cluster).
+    noise_color : str
+        Colour for noise points (label < 0).
     point_size : int
         Point radius in pixels.
     title : str or None
@@ -428,9 +434,26 @@ def plot_clusters(
     n_clusters = len(unique_labels)
 
     # Build coloured point cloud
+    # Discrete per-cluster colours (one colour per cluster, independent of
+    # the numeric label values); noise (-1) is drawn in light grey.
+    import matplotlib.colors as mcolors
+    import matplotlib.pyplot as mplt
+
+    base = mplt.get_cmap(cmap)
+    n_base = getattr(base, "N", 256)
+    lab_to_rgb = {}
+    for j, k in enumerate(unique_labels):
+        if n_base < 256:  # qualitative (listed) map: cycle its discrete colours
+            lab_to_rgb[int(k)] = base(j % n_base)
+        else:  # continuous map: sample evenly
+            lab_to_rgb[int(k)] = base(j / max(n_clusters - 1, 1))
+    rgba = np.array(
+        [mcolors.to_rgba(noise_color) if lab < 0 else lab_to_rgb[int(lab)] for lab in labels],
+        dtype=np.float64,
+    )
     pts = vedo.Points(coords, r=point_size)
-    pts.pointdata["cluster"] = labels.astype(float)
-    pts.cmap(cmap, "cluster")
+    pts.pointdata["ClusterRGBA"] = (rgba * 255).astype(np.uint8)
+    pts.pointdata.select("ClusterRGBA")
 
     actors = [pts]
 
@@ -446,7 +469,7 @@ def plot_clusters(
         if show_ellipsoids and mask.sum() >= 4:
             try:
                 ell = pca_ellipsoid(vedo.Points(cluster_coords))
-                ell.alpha(ellipsoid_alpha)
+                ell.color(mcolors.to_hex(lab_to_rgb[int(k)])).alpha(ellipsoid_alpha)
                 actors.append(ell)
             except Exception as exc:
                 logger.warning("PCA ellipsoid failed for cluster %d: %s", k, exc)
@@ -490,6 +513,7 @@ def plot_point_cloud_panel(
     size: tuple[int, int] | None = None,
     scale: int = _DEFAULT_SCALE,
     save: PathLike | None = None,
+    shared_scale: bool = True,
 ) -> tuple[Path, dict[str, Any]]:
     """Multi-panel point cloud comparison.
 
@@ -517,11 +541,15 @@ def plot_point_cloud_panel(
         Screenshot scale.
     save : path or None
         Output PNG path.
+    shared_scale : bool
+        If True (default), panels without explicit ``vmin``/``vmax`` share one
+        colour range (1st/99th percentile over all panels) so they are
+        directly comparable.  False → per-panel ranges.
 
     Returns
     -------
     (Path, dict)
-        PNG path and metadata with ``'n_panels'``.
+        PNG path and metadata with ``'n_panels'`` and ``'scalar_ranges'``.
     """
     vedo = _get_vedo()
     n = len(panels)
@@ -537,6 +565,19 @@ def plot_point_cloud_panel(
         bg=bg,
     )
 
+    shared = None
+    if shared_scale:
+        pooled = [
+            np.asarray(p_["scalars"], dtype=np.float64).ravel()
+            for p_ in panels
+            if p_.get("scalars") is not None
+        ]
+        if pooled:
+            allv = np.concatenate(pooled)
+            if np.isfinite(allv).any():
+                shared = (float(np.nanpercentile(allv, 1)), float(np.nanpercentile(allv, 99)))
+    ranges = []
+
     for i, panel in enumerate(panels):
         coords = np.asarray(panel["coords"], dtype=np.float64)
         scalars = panel.get("scalars")
@@ -548,15 +589,19 @@ def plot_point_cloud_panel(
         pts = vedo.Points(coords, r=point_size, c="gray")
         if scalars is not None:
             scalars = np.asarray(scalars, dtype=np.float64)
-            v0 = panel.get("vmin") or float(np.nanpercentile(scalars, 1))
-            v1 = panel.get("vmax") or float(np.nanpercentile(scalars, 99))
+            v0, v1 = panel.get("vmin"), panel.get("vmax")
+            if v0 is None:
+                v0 = shared[0] if shared else float(np.nanpercentile(scalars, 1))
+            if v1 is None:
+                v1 = shared[1] if shared else float(np.nanpercentile(scalars, 99))
+            ranges.append((v0, v1))
             pts.pointdata[scalar_name] = scalars
             pts.cmap(cmap_name, scalar_name, vmin=v0, vmax=v1)
             pts.add_scalarbar(title=scalar_name)
 
         plt.at(i).show(pts, title=panel_title, viewup="z", zoom=1.1)
 
-    meta = {"n_panels": n, "shape": shape}
+    meta = {"n_panels": n, "shape": shape, "scalar_ranges": ranges}
     out = _save_vedo_screenshot(plt, save, scale=scale)
     return out, meta
 
@@ -745,16 +790,27 @@ def plot_voronoi(
     # Generate Voronoi cells
     voronoi = pts.generate_voronoi(padding=padding)
     voronoi.wireframe().linewidth(wireframe_width).color(wireframe_color)
+    actors = [voronoi]
 
     cmap_name = _resolve_cmap(scalar_name, cmap)
     if scalars is not None:
         scalars = np.asarray(scalars, dtype=np.float64)
-        voronoi.pointdata[scalar_name] = scalars
-        voronoi.cmap(cmap_name, scalar_name)
-        voronoi.add_scalarbar(title=scalar_name)
+        if scalars.shape[0] != coords.shape[0]:
+            raise ValueError(
+                f"scalars ({scalars.shape[0]}) must have one value per point ({coords.shape[0]})."
+            )
+        # One value per *seed*: Voronoi tiles are cells, identified by the
+        # generating point id ("VoronoiID"), so colour the cells, not points.
+        tiles = voronoi.clone().wireframe(False)
+        ids = tiles.celldata["VoronoiID"]
+        ids = np.arange(tiles.ncells) if ids is None else np.asarray(ids, dtype=int)
+        tiles.celldata[scalar_name] = scalars[ids]
+        tiles.cmap(cmap_name, scalar_name, on="cells")
+        tiles.add_scalarbar(title=scalar_name)
+        actors = [tiles, voronoi]
 
     plt = vedo.Plotter(offscreen=True, size=size, bg=bg)
-    plt.show(voronoi, pts, zoom=1.1)
+    plt.show(*actors, pts, zoom=1.1)
 
     meta = {
         "n_points": len(coords),

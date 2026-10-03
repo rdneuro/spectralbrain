@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import logging
 import warnings
-from typing import Dict, Optional
 
 import numpy as np
 
@@ -38,12 +37,14 @@ logger = logging.getLogger("spectralbrain.statistics._clustercore")
 def adjusted_rand_index(labels_a: np.ndarray, labels_b: np.ndarray) -> float:
     """Classical Adjusted Rand Index (exact, via scikit-learn)."""
     from sklearn.metrics import adjusted_rand_score
+
     return float(adjusted_rand_score(labels_a, labels_b))
 
 
 def normalized_mutual_info(labels_a: np.ndarray, labels_b: np.ndarray) -> float:
     """Classical Normalized Mutual Information (exact, via scikit-learn)."""
     from sklearn.metrics import normalized_mutual_info_score
+
     return float(normalized_mutual_info_score(labels_a, labels_b))
 
 
@@ -67,7 +68,7 @@ def variation_of_information(labels_a: np.ndarray, labels_b: np.ndarray) -> floa
         return -np.sum(p * np.log2(p))
 
     # Mutual information in bits.
-    contingency: Dict = {}
+    contingency: dict = {}
     for ai, bi in zip(a, b):
         contingency[(ai, bi)] = contingency.get((ai, bi), 0) + 1
     _, ca = np.unique(a, return_counts=True)
@@ -81,13 +82,15 @@ def variation_of_information(labels_a: np.ndarray, labels_b: np.ndarray) -> floa
     return float(_entropy(a) + _entropy(b) - 2.0 * mi)
 
 
-def _pair_disagreement_weights(coords_or_dist: np.ndarray, length_scale: float,
-                               is_distance: bool) -> np.ndarray:
+def _pair_disagreement_weights(
+    coords_or_dist: np.ndarray, length_scale: float, is_distance: bool
+) -> np.ndarray:
     """Symmetric pairwise weight ``w_ij = exp(-d_ij / length_scale)`` in [0, 1]."""
     if is_distance:
         D = np.asarray(coords_or_dist, float)
     else:
-        from scipy.spatial.distance import squareform, pdist
+        from scipy.spatial.distance import pdist, squareform
+
         D = squareform(pdist(np.asarray(coords_or_dist, float)))
     ls = float(length_scale)
     if ls <= 0:
@@ -95,11 +98,14 @@ def _pair_disagreement_weights(coords_or_dist: np.ndarray, length_scale: float,
     return np.exp(-D / ls)
 
 
-def spatial_rand_index(labels_a: np.ndarray, labels_b: np.ndarray,
-                       coords: Optional[np.ndarray] = None,
-                       distance: Optional[np.ndarray] = None,
-                       length_scale: Optional[float] = None,
-                       adjusted: bool = True) -> Dict[str, object]:
+def spatial_rand_index(
+    labels_a: np.ndarray,
+    labels_b: np.ndarray,
+    coords: np.ndarray | None = None,
+    distance: np.ndarray | None = None,
+    length_scale: float | None = None,
+    adjusted: bool = True,
+) -> dict[str, object]:
     """Spatially-aware (adjusted) Rand index.
 
     Concordant pairs (same/same or different/different in both partitions) score
@@ -140,7 +146,8 @@ def spatial_rand_index(labels_a: np.ndarray, labels_b: np.ndarray,
             length_scale = float(np.median(off[np.isfinite(off)]))
         W = _pair_disagreement_weights(D, length_scale, is_distance=True)
     else:
-        from scipy.spatial.distance import squareform, pdist
+        from scipy.spatial.distance import pdist
+
         Dvec = pdist(np.asarray(coords, float))
         if length_scale is None:
             length_scale = float(np.median(Dvec))
@@ -155,7 +162,7 @@ def spatial_rand_index(labels_a: np.ndarray, labels_b: np.ndarray,
 
     same_a = a[:, None] == a[None, :]
     same_b = b[:, None] == b[None, :]
-    concord = (same_a == same_b)                 # agreement pairs (bool VxV)
+    concord = same_a == same_b  # agreement pairs (bool VxV)
 
     iu = np.triu_indices(n, k=1)
     concord_u = concord[iu]

@@ -395,8 +395,32 @@ def _load_gifti_surface(path: Path) -> dict[str, Any]:
     """Load a GIFTI surface file (.surf.gii)."""
     nib = _require_nibabel()
     img = nib.load(str(path))
-    vertices = img.darrays[0].data
-    faces = img.darrays[1].data
+    vertices = faces = None
+    for da in img.darrays:
+        intent = nib.nifti1.intent_codes.label[da.intent]
+        if intent == "pointset" and vertices is None:
+            vertices = da.data
+        elif intent == "triangle" and faces is None:
+            faces = da.data
+    if vertices is None or faces is None:
+        # Non-conforming file without intents: fall back to the classic
+        # (pointset, triangle) order but validate the shapes/dtypes.
+        if len(img.darrays) < 2:
+            raise ValueError(f"{path.name}: GIfTI surface needs a pointset and a triangle array.")
+        cand_v, cand_f = img.darrays[0].data, img.darrays[1].data
+        if np.issubdtype(np.asarray(cand_v).dtype, np.integer) and not np.issubdtype(
+            np.asarray(cand_f).dtype, np.integer
+        ):
+            cand_v, cand_f = cand_f, cand_v
+        vertices = vertices if vertices is not None else cand_v
+        faces = faces if faces is not None else cand_f
+    vertices = np.asarray(vertices)
+    faces = np.asarray(faces)
+    if vertices.ndim != 2 or vertices.shape[1] != 3 or faces.ndim != 2 or faces.shape[1] != 3:
+        raise ValueError(
+            f"{path.name}: expected (N, 3) vertices and (F, 3) faces, got "
+            f"{vertices.shape} and {faces.shape}."
+        )
     return {
         "vertices": np.asarray(vertices, dtype=np.float64),
         "faces": np.asarray(faces, dtype=np.int64),
@@ -459,12 +483,26 @@ def _load_gifti_label(path: Path) -> dict[str, Any]:
     nib = _require_nibabel()
     img = nib.load(str(path))
     labels = np.asarray(img.darrays[0].data, dtype=np.int32)
-    # Extract label table if present.
-    names: list[str] = []
+    # Extract the label table.  GIfTI label values are *keys* into the table,
+    # not positions in it (e.g. HCP-MMP uses keys 181–360 for one hemisphere),
+    # so ``names`` is indexed by key: ``names[k]`` is the name of label ``k``.
+    table: dict[int, str] = {}
     lt = img.labeltable
     if lt is not None and hasattr(lt, "labels"):
-        names = [lbl.label if hasattr(lbl, "label") else str(lbl) for lbl in lt.labels]
-    return {"labels": labels, "names": names}
+        for lbl in lt.labels:
+            key = int(getattr(lbl, "key", len(table)))
+            table[key] = lbl.label if getattr(lbl, "label", None) is not None else str(key)
+    names: list[str] = []
+    if table:
+        if min(table) < 0:
+            logger.warning(
+                "%s: negative GIfTI label keys are not representable in "
+                "the key-indexed `names` list; see `label_table`.",
+                path.name,
+            )
+        n = max(max(table), int(labels.max()) if labels.size else 0) + 1
+        names = [table.get(k, f"label_{k}") for k in range(n)]
+    return {"labels": labels, "names": names, "label_table": table}
 
 
 def load_gifti_label(path: PathLike) -> tuple[LabelArray, list[str]]:
@@ -479,6 +517,9 @@ def load_gifti_label(path: PathLike) -> tuple[LabelArray, list[str]]:
     -------
     labels : ndarray, shape (N,)
     names : list of str
+        Region names indexed by label key (``names[k]`` names label ``k``;
+        keys absent from the label table are filled with ``"label_<k>"``),
+        so the pair can be passed straight to :func:`remap_parcellation`.
     """
     r = _load_gifti_label(Path(path))
     return r["labels"], r["names"]
@@ -589,8 +630,8 @@ def _load_hdf5(path: Path) -> dict[str, Any]:
 
 def _load_npz(path: Path) -> dict[str, Any]:
     """Load data from a NumPy compressed archive (.npz)."""
-    data = np.load(str(path), allow_pickle=False)
-    return dict(data)
+    with np.load(str(path), allow_pickle=False) as data:
+        return {k: data[k] for k in data.files}
 
 
 # ======================================================================
@@ -657,11 +698,16 @@ def labels_to_pointcloud(
     if label_volume.ndim != 3:
         raise ValueError(f"Expected 3D volume, got shape {label_volume.shape}")
 
-    mask = label_volume == label_id
+    if np.issubdtype(label_volume.dtype, np.floating):
+        # Label maps stored with scl_slope/inter (or resampled) load as float;
+        # exact equality would silently miss voxels such as 16.9999997.
+        mask = np.isclose(label_volume, label_id, rtol=0.0, atol=1e-3)
+    else:
+        mask = label_volume == label_id
     if not mask.any():
         raise ValueError(
             f"Label {label_id} not found in volume.  "
-            f"Unique labels: {np.unique(label_volume[:20])!r}…"
+            f"Unique labels (first 20): {np.unique(label_volume)[:20]!r}…"
         )
 
     # Voxel indices → (N, 3) int array.
@@ -736,6 +782,7 @@ def apply_parcellation(
     labels: LabelArray,
     *,
     ignore_labels: list[int] | None = None,
+    ignore_unassigned: bool = True,
 ) -> dict[int, tuple[Vertices, Faces]]:
     """Split a surface into sub-meshes according to a parcellation.
 
@@ -752,6 +799,10 @@ def apply_parcellation(
         Per-vertex parcel labels.
     ignore_labels : list of int, optional
         Labels to skip (e.g. ``[0]`` for the medial wall in Schaefer).
+    ignore_unassigned : bool
+        Also skip label ``-1``, which nibabel's ``read_annot`` assigns to
+        vertices whose annotation value is not in the colour table
+        (unlabelled vertices are not a parcel). Default ``True``.
 
     Returns
     -------
@@ -782,6 +833,8 @@ def apply_parcellation(
         raise ValueError(f"Label length {labels.shape[0]} != n_vertices {vertices.shape[0]}")
 
     ignore = set(ignore_labels or [])
+    if ignore_unassigned:
+        ignore.add(-1)
     unique_labels = sorted(set(np.unique(labels).tolist()) - ignore)
 
     parcels: dict[int, tuple[Vertices, Faces]] = {}
@@ -1008,6 +1061,32 @@ def remap_parcellation(
     return new_labels, new_names
 
 
+def _as_axis_reducer(func: Callable) -> Callable:
+    """Wrap a user reducer so it can be called as ``f(x, axis=0)``.
+
+    The public contract is "a callable that accepts an array and returns a
+    scalar"; functions that also take ``axis`` (NumPy reducers) are used
+    directly, others are applied column by column.
+    """
+    import inspect
+
+    try:
+        params = inspect.signature(func).parameters
+        takes_axis = "axis" in params or any(
+            p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()
+        )
+    except (TypeError, ValueError):  # builtins without an inspectable signature
+        takes_axis = False  # column-wise application is always correct
+    if takes_axis:
+        return func
+
+    def _columnwise(x: np.ndarray, axis: int = 0) -> np.ndarray:
+        x = np.asarray(x)
+        return np.array([func(x[:, j]) for j in range(x.shape[1])])
+
+    return _columnwise
+
+
 def aggregate_by_parcellation(
     data: np.ndarray,
     labels: np.ndarray,
@@ -1108,7 +1187,7 @@ def aggregate_by_parcellation(
             )
         func = _stat_funcs[stat]
     else:
-        func = stat
+        func = _as_axis_reducer(stat)
 
     rows = []
     for lab in unique_labels:

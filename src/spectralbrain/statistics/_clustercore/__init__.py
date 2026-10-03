@@ -13,24 +13,36 @@ import those, not this private subpackage.
 """
 
 from ._meshgeom import (  # noqa: F401
-    adjacency_list_from_faces, adjacency_list_from_sparse, edge_distances,
+    adjacency_list_from_faces,
+    adjacency_list_from_sparse,
+    edge_distances,
+)
+from .atlas import (  # noqa: F401
+    aggregate_across_subjects,
+    cluster_atlas_concordance,
+    compare_partitions,
+    homogeneity_vs_null,
+    parcel_overlap,
+    random_parcellation,
+    spectral_homogeneity,
+)
+from .cluster_stats import intra_inter_homogeneity, spatial_silhouette  # noqa: F401
+from .consensus import (  # noqa: F401
+    co_association_matrix,
+    consensus_partition,
+    stability_per_vertex,
 )
 from .ddcrp import DDCRP, DDCRPResult, NIWPrior, cluster_ddcrp  # noqa: F401
 from .ddcrp_functional import cluster_ddcrp_functional  # noqa: F401
-from .consensus import (  # noqa: F401
-    co_association_matrix, consensus_partition, stability_per_vertex,
-)
-from .partition import (  # noqa: F401
-    adjusted_rand_index, normalized_mutual_info, spatial_rand_index,
-    variation_of_information,
-)
-from .atlas import (  # noqa: F401
-    aggregate_across_subjects, cluster_atlas_concordance, compare_partitions,
-    homogeneity_vs_null, parcel_overlap, random_parcellation,
-    spectral_homogeneity,
-)
 from .nulls import (  # noqa: F401
-    brainsmash_surrogates, eigenstrapping_surrogates, paired_label_permutation,
+    brainsmash_surrogates,
+    eigenstrapping_surrogates,
+    paired_label_permutation,
 )
 from .optimize import autotune_ddcrp, autotune_ddcrp_functional  # noqa: F401
-from .cluster_stats import intra_inter_homogeneity, spatial_silhouette  # noqa: F401
+from .partition import (  # noqa: F401
+    adjusted_rand_index,
+    normalized_mutual_info,
+    spatial_rand_index,
+    variation_of_information,
+)

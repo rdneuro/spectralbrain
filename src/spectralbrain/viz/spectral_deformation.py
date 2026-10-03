@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 spectral_deformation.py  —  SpectralBrain
 =========================================
@@ -66,7 +65,6 @@ Autor: Rodrigo Debona (Velho Mago) — com Claudinho.
 # %% ───────────────────────────── imports & ambiente ─────────────────────────
 import os
 import warnings
-from typing import Dict, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import scipy.sparse as sp
@@ -74,7 +72,7 @@ from scipy.sparse.linalg import eigsh
 
 ArrayF = np.ndarray
 ArrayI = np.ndarray
-PathLike = Union[str, os.PathLike]
+PathLike = str | os.PathLike
 
 
 # %% ───────────────────── operadores LBO: stiffness & massa ───────────────────
@@ -104,10 +102,10 @@ def cotangent_stiffness(V: ArrayF, F: ArrayI) -> sp.csc_matrix:
     J = np.concatenate([i3, i2, i1, i3, i2, i1])
     vals = 0.5 * np.concatenate([cot1, cot1, cot2, cot2, cot3, cot3])
 
-    W = sp.csr_matrix((-vals, (I, J)), shape=(n, n))     # off-diagonais (negativas)
-    diag = -np.asarray(W.sum(axis=1)).ravel()            # diagonal = −Σ off-diag (>0)
+    W = sp.csr_matrix((-vals, (I, J)), shape=(n, n))  # off-diagonais (negativas)
+    diag = -np.asarray(W.sum(axis=1)).ravel()  # diagonal = −Σ off-diag (>0)
     W = (W + sp.diags(diag)).tocsc()
-    W = 0.5 * (W + W.T)                                   # simetriza erros numéricos
+    W = 0.5 * (W + W.T)  # simetriza erros numéricos
     return W.tocsc()
 
 
@@ -135,7 +133,7 @@ def _weighted_eigs(
     mass_diag: ArrayF,
     k_nonzero: int,
     sigma: float = -1e-6,
-) -> Tuple[ArrayF, ArrayF]:
+) -> tuple[ArrayF, ArrayF]:
     """Resolve W v = λ (B) v, B = diag(mass_diag), retornando os k_nonzero
     menores autopares NÃO-NULOS (pula o modo constante λ≈0).
 
@@ -146,7 +144,7 @@ def _weighted_eigs(
     order = np.argsort(vals)
     vals, vecs = vals[order], vecs[:, order]
     # descarta o primeiro (constante, λ≈0)
-    return vals[1:k_nonzero + 1], vecs[:, 1:k_nonzero + 1]
+    return vals[1 : k_nonzero + 1], vecs[:, 1 : k_nonzero + 1]
 
 
 # %% ──────────────────────────── passo de QP (OSQP) ───────────────────────────
@@ -171,47 +169,58 @@ def _qp_step(
     try:
         import osqp
     except Exception as exc:  # pragma: no cover
-        raise ImportError(
-            "OSQP não encontrado. Instale com `pip install osqp`."
-        ) from exc
+        raise ImportError("OSQP não encontrado. Instale com `pip install osqp`.") from exc
 
     n = W.shape[0]
     P = (2.0 * W + ridge * sp.identity(n, format="csc")).tocsc()
     q = 2.0 * (W.dot(v_omega))
 
-    A_align = sp.csc_matrix(A)                      # (k1 × n)
+    A_align = sp.csc_matrix(A)  # (k1 × n)
     C = sp.vstack([A_align, sp.identity(n, format="csc")], format="csc")
     lo = np.concatenate([b - align_tol, h_low - v_omega])
     hi = np.concatenate([b + align_tol, h_high - v_omega])
 
     prob = osqp.OSQP()
-    prob.setup(P=P, q=q, A=C, l=lo, u=hi, verbose=False,
-               polish=True, eps_abs=1e-6, eps_rel=1e-6, max_iter=8000)
+    prob.setup(
+        P=P,
+        q=q,
+        A=C,
+        l=lo,
+        u=hi,
+        verbose=False,
+        polish=True,
+        eps_abs=1e-6,
+        eps_rel=1e-6,
+        max_iter=8000,
+    )
     res = prob.solve()
     status = res.info.status_val
     if status not in (1, 2):  # 1=solved, 2=solved_inaccurate
         warnings.warn(
             f"OSQP não convergiu plenamente (status={res.info.status}). "
-            "Considere aumentar `align_tol` (modo soft) ou afrouxar os limites."
+            "Considere aumentar `align_tol` (modo soft) ou afrouxar os limites.",
+            stacklevel=2,
         )
     d = res.x
     if d is None or not np.all(np.isfinite(d)):
-        warnings.warn("QP retornou solução inválida; passo zerado.")
+        warnings.warn("QP retornou solução inválida; passo zerado.", stacklevel=2)
         return np.zeros(n)
     return np.asarray(d, dtype=float)
 
 
 # %% ─────────────────────── algoritmo principal de deformação ─────────────────
 def spectral_deformation(
-    V_N: ArrayF, F_N: ArrayI,           # malha N (fonte; a escala vive aqui)
-    V_M: ArrayF, F_M: ArrayI,           # malha M (alvo)
+    V_N: ArrayF,
+    F_N: ArrayI,  # malha N (fonte; a escala vive aqui)
+    V_M: ArrayF,
+    F_M: ArrayI,  # malha M (alvo)
     k1: int = 100,
     n_steps: int = 10,
-    bounds: Tuple[float, float] = (0.1, 10.0),
+    bounds: tuple[float, float] = (0.1, 10.0),
     align_tol: float = 0.0,
     eig_sigma: float = -1e-6,
     return_history: bool = True,
-) -> Dict[str, object]:
+) -> dict[str, object]:
     """Alinha os primeiros k1 autovalores de N aos de M via função de escala ω.
 
     Parameters
@@ -243,8 +252,10 @@ def spectral_deformation(
     hipocampais (~5k–8k vértices) com k1=100, K=10 roda em segundos a poucos
     minutos na workstation. NÃO rode isto no sandbox — entregue para a RTX 3090.
     """
-    V_N = np.asarray(V_N, float); F_N = np.asarray(F_N, int)
-    V_M = np.asarray(V_M, float); F_M = np.asarray(F_M, int)
+    V_N = np.asarray(V_N, float)
+    F_N = np.asarray(F_N, int)
+    V_M = np.asarray(V_M, float)
+    F_M = np.asarray(F_M, int)
     n_N = V_N.shape[0]
     h_l, h_u = float(bounds[0]), float(bounds[1])
     h_low = np.full(n_N, h_l)
@@ -275,7 +286,7 @@ def spectral_deformation(
             align_err.append(float(rel))
 
         # sistema linear A d = b  (Eq. 18/19): A_i = m_N ∘ v_i ∘ v_i
-        A = (m_N[None, :] * (vecs_q.T ** 2))          # (k1 × n_N)
+        A = m_N[None, :] * (vecs_q.T**2)  # (k1 × n_N)
         b = (lam_q - lam_M) / np.maximum(lam_q, 1e-12)
 
         d = _qp_step(W_N, v_omega, A, b, h_low, h_high, align_tol)
@@ -287,7 +298,7 @@ def spectral_deformation(
     # autovalores finais de N após deformação
     lam_final, _ = _weighted_eigs(W_N, v_omega * m_N, k1, sigma=eig_sigma)
 
-    out: Dict[str, object] = {
+    out: dict[str, object] = {
         "scale": v_omega,
         "log_scale": np.log(np.clip(v_omega, 1e-12, None)),
         "lambda_M": lam_M,
@@ -303,13 +314,15 @@ def spectral_deformation(
 
 # %% ─────────────────── wrapper clínico: lateralização MTLE-HS ────────────────
 def lateralization_map(
-    V_ipsi: ArrayF, F_ipsi: ArrayI,
-    V_contra: ArrayF, F_contra: ArrayI,
+    V_ipsi: ArrayF,
+    F_ipsi: ArrayI,
+    V_contra: ArrayF,
+    F_contra: ArrayI,
     k1: int = 100,
     n_steps: int = 10,
-    bounds: Tuple[float, float] = (0.1, 10.0),
+    bounds: tuple[float, float] = (0.1, 10.0),
     align_tol: float = 0.0,
-) -> Dict[str, object]:
+) -> dict[str, object]:
     """Mapa de lateralização L-vs-R do hipocampo, definido na malha IPSILATERAL.
 
     Convenção MTLE-HS: N = ipsilateral (lado da esclerose), M = contralateral.
@@ -321,8 +334,14 @@ def lateralization_map(
     registre as malhas; passe-as como saem do HippUnfold/segmentação.
     """
     res = spectral_deformation(
-        V_ipsi, F_ipsi, V_contra, F_contra,
-        k1=k1, n_steps=n_steps, bounds=bounds, align_tol=align_tol,
+        V_ipsi,
+        F_ipsi,
+        V_contra,
+        F_contra,
+        k1=k1,
+        n_steps=n_steps,
+        bounds=bounds,
+        align_tol=align_tol,
     )
     res["convention"] = "N=ipsilateral, M=contralateral; log(ω)>0 => atrofia relativa do ipsi"
     return res
@@ -330,14 +349,15 @@ def lateralization_map(
 
 # %% ─────────────────────────── render (vedo, offscreen) ──────────────────────
 def render_scale_on_mesh(
-    V: ArrayF, F: ArrayI,
+    V: ArrayF,
+    F: ArrayI,
     scalar: ArrayF,
     out_path: PathLike = "spectral_deformation.png",
     cmap: str = "RdBu_r",
     percentile_clim: float = 98.0,
     symmetric: bool = True,
-    title: Optional[str] = None,
-    size: Tuple[int, int] = (1200, 900),
+    title: str | None = None,
+    size: tuple[int, int] = (1200, 900),
     zoom: float = 1.3,
 ) -> str:
     """Pinta um campo escalar por-vértice (tipicamente log ω) sobre a malha.

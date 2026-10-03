@@ -196,7 +196,7 @@ def eigenshape_analysis(
 
 def _tps_kernel(landmarks: np.ndarray) -> np.ndarray:
     """Thin-plate-spline kernel ``U(r) = r² ln r`` over landmark pairs."""
-    p = landmarks.shape[0]
+    landmarks.shape[0]
     diff = landmarks[:, None, :] - landmarks[None, :, :]
     r2 = np.sum(diff**2, axis=2)
     with np.errstate(divide="ignore", invalid="ignore"):
@@ -259,9 +259,7 @@ def principal_warps(landmarks: np.ndarray) -> dict[str, np.ndarray]:
 # ======================================================================
 
 
-def _sph_harm(
-    m: int, l: int, azimuth: np.ndarray, polar: np.ndarray
-) -> np.ndarray:
+def _sph_harm(m: int, l: int, azimuth: np.ndarray, polar: np.ndarray) -> np.ndarray:
     """Spherical harmonic ``Y_l^m`` with azimuth∈[0,2π], polar∈[0,π].
 
     Compatibility shim across SciPy versions: the legacy
@@ -319,9 +317,7 @@ def spharm_coefficients(
     index : list of (l, m)
         Degree/order for each coefficient row.
     """
-    y, index = _real_sph_design(
-        np.asarray(theta, float), np.asarray(phi, float), l_max
-    )
+    y, index = _real_sph_design(np.asarray(theta, float), np.asarray(phi, float), l_max)
     vals = np.asarray(values, dtype=np.complex128)
     coeffs, *_ = np.linalg.lstsq(y, vals, rcond=None)
     return coeffs, index

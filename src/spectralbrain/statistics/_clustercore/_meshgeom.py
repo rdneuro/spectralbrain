@@ -9,25 +9,22 @@ decay kernel modulate contiguity by physical distance.
 
 from __future__ import annotations
 
-from typing import List
-
 import numpy as np
 import scipy.sparse as sp
 
 
-def adjacency_list_from_faces(faces: np.ndarray, n_vertices: int) -> List[np.ndarray]:
+def adjacency_list_from_faces(faces: np.ndarray, n_vertices: int) -> list[np.ndarray]:
     """Per-vertex neighbour-index arrays from a triangle list."""
     faces = np.asarray(faces, dtype=np.int64)
     e = np.vstack([faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]])
     e = np.vstack([e, e[:, ::-1]])
     data = np.ones(e.shape[0], dtype=np.int8)
-    A = sp.coo_matrix((data, (e[:, 0], e[:, 1])),
-                      shape=(n_vertices, n_vertices)).tocsr()
+    A = sp.coo_matrix((data, (e[:, 0], e[:, 1])), shape=(n_vertices, n_vertices)).tocsr()
     A.data[:] = 1
-    return [A.indices[A.indptr[v]:A.indptr[v + 1]].copy() for v in range(n_vertices)]
+    return [A.indices[A.indptr[v] : A.indptr[v + 1]].copy() for v in range(n_vertices)]
 
 
-def edge_distances(vertices: np.ndarray, adjacency_list) -> List[np.ndarray]:
+def edge_distances(vertices: np.ndarray, adjacency_list) -> list[np.ndarray]:
     """Per-neighbour Euclidean edge lengths aligned to ``adjacency_list``.
 
     For adjacent mesh vertices the Euclidean edge length closely approximates the
@@ -40,7 +37,7 @@ def edge_distances(vertices: np.ndarray, adjacency_list) -> List[np.ndarray]:
         raise ValueError(f"vertices must be (V, 3); got {vertices.shape}.")
     if len(adjacency_list) != vertices.shape[0]:
         raise ValueError("adjacency_list length must equal the number of vertices.")
-    out: List[np.ndarray] = []
+    out: list[np.ndarray] = []
     for v, neigh in enumerate(adjacency_list):
         neigh = np.asarray(neigh, dtype=np.int64)
         if neigh.size == 0:
@@ -50,8 +47,8 @@ def edge_distances(vertices: np.ndarray, adjacency_list) -> List[np.ndarray]:
     return out
 
 
-def adjacency_list_from_sparse(adjacency) -> List[np.ndarray]:
+def adjacency_list_from_sparse(adjacency) -> list[np.ndarray]:
     """Per-vertex neighbour arrays from a scipy sparse adjacency matrix."""
     A = sp.csr_matrix(adjacency)
     n = A.shape[0]
-    return [A.indices[A.indptr[v]:A.indptr[v + 1]].copy() for v in range(n)]
+    return [A.indices[A.indptr[v] : A.indptr[v + 1]].copy() for v in range(n)]

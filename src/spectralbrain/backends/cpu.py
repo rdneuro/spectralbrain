@@ -419,9 +419,9 @@ class PyMCSampler:
 
         logger.info(
             "PyMC NUTS: %d draws × %d chains (%d tune)",
-            cfg.draws,
-            cfg.chains,
-            cfg.tune,
+            sample_kwargs["draws"],
+            sample_kwargs["chains"],
+            sample_kwargs["tune"],
         )
 
         with model:
@@ -475,23 +475,29 @@ class NutpieSampler:
         nutpie = _require_nutpie()
         cfg = self.config
 
-        logger.info(
-            "nutpie NUTS: %d draws × %d chains (%d tune)",
-            cfg.draws,
-            cfg.chains,
-            cfg.tune,
-        )
-
-        compiled = nutpie.compile_pymc_model(model)
-        trace = nutpie.sample(
-            compiled,
+        sample_kwargs: dict[str, Any] = dict(
             draws=cfg.draws,
             tune=cfg.tune,
             chains=cfg.chains,
+            cores=cfg.cores,
             seed=cfg.random_seed,
+            target_accept=cfg.target_accept,
             progress_bar=True,
-            **kwargs,
         )
+        # Caller overrides win (no "multiple values for keyword" errors).
+        sample_kwargs.update(kwargs)
+        if sample_kwargs.get("seed") is None:
+            sample_kwargs.pop("seed", None)
+
+        logger.info(
+            "nutpie NUTS: %d draws × %d chains (%d tune)",
+            sample_kwargs["draws"],
+            sample_kwargs["chains"],
+            sample_kwargs["tune"],
+        )
+
+        compiled = nutpie.compile_pymc_model(model)
+        trace = nutpie.sample(compiled, **sample_kwargs)
         return trace
 
 
@@ -736,7 +742,6 @@ class MemoryInfo:
         """Return a human-readable summary."""
         return (
             f"RAM: {self.used_gb:.1f} / {self.total_gb:.1f} GB "
-            """Return a human-readable RAM status summary."""
             f"({self.percent_used:.0f}% used, "
             f"{self.available_gb:.1f} GB free)"
         )

@@ -112,9 +112,11 @@ def anisotropic_laplacian(
 
     # Modify edge weights by directional bias.
     # For edge (i, j), the anisotropic weight is:
-    #   w_ij' = w_ij · (1 + α · |d_i · e_ij|²)
-    # where d_i is the preferred direction at vertex i and
-    # e_ij is the unit edge vector.
+    #   w_ij' = w_ij · (1 + α · ½(|d_i · e_ij|² + |d_j · e_ij|²))
+    # where d_i is the preferred direction at vertex i and e_ij is the
+    # unit edge vector.  Averaging the bias over both endpoints keeps the
+    # operator symmetric (w_ij' = w_ji'), as required by the symmetric
+    # eigensolver.
     L_coo = sp.coo_matrix(L_iso)
     rows, cols, vals = L_coo.row, L_coo.col, L_coo.data.copy()
 
@@ -127,20 +129,21 @@ def anisotropic_laplacian(
     edge_len = np.linalg.norm(edge_vecs, axis=1, keepdims=True)
     edge_unit = edge_vecs / np.clip(edge_len, 1e-12, None)
 
-    # Directional bias at source vertex.
-    dir_at_src = dirs[r_off]  # (E, 3)
-    cos_sq = np.sum(dir_at_src * edge_unit, axis=1) ** 2  # (E,)
+    dirs = np.asarray(dirs, dtype=np.float64)
+    cos_sq_src = np.sum(dirs[r_off] * edge_unit, axis=1) ** 2  # (E,)
+    cos_sq_dst = np.sum(dirs[c_off] * edge_unit, axis=1) ** 2  # (E,)
+    cos_sq = 0.5 * (cos_sq_src + cos_sq_dst)
 
     # Scale off-diagonal weights.
     scale = 1.0 + anisotropy * cos_sq
-    vals[off_diag] *= scale
+    off_vals = vals[off_diag] * scale
 
-    # Rebuild and fix diagonal (row sum = 0).
-    L_aniso = sp.coo_matrix((vals, (rows, cols)), shape=(N, N)).tocsc()
-    # Reset diagonal.
-    diag_vals = -np.asarray(L_aniso.sum(axis=1)).ravel()
-    L_aniso.setdiag(0)
-    L_aniso = L_aniso + sp.diags(diag_vals, 0, format="csc")
+    # Rebuild: off-diagonal part, then diagonal = −(off-diagonal row sum)
+    # so that every row sums to zero.
+    L_off = sp.coo_matrix((off_vals, (r_off, c_off)), shape=(N, N)).tocsc()
+    L_off = 0.5 * (L_off + L_off.T)  # scrub fp asymmetry
+    diag_vals = -np.asarray(L_off.sum(axis=1)).ravel()
+    L_aniso = sp.csc_matrix(L_off + sp.diags(diag_vals, 0, format="csc"))
 
     logger.info(
         "Anisotropic Laplacian: α=%.2f, direction=%s",
@@ -186,10 +189,12 @@ def _estimate_curvature_directions(
         cov = proj.T @ proj
         _eigvals, eigvecs = np.linalg.eigh(cov)
 
+        # eigvecs[:, 0] is (≈) the normal: the projected neighbours have
+        # no variance along it.  The two tangent axes are columns 1 and 2.
         if which == "max":
-            directions[i] = eigvecs[:, -1]  # largest variance
+            directions[i] = eigvecs[:, -1]  # largest in-plane variance
         else:
-            directions[i] = eigvecs[:, 0]  # smallest variance
+            directions[i] = eigvecs[:, 1]  # smallest in-plane variance
 
     # Normalise.
     norms = np.linalg.norm(directions, axis=1, keepdims=True)
@@ -332,15 +337,26 @@ def compute_asmwd(
     # Estimate both curvature directions.
     dir_max = _estimate_curvature_directions(vertices, faces, "max")
     dir_min = _estimate_curvature_directions(vertices, faces, "min")
+    # Principal directions are line fields (sign-ambiguous).  Fix a
+    # right-handed tangent frame (dir_max, dir_min, n) so the interpolated
+    # directions rotate consistently from vertex to vertex.
+    from spectralbrain.core.meshes import _vertex_normals
+
+    normals = _vertex_normals(vertices, faces)
+    handed = np.sign(np.sum(np.cross(dir_max, dir_min) * normals, axis=1, keepdims=True))
+    handed[handed == 0] = 1.0
+    dir_min = dir_min * handed
 
     all_descs: list[np.ndarray] = []
     be = NumpyBackend()
 
     with progress_simple("ASMWD directions", total=n_directions) as tick:
         for d_idx in range(n_directions):
-            # Interpolate between max and min curvature.
+            # Rotate from the max- to the min-curvature axis in the
+            # tangent plane (angle interpolation keeps unit length).
             alpha = d_idx / max(1, n_directions - 1)
-            custom_dir = (1 - alpha) * dir_max + alpha * dir_min
+            ang = 0.5 * np.pi * alpha
+            custom_dir = np.cos(ang) * dir_max + np.sin(ang) * dir_min
             norms = np.linalg.norm(custom_dir, axis=1, keepdims=True)
             custom_dir /= np.clip(norms, 1e-12, None)
 

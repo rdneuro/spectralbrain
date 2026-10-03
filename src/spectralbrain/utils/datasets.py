@@ -172,7 +172,7 @@ def make_connectome_example(
 
     return {
         "connectomes": np.array(connectomes),
-        "labels": np.array([0] * n_half + [1] * n_half),
+        "labels": np.array([0] * n_half + [1] * (n_subjects - n_half)),
         "network_assignments": net_assign,
     }
 
@@ -211,7 +211,7 @@ def make_laterality_example(
     return {
         "left": left,
         "right": right,
-        "labels": np.array([0] * n_half + [1] * n_half),
+        "labels": np.array([0] * n_half + [1] * (n_subjects - n_half)),
         "affected_features": affected,
     }
 
@@ -225,7 +225,7 @@ def fetch_fsaverage(
     mesh: str = "pial",
     hemisphere: str = "lh",
 ) -> tuple[Vertices, Faces]:
-    """Load fsaverage template surfaces from nibabel's bundled data.
+    """Load fsaverage template surfaces (local FreeSurfer install or nilearn).
 
     Parameters
     ----------
@@ -244,29 +244,55 @@ def fetch_fsaverage(
     except ImportError as exc:
         raise ImportError("nibabel required for fsaverage.") from exc
 
-    # nibabel ships fsaverage in its data directory.
-    try:
-        data_dir = Path(nib.__file__).parent / "freesurfer" / "data"
-        surf_path = data_dir / "fsaverage" / "surf" / f"{hemisphere}.{mesh}"
-        if surf_path.exists():
-            v, f = fs.read_geometry(str(surf_path))
-            return np.asarray(v, np.float64), np.asarray(f, np.int64)
-    except Exception:
-        pass
+    hemi_map = {"lh": "left", "rh": "right", "left": "left", "right": "right"}
+    mesh_map = {
+        "inflated": "infl",
+        "infl": "infl",
+        "pial": "pial",
+        "white": "white",
+        "sphere": "sphere",
+    }
+    if hemisphere not in hemi_map:
+        raise ValueError(f"hemisphere must be 'lh' or 'rh', got {hemisphere!r}")
+    if mesh not in mesh_map:
+        raise ValueError(f"Unknown fsaverage mesh {mesh!r}; use one of {sorted(mesh_map)}")
+    short_hemi = "lh" if hemi_map[hemisphere] == "left" else "rh"
+    errors: list[str] = []
 
-    # Fallback: try nilearn's fetch_surf_fsaverage.
+    # 1) A local FreeSurfer installation ($SUBJECTS_DIR or $FREESURFER_HOME).
+    import os
+
+    candidates = []
+    for env, sub in (("SUBJECTS_DIR", ""), ("FREESURFER_HOME", "subjects")):
+        root = os.environ.get(env)
+        if root:
+            candidates.append(Path(root) / sub / "fsaverage" / "surf" / f"{short_hemi}.{mesh}")
+    for surf_path in candidates:
+        if surf_path.exists():
+            try:
+                v, f = fs.read_geometry(str(surf_path))
+                return np.asarray(v, np.float64), np.asarray(f, np.int64)
+            except (OSError, ValueError) as exc:
+                errors.append(f"{surf_path}: {exc}")
+
+    # 2) nilearn's fetch_surf_fsaverage (keys look like 'pial_left', 'infl_left').
     try:
         from nilearn.datasets import fetch_surf_fsaverage
-
-        fsavg = fetch_surf_fsaverage(mesh="fsaverage")
-        key = f"{mesh}_{hemisphere}"
-        v, f = nib.load(fsavg[key]).darrays[0].data, nib.load(fsavg[key]).darrays[1].data
-        return np.asarray(v, np.float64), np.asarray(f, np.int64)
-    except Exception:
-        pass
+    except ImportError as exc:
+        errors.append(f"nilearn unavailable: {exc}")
+    else:
+        try:
+            fsavg = fetch_surf_fsaverage(mesh="fsaverage")
+            key = f"{mesh_map[mesh]}_{hemi_map[hemisphere]}"
+            img = nib.load(fsavg[key])
+            v, f = img.darrays[0].data, img.darrays[1].data
+            return np.asarray(v, np.float64), np.asarray(f, np.int64)
+        except (KeyError, OSError, ValueError, IndexError) as exc:
+            errors.append(f"nilearn fetch_surf_fsaverage: {exc!r}")
 
     raise FileNotFoundError(
-        "Could not load fsaverage. Install nibabel or nilearn:\n  pip install nibabel nilearn"
+        "Could not load fsaverage "
+        f"({short_hemi}.{mesh}). Tried: " + "; ".join(errors or ["no source available"])
     )
 
 
@@ -282,13 +308,20 @@ def example_sphere(
 ) -> tuple[Vertices, Faces]:
     """Quick sphere mesh for testing.
 
+    The UV-sphere is *welded*: duplicated seam/pole vertices are merged and
+    the zero-area pole triangles removed, so the result is a closed
+    manifold whose cotangent-LBO spectrum matches the analytic sphere
+    (λ·r² ≈ 0, 2, 2, 2, 6, …).
+
     Returns
     -------
     vertices, faces
     """
+    from spectralbrain.core.meshes import weld_mesh
     from spectralbrain.statistics.surrogates import SyntheticMesh
 
-    return SyntheticMesh(seed=0).sphere(n_lat, n_lon, radius)
+    v, f = SyntheticMesh(seed=0).sphere(n_lat, n_lon, radius)
+    return weld_mesh(v, f)
 
 
 def example_point_cloud(

@@ -455,7 +455,8 @@ def descriptor_distance(
         ``"mmd"`` — Maximum Mean Discrepancy with Gaussian kernel.
         ``"euclidean"`` — L2 between distribution means.
         ``"cosine"`` — cosine distance between means.
-        ``"correlation"`` — 1 − Pearson r between aggregated features.
+        ``"correlation"`` — 1 − Pearson r between aggregated features
+        (requires ``T ≥ 2``; raises ``ValueError`` for scalar maps).
 
     Returns
     -------
@@ -490,7 +491,12 @@ def descriptor_distance(
         ma = a.mean(axis=0) if a.ndim > 1 else np.array([a.mean()])
         mb = b.mean(axis=0) if b.ndim > 1 else np.array([b.mean()])
         if len(ma) < 2:
-            return 0.0
+            # A Pearson correlation between two 1-element mean vectors is
+            # undefined; returning 0 would silently report "identical".
+            raise ValueError(
+                "method='correlation' needs multi-dimensional descriptors "
+                "(N, T) with T ≥ 2; for scalar maps use 'wasserstein' or 'mmd'."
+            )
         r = np.corrcoef(ma, mb)[0, 1]
         return float(1.0 - r) if np.isfinite(r) else 1.0
     else:

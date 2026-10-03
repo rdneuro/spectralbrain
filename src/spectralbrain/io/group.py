@@ -58,6 +58,18 @@ from spectralbrain.utils.helpers import parse_bids_filename
 
 logger = get_logger(__name__)
 
+#: Exceptions that signal a bug or a broken environment rather than a bad
+#: subject file. Fail-soft loaders re-raise these instead of dropping the
+#: subject (otherwise every subject would be silently discarded).
+PROGRAMMING_ERRORS: tuple[type[BaseException], ...] = (
+    TypeError,
+    AttributeError,
+    NameError,
+    ImportError,
+    NotImplementedError,
+    AssertionError,
+)
+
 
 # ======================================================================
 # §1  GROUP CONTAINER
@@ -154,6 +166,24 @@ class GroupData:
 def _norm_sid(s: str) -> str:
     """Normalise a subject id to the ``sub-XXX`` form."""
     return s if s.startswith("sub-") else f"sub-{s}"
+
+
+def _subject_id_from_path(p: Path) -> str:
+    """Best-effort subject ID for a file path.
+
+    Order: BIDS ``sub-`` entity in the filename → a ``sub-*`` ancestor
+    directory → FreeSurfer layout (``<subject>/surf/<file>``) → parent
+    directory name + file stem.
+    """
+    sub = parse_bids_filename(p.name).get("sub")
+    if sub:
+        return _norm_sid(sub)
+    for parent in p.parents:
+        if parent.name.startswith("sub-"):
+            return parent.name
+    if p.parent.name in {"surf", "label", "mri"} and len(p.parents) > 1:
+        return p.parents[1].name
+    return f"{p.parent.name}_{p.stem}" if p.parent.name else p.stem
 
 
 def discover_bids(
@@ -322,8 +352,18 @@ def _finalize_group(
     faces: np.ndarray | None = None,
 ) -> GroupData:
     """Drop failed subjects, stack if shapes match, and package a GroupData."""
+    if len(arrays) != len(items):  # pragma: no cover - defensive
+        raise RuntimeError(f"Loader returned {len(arrays)} results for {len(items)} subjects.")
     ok = [(s, p, a) for (s, p), a in zip(items, arrays) if a is not None]
-    n_failed = len(items) - len(ok)
+    failed = [s for (s, _), a in zip(items, arrays) if a is None]
+    n_failed = len(failed)
+    if failed:
+        logger.warning(
+            "%d/%d subjects failed to load and were dropped: %s",
+            n_failed,
+            len(items),
+            ", ".join(failed),
+        )
     sids = [s for s, _, _ in ok]
     out_paths = [p for _, p, _ in ok]
     entities = [parse_bids_filename(p.name) for p in out_paths]
@@ -344,7 +384,12 @@ def _finalize_group(
         entities=entities,
         paths=out_paths,
         faces=faces,
-        metadata={"mode": mode, "n_failed": n_failed, "n_requested": len(items)},
+        metadata={
+            "mode": mode,
+            "n_failed": n_failed,
+            "n_requested": len(items),
+            "failed_subjects": failed,
+        },
     )
 
 
@@ -391,11 +436,19 @@ def load_group(
     if isinstance(files, dict):
         items: list[tuple[str, Path]] = [(s, Path(p)) for s, p in files.items()]
     else:
-        items = []
-        for p in files:
-            p = Path(p)
-            sub = parse_bids_filename(p.name).get("sub")
-            items.append((_norm_sid(sub) if sub else p.stem, p))
+        items = [(_subject_id_from_path(Path(p)), Path(p)) for p in files]
+        seen: dict[str, Path] = {}
+        dups: list[str] = []
+        for sid, p in items:
+            if sid in seen:
+                dups.append(f"{sid!r} ({seen[sid]} and {p})")
+            seen[sid] = p
+        if dups:
+            raise ValueError(
+                "Could not derive unique subject IDs from the file paths: "
+                + "; ".join(dups)
+                + ". Pass a {subject_id: path} dict instead."
+            )
 
     if loader is None:
         if mode == "maps":
@@ -413,6 +466,8 @@ def load_group(
     def _one(path: Path) -> np.ndarray | None:
         try:
             return np.asarray(active_loader(path))
+        except PROGRAMMING_ERRORS:
+            raise
         except Exception as exc:
             logger.error("✗ %s: %s", path.name, exc)
             return None
@@ -574,6 +629,8 @@ def load_group_freesurfer(
             if resample:
                 vals = resample_to_template(vals, sd, sid, hemi, template=template, method=method)
             return vals
+        except PROGRAMMING_ERRORS:
+            raise
         except Exception as exc:
             logger.error("✗ %s: %s", sid, exc)
             return None

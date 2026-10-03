@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from spectralbrain.runtime import PathLike, get_logger
+from spectralbrain.viz import _camera as _cam
 
 if TYPE_CHECKING:
     import vedo
@@ -58,17 +59,24 @@ CURVATURE_METHODS: dict[str, int] = {
     "minimum": 3,
 }
 
-# Standard multi-view camera presets (azimuth, elevation)
-CAMERA_PRESETS: dict[str, dict[str, Any]] = {
-    "anterior": {"azimuth": 0, "elevation": 0},
-    "posterior": {"azimuth": 180, "elevation": 0},
-    "left_lateral": {"azimuth": -90, "elevation": 0},
-    "right_lateral": {"azimuth": 90, "elevation": 0},
-    "superior": {"azimuth": 0, "elevation": 90},
-    "inferior": {"azimuth": 0, "elevation": -90},
-    "left_medial": {"azimuth": 90, "elevation": 0},
-    "right_medial": {"azimuth": -90, "elevation": 0},
-}
+# Standard multi-view camera presets (azimuth, elevation) in the RAS
+# convention of :mod:`spectralbrain.viz._camera`: azimuth from +x towards +y,
+# elevation towards +z — left lateral camera at −x, anterior at +y, superior at
+# +z.  Renders use explicit camera dicts built from these angles.
+CAMERA_PRESETS: dict[str, dict[str, Any]] = _cam.presets(
+    [
+        "anterior",
+        "posterior",
+        "left_lateral",
+        "right_lateral",
+        "superior",
+        "inferior",
+        "left_medial",
+        "right_medial",
+        "oblique_left",
+        "oblique_right",
+    ]
+)
 
 
 # ======================================================================
@@ -154,8 +162,12 @@ def _resolve_cmap(scalar_name: str | None, cmap: str | None) -> str:
         "difference": "RdBu_r",
     }
     if scalar_name is not None:
-        key = scalar_name.lower().replace(" ", "_").split("_")[0]
-        return LOOKUP.get(key, "viridis")
+        full = scalar_name.lower().replace(" ", "_").replace("-", "_")
+        if full in LOOKUP:  # exact keys first (e.g. "z_score")
+            return LOOKUP[full]
+        if full.startswith(("z_", "zscore", "t_stat", "tstat", "cohen", "effect", "diff")):
+            return "RdBu_r"
+        return LOOKUP.get(full.split("_")[0], "viridis")
     return "viridis"
 
 
@@ -484,6 +496,7 @@ def plot_multi_view(
 
     if views is None:
         views = ["left_lateral", "anterior", "superior", "right_lateral"]
+    views = _cam.validate_views(views, CAMERA_PRESETS)
     n_views = len(views)
 
     if size is None:
@@ -508,6 +521,7 @@ def plot_multi_view(
 
     plt = vedo.Plotter(
         shape=(1, n_views),
+        sharecam=False,
         offscreen=True,
         size=size,
         bg=bg,
@@ -515,14 +529,13 @@ def plot_multi_view(
 
     for i, view_name in enumerate(views):
         m = base.clone()
-        preset = CAMERA_PRESETS.get(view_name, {})
+        cam = _cam.camera_for_view(view_name, vertices, angles=CAMERA_PRESETS)
 
         plt.at(i).show(
             m,
             title=view_name.replace("_", " ").title(),
-            viewup="z",
+            camera=cam,
             zoom=1.1,
-            **{k: v for k, v in preset.items() if k in ("azimuth", "elevation")},
         )
 
     meta = {
@@ -548,6 +561,7 @@ def plot_mesh_comparison(
     size: tuple[int, int] | None = None,
     scale: int = _DEFAULT_SCALE,
     save: PathLike | None = None,
+    shared_scale: bool = True,
 ) -> tuple[Path, dict[str, Any]]:
     """Side-by-side comparison of multiple meshes.
 
@@ -570,11 +584,15 @@ def plot_mesh_comparison(
         Grid layout.  None → single row.
     bg, size, scale, save
         Standard render parameters.
+    shared_scale : bool
+        If True (default), panels whose ``vmin``/``vmax`` are not given share
+        one colour range (1st/99th percentile over all panels' scalars), so
+        the panels are directly comparable.  False → per-panel ranges.
 
     Returns
     -------
     (Path, dict)
-        PNG path and metadata with ``'n_panels'``.
+        PNG path and metadata with ``'n_panels'`` and ``'scalar_ranges'``.
     """
     vedo = _get_vedo()
     n = len(meshes)
@@ -584,6 +602,19 @@ def plot_mesh_comparison(
         size = (600 * shape[1], 600 * shape[0])
 
     plt = vedo.Plotter(shape=shape, offscreen=True, size=size, bg=bg)
+
+    shared = None
+    if shared_scale:
+        pooled = [
+            np.asarray(sp_["scalars"], dtype=np.float64).ravel()
+            for sp_ in meshes
+            if sp_.get("scalars") is not None
+        ]
+        if pooled:
+            allv = np.concatenate(pooled)
+            if np.isfinite(allv).any():
+                shared = (float(np.nanpercentile(allv, 1)), float(np.nanpercentile(allv, 99)))
+    ranges = []
 
     for i, spec in enumerate(meshes):
         m = _build_vedo_mesh(
@@ -599,8 +630,12 @@ def plot_mesh_comparison(
 
         if scalars is not None:
             scalars = np.asarray(scalars, dtype=np.float64)
-            v0 = spec.get("vmin") or float(np.nanpercentile(scalars, 1))
-            v1 = spec.get("vmax") or float(np.nanpercentile(scalars, 99))
+            v0, v1 = spec.get("vmin"), spec.get("vmax")
+            if v0 is None:
+                v0 = shared[0] if shared else float(np.nanpercentile(scalars, 1))
+            if v1 is None:
+                v1 = shared[1] if shared else float(np.nanpercentile(scalars, 99))
+            ranges.append((v0, v1))
             m.pointdata[scalar_name] = scalars
             m.cmap(cmap_name, scalar_name, vmin=v0, vmax=v1)
             m.add_scalarbar(title=scalar_name)
@@ -609,7 +644,7 @@ def plot_mesh_comparison(
 
         plt.at(i).show(m, title=panel_title, viewup="z", zoom=1.1)
 
-    meta = {"n_panels": n, "shape": shape}
+    meta = {"n_panels": n, "shape": shape, "scalar_ranges": ranges}
     out = _save_screenshot(plt, save, scale=scale)
     return out, meta
 
@@ -631,6 +666,7 @@ def plot_scalar_difference(
     symmetric: bool = True,
     show_individual: bool = True,
     individual_cmap: str | None = None,
+    shared_scale: bool = True,
     bg: str = _DEFAULT_BG,
     size: tuple[int, int] | None = None,
     scale: int = _DEFAULT_SCALE,
@@ -658,6 +694,10 @@ def plot_scalar_difference(
         Show A and B alongside the difference (3-panel layout).
     individual_cmap : str or None
         Colourmap for individual panels.  None → 'viridis'.
+    shared_scale : bool
+        If True (default) panels A and B share one colour range (1st/99th
+        percentile of both), so they are visually comparable.  False → each
+        individual panel is scaled to its own data.
     bg, size, scale, save
         Standard render parameters.
 
@@ -685,18 +725,26 @@ def plot_scalar_difference(
     panel_idx = 0
     ind_cmap = individual_cmap or "viridis"
 
+    ind_range: tuple[float | None, float | None] = (None, None)
     if show_individual:
+        if shared_scale:
+            both = np.concatenate([scalars_a, scalars_b])
+            if np.isfinite(both).any():
+                ind_range = (
+                    float(np.nanpercentile(both, 1)),
+                    float(np.nanpercentile(both, 99)),
+                )
         # Panel A
         m_a = _build_vedo_mesh(vertices, faces, vedo)
         m_a.pointdata[label_a] = scalars_a
-        m_a.cmap(ind_cmap, label_a)
+        m_a.cmap(ind_cmap, label_a, vmin=ind_range[0], vmax=ind_range[1])
         m_a.add_scalarbar(title=label_a)
         plt.at(0).show(m_a, title=label_a, viewup="z", zoom=1.1)
 
         # Panel B
         m_b = _build_vedo_mesh(vertices, faces, vedo)
         m_b.pointdata[label_b] = scalars_b
-        m_b.cmap(ind_cmap, label_b)
+        m_b.cmap(ind_cmap, label_b, vmin=ind_range[0], vmax=ind_range[1])
         m_b.add_scalarbar(title=label_b)
         plt.at(1).show(m_b, title=label_b, viewup="z", zoom=1.1)
 
@@ -729,8 +777,11 @@ def plot_scalar_difference(
             "std": float(np.nanstd(diff)),
             "min": float(np.nanmin(diff)),
             "max": float(np.nanmax(diff)),
-            "pct_positive": float(np.mean(diff > 0) * 100),
+            "pct_positive": float(np.mean(diff[np.isfinite(diff)] > 0) * 100)
+            if np.isfinite(diff).any()
+            else float("nan"),
         },
+        "individual_range": ind_range,
         "vmin": d_vmin,
         "vmax": d_vmax,
         "n_panels": n_panels,

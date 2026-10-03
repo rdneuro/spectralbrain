@@ -12,6 +12,7 @@ Five diagnostic blocks plus the descriptor recommendation engine:
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -310,7 +311,12 @@ def descriptor_profile(
             _, p_val = shapiro(sample)
             p["shapiro_p"] = float(p_val)
             p["normally_distributed"] = p_val > 0.05
-        except Exception:
+        except ValueError as exc:  # e.g. fewer than 3 values
+            warnings.warn(
+                f"descriptor_profile: Shapiro-Wilk failed for '{name}': {exc}",
+                RuntimeWarning,
+                stacklevel=2,
+            )
             p["shapiro_p"] = None
             p["normally_distributed"] = None
 
@@ -349,9 +355,13 @@ def descriptor_correlation(
         else:
             vectors.append(arr)
 
-    # Ensure all same length.
-    min_len = min(len(v) for v in vectors)
-    mat = np.column_stack([v[:min_len] for v in vectors])
+    lengths = {len(v) for v in vectors}
+    if len(lengths) != 1:
+        raise ValueError(
+            f"All descriptors must have the same length (got {sorted(lengths)}); "
+            "truncating would pair unrelated elements."
+        )
+    mat = np.column_stack(vectors)
 
     if method == "pearson":
         corr = np.corrcoef(mat, rowvar=False)
@@ -373,7 +383,8 @@ def compute_icc(
     retest: np.ndarray,
     *,
     icc_type: Literal["ICC2,1", "ICC3,1"] = "ICC3,1",
-) -> float:
+    reduce: Literal["mean", "none"] = "mean",
+) -> float | np.ndarray:
     """Intraclass Correlation Coefficient for test-retest.
 
     Parameters
@@ -386,18 +397,32 @@ def compute_icc(
         ``"ICC2,1"`` — two-way random, single measures.
         ``"ICC3,1"`` — two-way mixed, single measures
         (recommended for neuroimaging).
+    reduce : ``"mean"`` or ``"none"``
+        For 2-D input the ICC is computed **per column** (subjects are the
+        rows; scales are never pooled as pseudo-subjects). ``"mean"``
+        returns the mean column ICC, ``"none"`` the per-column array.
 
     Returns
     -------
-    float
+    float or ndarray
         ICC value in [-1, 1].  >0.75 = excellent, 0.60–0.75 = good,
         0.40–0.60 = fair, <0.40 = poor.
     """
-    test = np.asarray(test, dtype=np.float64).ravel()
-    retest = np.asarray(retest, dtype=np.float64).ravel()
-    n = min(len(test), len(retest))
-    test, retest = test[:n], retest[:n]
+    test = np.asarray(test, dtype=np.float64)
+    retest = np.asarray(retest, dtype=np.float64)
+    if test.shape != retest.shape:
+        raise ValueError(
+            f"test and retest must have the same shape; got {test.shape} and {retest.shape}."
+        )
+    if test.ndim == 2:
+        vals = np.array([_icc_1d(test[:, j], retest[:, j], icc_type) for j in range(test.shape[1])])
+        return vals if reduce == "none" else float(np.nanmean(vals))
+    return _icc_1d(test.ravel(), retest.ravel(), icc_type)
 
+
+def _icc_1d(test: np.ndarray, retest: np.ndarray, icc_type: str) -> float:
+    """ICC for one measurement (subjects x 2 sessions)."""
+    n = len(test)
     # Two-way ANOVA decomposition.
     k = 2  # two measurements
     grand_mean = (test.mean() + retest.mean()) / 2
@@ -473,11 +498,18 @@ def batch_effect_scan(
         groups = [g for g in groups if len(g) > 1]
 
         if len(groups) < 2:
+            warnings.warn(
+                f"batch_effect_scan: '{name}' has fewer than two sites with >1 "
+                "subject; the batch effect is untestable.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
             results[name] = {
-                "statistic": 0.0,
-                "p_value": 1.0,
-                "has_batch_effect": False,
-                "effect_size": 0.0,
+                "statistic": float("nan"),
+                "p_value": float("nan"),
+                "has_batch_effect": None,
+                "effect_size_eta2": float("nan"),
+                "error": "fewer than two testable sites",
             }
             continue
 
@@ -492,12 +524,18 @@ def batch_effect_scan(
                 "has_batch_effect": p_val < alpha,
                 "effect_size_eta2": eta_sq,
             }
-        except Exception:
+        except ValueError as exc:  # e.g. all values identical
+            warnings.warn(
+                f"batch_effect_scan: Kruskal-Wallis failed for '{name}': {exc}",
+                RuntimeWarning,
+                stacklevel=2,
+            )
             results[name] = {
-                "statistic": 0.0,
-                "p_value": 1.0,
-                "has_batch_effect": False,
-                "effect_size_eta2": 0.0,
+                "statistic": float("nan"),
+                "p_value": float("nan"),
+                "has_batch_effect": None,
+                "effect_size_eta2": float("nan"),
+                "error": str(exc),
             }
 
     return results
@@ -662,7 +700,7 @@ def _evaluate_descriptor(
 ) -> dict[str, float]:
     """Evaluate a descriptor's discriminative power on surrogates.
 
-    Returns AUC, balanced accuracy, and Cohen's d.
+    Returns AUC, balanced accuracy, and Cohen's d (largest per-feature |d|).
     """
     from sklearn.linear_model import LogisticRegression
     from sklearn.model_selection import cross_val_score
@@ -682,53 +720,54 @@ def _evaluate_descriptor(
     X = np.array(features)  # (n_surr, d)
     y = labels
 
-    # Handle constant features.
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
-    # Remove zero-variance columns.
-    var_mask = X_scaled.std(axis=0) > 1e-10
+    # Remove zero-variance columns (a label-free filter, so no leakage).
+    var_mask = X.std(axis=0) > 1e-10
     if not var_mask.any():
-        return {"auc": 0.5, "accuracy": 0.5, "cohens_d": 0.0}
-    X_scaled = X_scaled[:, var_mask]
+        return {"auc": 0.5, "auc_std": 0.0, "accuracy": 0.5, "cohens_d": 0.0}
+    X = X[:, var_mask]
 
     n_splits_actual = min(n_splits, min(np.bincount(y)))
     n_splits_actual = max(2, n_splits_actual)
 
+    from sklearn.pipeline import make_pipeline
+
+    # Scaling lives inside the pipeline so it is re-fitted in every fold.
+    clf = make_pipeline(StandardScaler(), LogisticRegression(max_iter=1000, solver="lbfgs"))
+    error = None
     try:
-        clf = LogisticRegression(max_iter=1000, solver="lbfgs")
-        auc_scores = cross_val_score(
-            clf,
-            X_scaled,
-            y,
-            cv=n_splits_actual,
-            scoring="roc_auc",
+        auc_scores = cross_val_score(clf, X, y, cv=n_splits_actual, scoring="roc_auc")
+        acc_scores = cross_val_score(clf, X, y, cv=n_splits_actual, scoring="balanced_accuracy")
+    except ValueError as exc:
+        warnings.warn(
+            f"Descriptor evaluation: cross-validation failed ({exc}); scores set to chance.",
+            RuntimeWarning,
+            stacklevel=2,
         )
-        acc_scores = cross_val_score(
-            clf,
-            X_scaled,
-            y,
-            cv=n_splits_actual,
-            scoring="balanced_accuracy",
-        )
-    except Exception:
+        error = str(exc)
         auc_scores = np.array([0.5])
         acc_scores = np.array([0.5])
 
-    # Cohen's d between groups.
+    # Cohen's d per feature (absolute, so opposite-signed effects do not
+    # cancel), summarised by the strongest feature.
+    X_scaled = StandardScaler().fit_transform(X)
     X0 = X_scaled[y == 0]
     X1 = X_scaled[y == 1]
     pooled_std = np.sqrt(
-        ((len(X0) - 1) * X0.var(axis=0).mean() + (len(X1) - 1) * X1.var(axis=0).mean())
+        ((len(X0) - 1) * X0.var(axis=0, ddof=1) + (len(X1) - 1) * X1.var(axis=0, ddof=1))
         / (len(X0) + len(X1) - 2)
     )
-    cohens_d = float(np.abs(X0.mean() - X1.mean()) / (pooled_std + 1e-10))
+    d_per_feature = np.abs(X0.mean(axis=0) - X1.mean(axis=0)) / (pooled_std + 1e-10)
+    cohens_d = float(np.max(d_per_feature))
 
-    return {
+    out = {
         "auc": float(np.mean(auc_scores)),
         "auc_std": float(np.std(auc_scores)),
         "accuracy": float(np.mean(acc_scores)),
         "cohens_d": cohens_d,
     }
+    if error is not None:
+        out["error"] = error
+    return out
 
 
 def recommend_descriptor(
@@ -803,6 +842,13 @@ def recommend_descriptor(
         compute_wks,
     )
 
+    if labels is not None:
+        warnings.warn(
+            "recommend_descriptor: `labels` is reserved and currently ignored "
+            "(surrogates generate their own labels).",
+            UserWarning,
+            stacklevel=2,
+        )
     if isinstance(objective, AnalysisObjective):
         obj_str = objective.value
     else:
@@ -889,11 +935,11 @@ def recommend_descriptor(
                         **metrics,
                     }
                 )
-            except Exception as exc:
-                logger.warning(
-                    "Descriptor '%s' failed: %s",
-                    desc_name,
-                    exc,
+            except (ValueError, ArithmeticError, np.linalg.LinAlgError, RuntimeError) as exc:
+                warnings.warn(
+                    f"Descriptor '{desc_name}' failed and is ranked last: {exc!r}",
+                    RuntimeWarning,
+                    stacklevel=2,
                 )
                 scores.append(
                     {

@@ -34,13 +34,46 @@ logger = get_logger(__name__)
 # ======================================================================
 
 
+def _default_descriptor_pairs(
+    decomp_a: SpectralDecomposition,
+    decomp_b: SpectralDecomposition,
+    *,
+    n_hks: int = 32,
+    n_wks: int = 32,
+) -> list[tuple[np.ndarray, np.ndarray]]:
+    """HKS + WKS correspondence signals evaluated on a **shared** grid.
+
+    Both shapes are sampled at the same diffusion times / log-energies
+    (pooled from both spectra) so that column ``j`` on shape A truly
+    corresponds to column ``j`` on shape B.
+    """
+    from spectralbrain.spectral.descriptors import (
+        _auto_wks_params,
+        compute_hks,
+        compute_wks,
+        shared_hks_times,
+    )
+
+    t_shared = shared_hks_times([decomp_a, decomp_b], n_times=n_hks)
+    hks_a = compute_hks(decomp_a, t_values=t_shared)
+    hks_b = compute_hks(decomp_b, t_values=t_shared)
+    pooled = np.concatenate([decomp_a.eigenvalues, decomp_b.eigenvalues])
+    e_shared, sig = _auto_wks_params(np.sort(pooled), n_wks)
+    wks_a = compute_wks(decomp_a, e_values=e_shared, sigma=sig, normalize=False)
+    wks_b = compute_wks(decomp_b, e_values=e_shared, sigma=sig, normalize=False)
+    pairs = [(hks_a[:, t], hks_b[:, t]) for t in range(hks_a.shape[1])]
+    pairs += [(wks_a[:, e], wks_b[:, e]) for e in range(wks_a.shape[1])]
+    return pairs
+
+
 def compute_functional_map(
     decomp_a: SpectralDecomposition,
     decomp_b: SpectralDecomposition,
     *,
     n_basis: int = 30,
     descriptor_pairs: list[tuple[np.ndarray, np.ndarray]] | None = None,
-    regularize: float = 1e-3,
+    regularize: float = 1e-8,
+    laplacian_weight: float = 1e-1,
 ) -> np.ndarray:
     """Estimate a functional map C between two shapes.
 
@@ -49,7 +82,15 @@ def compute_functional_map(
 
         Φ_b^T · M_b · f_b ≈ C · (Φ_a^T · M_a · f_a)
 
-    for corresponding functions f_a, f_b.
+    for corresponding functions f_a, f_b.  It solves
+
+        min_C ‖C A − B‖² + w_L ‖C Λ_a − Λ_b C‖² + ρ ‖C‖²
+
+    where A, B stack the projected descriptors (each pair normalised to
+    unit norm on the source side), Λ are the eigenvalues (normalised by
+    the pooled spectral scale) and the second term is the standard
+    Laplacian-commutativity regulariser (Ovsjanikov et al. 2012).  The
+    problem decouples into one small linear system per row of C.
 
     Parameters
     ----------
@@ -59,10 +100,14 @@ def compute_functional_map(
         Truncation size for the functional map.
     descriptor_pairs : list of (ndarray, ndarray), optional
         Pairs of corresponding descriptors (f_a, f_b) on the two
-        shapes.  If ``None``, uses HKS at several time-scales as
-        default correspondence signals.
+        shapes.  If ``None``, uses HKS (32 times) and WKS (32 energies)
+        evaluated on time/energy grids **shared** by both shapes.
     regularize : float
-        Tikhonov regularisation weight.
+        Tikhonov regularisation weight ρ (only for conditioning; the
+        Laplacian term is the structural prior).  Larger values (the old
+        default was 1e-3) shrink weakly-constrained rows of C towards 0.
+    laplacian_weight : float
+        Weight w_L of the Laplacian-commutativity term (0 disables it).
 
     Returns
     -------
@@ -77,17 +122,17 @@ def compute_functional_map(
     Phi_b = decomp_b.eigenvectors[:, :k]  # (N_b, k)
 
     if descriptor_pairs is None:
-        # Default: use HKS at 5 time-scales.
-        from spectralbrain.spectral.descriptors import compute_hks
-
-        hks_a = compute_hks(decomp_a, n_times=5)  # (N_a, 5)
-        hks_b = compute_hks(decomp_b, n_times=5)  # (N_b, 5)
-        descriptor_pairs = [(hks_a[:, t], hks_b[:, t]) for t in range(5)]
+        descriptor_pairs = _default_descriptor_pairs(decomp_a, decomp_b)
 
     # Project descriptors onto eigenbases.
     # M_a-weighted projection: a_coeff = Φ_a^T · M_a · f_a
     M_a = decomp_a.mass
     M_b = decomp_b.mass
+    if M_a is None or M_b is None:
+        logger.warning(
+            "compute_functional_map: mass matrix missing — projecting with "
+            "the Euclidean inner product (only exact for orthonormal Φ)."
+        )
 
     A_coeffs = []  # coefficients on shape A
     B_coeffs = []  # coefficients on shape B
@@ -101,16 +146,33 @@ def compute_functional_map(
             b_c = Phi_b.T @ (M_b @ f_b)
         else:
             b_c = Phi_b.T @ f_b
+        # Normalise each pair by the same scalar so that descriptors with
+        # large dynamic range (e.g. small-t HKS) do not dominate.
+        nrm = float(np.linalg.norm(a_c))
+        if nrm > 1e-30:
+            a_c = a_c / nrm
+            b_c = b_c / nrm
         A_coeffs.append(a_c)
         B_coeffs.append(b_c)
 
     A_mat = np.column_stack(A_coeffs)  # (k, n_desc)
     B_mat = np.column_stack(B_coeffs)  # (k, n_desc)
 
-    # Solve: C · A_mat ≈ B_mat  →  C = B_mat · A_mat^+ (regularised)
-    # Ridge: C = B_mat · A_mat^T · (A_mat · A_mat^T + λI)^{-1}
-    AAt = A_mat @ A_mat.T + regularize * np.eye(k)
-    C = B_mat @ A_mat.T @ np.linalg.inv(AAt)
+    lam_a = np.asarray(decomp_a.eigenvalues[:k], dtype=np.float64)
+    lam_b = np.asarray(decomp_b.eigenvalues[:k], dtype=np.float64)
+    lam_scale = max(float(np.max(np.abs(np.concatenate([lam_a, lam_b])))), 1e-30)
+    lam_a = lam_a / lam_scale
+    lam_b = lam_b / lam_scale
+
+    AAt = A_mat @ A_mat.T  # (k, k)
+    AB = A_mat @ B_mat.T  # (k, k): column i = A · B_iᵀ
+    C = np.zeros((k, k), dtype=np.float64)
+    eye = np.eye(k)
+    for i in range(k):
+        # Row i: (AAᵀ + w_L·diag((λa − λb_i)²) + ρ I) c_i = A B_iᵀ
+        lap = laplacian_weight * (lam_a - lam_b[i]) ** 2
+        lhs = AAt + np.diag(lap) + regularize * eye
+        C[i] = np.linalg.solve(lhs, AB[:, i])
 
     logger.debug("Functional map: %d × %d", C.shape[0], C.shape[1])
     return C
@@ -125,6 +187,8 @@ def shape_difference_operator(
     C: np.ndarray,
     *,
     type: Literal["area", "conformal"] = "area",
+    evals_a: np.ndarray | None = None,
+    evals_b: np.ndarray | None = None,
 ) -> np.ndarray:
     """Compute a shape-difference operator from a functional map.
 
@@ -134,14 +198,17 @@ def shape_difference_operator(
         Functional map from shape A to shape B.
     type : str
         ``"area"`` — D_area = C^T · C (captures area distortion).
-        ``"conformal"`` — D_conf = C^T · Λ_B · C · Λ_A^{-1}
-        (simplified: uses C^T · C − I to capture conformal distortion).
+        ``"conformal"`` — D_conf = C^T · Λ_B · C · Λ_A^{+}
+        (Rustamov et al. 2013; Λ_A^{+} is the pseudo-inverse, i.e. the
+        null/constant mode is excluded).  Requires *evals_a*/*evals_b*.
+    evals_a, evals_b : ndarray, shape (≥k,), optional
+        Eigenvalues of shapes A and B (needed for ``"conformal"``).
 
     Returns
     -------
     D : ndarray, shape (k, k)
         Shape-difference operator (symmetric positive semi-definite
-        for area type).
+        for area type; similar to a symmetric PSD matrix for conformal).
 
     References
     ----------
@@ -152,8 +219,18 @@ def shape_difference_operator(
     if type == "area":
         return C.T @ C
     elif type == "conformal":
-        I = np.eye(C.shape[0])
-        return C.T @ C - I
+        if evals_a is None or evals_b is None:
+            raise ValueError(
+                "type='conformal' needs the eigenvalues: pass evals_a=... and "
+                "evals_b=... (D_conf = Cᵀ Λ_B C Λ_A⁺)."
+            )
+        k = C.shape[0]
+        lam_a = np.asarray(evals_a, dtype=np.float64)[:k]
+        lam_b = np.asarray(evals_b, dtype=np.float64)[: C.shape[0]]
+        inv_a = np.zeros_like(lam_a)
+        nz = lam_a > 1e-10
+        inv_a[nz] = 1.0 / lam_a[nz]
+        return C.T @ np.diag(lam_b) @ C @ np.diag(inv_a)
     else:
         raise ValueError(f"Unknown type: {type!r}")
 
@@ -218,11 +295,31 @@ def compute_dwks(
         descriptor_pairs=descriptor_pairs,
     )
 
-    # Step 2: Shape difference operator.
-    D = shape_difference_operator(C, type=diff_type)
-
-    # Step 3: Eigendecompose D.
-    D_evals, D_evecs = np.linalg.eigh(D)  # (k,), (k, k)
+    # Step 2–3: Shape difference operator and its eigendecomposition
+    # (as functions on the source shape, coefficients in Φ_source).
+    k_c = C.shape[0]
+    if diff_type == "area":
+        D = shape_difference_operator(C, type="area")
+        D_evals, D_evecs = np.linalg.eigh(D)  # (k,), (k, k)
+    elif diff_type == "conformal":
+        # D_conf = Cᵀ Λ_B C Λ_A⁺ is similar to the symmetric PSD matrix
+        # S = Λ_A^{+½} Cᵀ Λ_B C Λ_A^{+½}; its eigenfunctions on A (the
+        # eigenvectors of Λ_A⁺ Cᵀ Λ_B C) are Λ_A^{+½} u.  The null
+        # (constant) mode carries no conformal information and is dropped.
+        lam_a = np.asarray(decomp_source.eigenvalues[:k_c], dtype=np.float64)
+        lam_b = np.asarray(decomp_target.eigenvalues[:k_c], dtype=np.float64)
+        nz = lam_a > 1e-10
+        isq = np.zeros_like(lam_a)
+        isq[nz] = 1.0 / np.sqrt(lam_a[nz])
+        S = (isq[:, None] * (C.T @ np.diag(lam_b) @ C)) * isq[None, :]
+        S = 0.5 * (S + S.T)
+        S_nz = S[np.ix_(nz, nz)]
+        D_evals, U = np.linalg.eigh(S_nz)
+        D_evecs = np.zeros((k_c, U.shape[1]), dtype=np.float64)
+        D_evecs[nz] = isq[nz][:, None] * U
+        D_evecs /= np.clip(np.linalg.norm(D_evecs, axis=0, keepdims=True), 1e-30, None)
+    else:
+        raise ValueError(f"Unknown diff_type: {diff_type!r}")
     D_evals = np.clip(D_evals, 1e-10, None)
 
     # Step 4: Apply WKS filter to D's eigenvalues.
@@ -234,9 +331,14 @@ def compute_dwks(
         sigma = 7.0 * (e_max - e_min) / max(n_energies, 1)
         sigma = max(sigma, 1e-4)
 
-    energies = np.linspace(e_min + 2 * sigma, e_max - 2 * sigma, n_energies)
-    if len(energies) == 0:
-        energies = np.linspace(e_min, e_max, n_energies)
+    e_lo, e_hi = e_min + 2 * sigma, e_max - 2 * sigma
+    if e_lo >= e_hi:
+        # The 2σ inward shift crosses over (few energies / narrow
+        # spectrum): use the full range with a matching bandwidth, as in
+        # the WKS auto-parameters, instead of a reversed grid.
+        e_lo, e_hi = e_min, e_max
+        sigma = max((e_max - e_min) / (2 * max(n_energies, 1)), 1e-4)
+    energies = np.linspace(e_lo, e_hi, n_energies)
 
     # WKS on D's spectrum: (n_energies, k)
     diff = energies[:, None] - log_D_evals[None, :]

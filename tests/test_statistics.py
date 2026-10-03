@@ -188,6 +188,7 @@ def test_bayesian_invalid_sampler_raises():
         HorseshoeRegression().fit(X, y, sampler="not_a_sampler", draws=50, tune=50, chains=1)
 
 
+@pytest.mark.filterwarnings("ignore::spectralbrain.statistics.bayesian.SamplingWarning")
 def test_horseshoe_recovers_sparse_signal():
     pytest.importorskip("pymc")
     from spectralbrain.statistics.bayesian import HorseshoeRegression
@@ -202,6 +203,7 @@ def test_horseshoe_recovers_sparse_signal():
     assert top2 == {0, 3}  # the two truly nonzero coefficients
 
 
+@pytest.mark.filterwarnings("ignore::spectralbrain.statistics.bayesian.SamplingWarning")
 def test_best_rope_probabilities_sum_to_one():
     pytest.importorskip("pymc")
     from spectralbrain.statistics.bayesian import BayesianGroupComparison

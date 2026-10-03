@@ -18,8 +18,8 @@ from __future__ import annotations
 import logging
 import os
 import tempfile
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Mapping, Optional, Sequence
 
 import numpy as np
 
@@ -35,39 +35,47 @@ def _label_rgba(labels: np.ndarray, *, noise_color: str, categorical: bool):
     """Per-vertex RGBA (uint8) for a categorical labeling or continuous scalar."""
     import matplotlib.colors as mcolors
     import matplotlib.pyplot as plt
+
     from spectralbrain.viz.clusters import _cluster_cmap
 
     lab = np.asarray(labels)
+    noise_rgba = np.array(mcolors.to_rgba(noise_color), dtype=np.float64)
     if categorical:
-        unique = sorted(set(lab[lab >= 0].tolist()))
+        labf = np.asarray(lab, dtype=np.float64)
+        valid = np.isfinite(labf) & (labf >= 0)
+        unique = sorted(set(labf[valid].tolist()))
         cmap = _cluster_cmap(max(len(unique), 1))
-        idx = {l: j for j, l in enumerate(unique)}
-        rgba = np.array([mcolors.to_rgba(noise_color) if l < 0 else cmap(idx[l])
-                         for l in lab], dtype=np.float64)
+        idx = {lv: j for j, lv in enumerate(unique)}
+        rgba = np.tile(noise_rgba, (lab.shape[0], 1))
+        for i in np.flatnonzero(valid):
+            rgba[i] = cmap(idx[labf[i]])
     else:
         v = np.asarray(lab, float)
-        span = np.nanmax(v) - np.nanmin(v)
-        norm = (v - np.nanmin(v)) / (span if span else 1.0)
-        rgba = plt.get_cmap("viridis")(norm)
+        finite = np.isfinite(v)
+        rgba = np.tile(noise_rgba, (v.shape[0], 1))  # NaN → noise/NaN colour
+        if finite.any():
+            lo, hi = np.min(v[finite]), np.max(v[finite])
+            span = hi - lo
+            norm = (v[finite] - lo) / (span if span else 1.0)
+            rgba[finite] = plt.get_cmap("viridis")(norm)
     return (rgba * 255).astype(np.uint8)
 
 
-def _render_cell_vedo(vertices, faces, labels, view, *, noise_color, bg, size,
-                      scale, categorical) -> str:
+def _render_cell_vedo(
+    vertices, faces, labels, view, *, noise_color, bg, size, scale, categorical
+) -> str:
     """Render one (labeling, view) cell with vedo offscreen; return PNG path."""
-    from spectralbrain.viz.clusters import (
-        CAMERA_PRESETS, _build_vedo_mesh, _get_vedo,
-    )
+    from spectralbrain.viz.clusters import _build_vedo_mesh, _get_vedo, _view_camera
+
     vedo = _get_vedo()
     rgba_u8 = _label_rgba(labels, noise_color=noise_color, categorical=categorical)
     mesh = _build_vedo_mesh(vertices, faces, vedo)
     mesh.pointdata["RGBA"] = rgba_u8
     mesh.pointdata.select("RGBA")
     mesh.lighting("default")
-    preset = CAMERA_PRESETS.get(view, {})
+    cam = _view_camera(view, vertices)  # explicit RAS camera; raises on unknown
     plotter = vedo.Plotter(offscreen=True, size=size, bg=bg)
-    plotter.show(mesh, viewup="z", zoom=1.1,
-                 **{k: v for k, v in preset.items() if k in ("azimuth", "elevation")})
+    plotter.show(mesh, camera=cam, zoom=1.1)
     fd, png = tempfile.mkstemp(suffix=".png")
     os.close(fd)
     plotter.screenshot(png, scale=scale)
@@ -75,10 +83,12 @@ def _render_cell_vedo(vertices, faces, labels, view, *, noise_color, bg, size,
     return png
 
 
-def _render_cell_pyvista(vertices, faces, labels, view, *, noise_color, bg, size,
-                         scale, categorical) -> str:
+def _render_cell_pyvista(
+    vertices, faces, labels, view, *, noise_color, bg, size, scale, categorical
+) -> str:
     """PyVista fallback single-cell renderer; return PNG path."""
     from spectralbrain.viz.tracts3d import _require_pyvista, _set_pv_camera
+
     pv = _require_pyvista()
     V = np.asarray(vertices, float)
     F = np.asarray(faces, np.int64)
@@ -88,11 +98,8 @@ def _render_cell_pyvista(vertices, faces, labels, view, *, noise_color, bg, size
     plotter = pv.Plotter(off_screen=True, window_size=[size[0] * scale, size[1] * scale])
     plotter.set_background(bg)
     plotter.add_mesh(mesh, scalars="RGBA", rgb=True, smooth_shading=True)
-    # map cluster view names onto tracts3d camera vocabulary where possible
-    view_map = {"left_lateral": "left", "right_lateral": "right",
-                "anterior": "anterior", "posterior": "posterior",
-                "superior": "superior", "inferior": "inferior"}
-    _set_pv_camera(plotter, V, view_map.get(view, "oblique"))
+    # same RAS camera convention as the vedo renderer (raises on unknown view)
+    _set_pv_camera(plotter, V, view)
     fd, png = tempfile.mkstemp(suffix=".png")
     os.close(fd)
     plotter.screenshot(png)
@@ -108,16 +115,16 @@ def plot_parcellation_cluster_grid(
     faces: np.ndarray,
     labelings: Mapping[str, np.ndarray],
     *,
-    views: Optional[Sequence[str]] = None,
+    views: Sequence[str] | None = None,
     engine: str = "vedo",
-    continuous: Optional[Sequence[str]] = None,
+    continuous: Sequence[str] | None = None,
     noise_color: str = "lightgray",
     bg: str = "white",
     cell_size: tuple[int, int] = (600, 600),
     scale: int = 2,
     panel_letters: bool = True,
-    title: Optional[str] = None,
-    save: Optional[PathLike] = None,
+    title: str | None = None,
+    save: PathLike | None = None,
     dpi: int = 300,
 ):
     """3D grid comparing parcellations and clusterings side by side.
@@ -157,10 +164,12 @@ def plot_parcellation_cluster_grid(
     import matplotlib.image as mpimg
     import matplotlib.pyplot as plt
 
+    from spectralbrain.viz._camera import validate_views
+    from spectralbrain.viz.clusters import CAMERA_PRESETS, VIEWS_3POSE
+
     if views is None:
-        from spectralbrain.viz.clusters import VIEWS_3POSE
         views = list(VIEWS_3POSE)
-    views = list(views)
+    views = validate_views(views, CAMERA_PRESETS)
     row_names = list(labelings.keys())
     continuous = set(continuous or [])
     n_rows, n_cols = len(row_names), len(views)
@@ -175,16 +184,24 @@ def plot_parcellation_cluster_grid(
         if labels.shape[0] != vertices.shape[0]:
             raise ValueError(
                 f"labeling '{rname}' has {labels.shape[0]} entries but the mesh "
-                f"has {vertices.shape[0]} vertices.")
+                f"has {vertices.shape[0]} vertices."
+            )
         cat = rname not in continuous
         for view in views:
-            png = render(vertices, faces, labels, view, noise_color=noise_color,
-                         bg=bg, size=cell_size, scale=scale, categorical=cat)
+            png = render(
+                vertices,
+                faces,
+                labels,
+                view,
+                noise_color=noise_color,
+                bg=bg,
+                size=cell_size,
+                scale=scale,
+                categorical=cat,
+            )
             cell_paths[(rname, view)] = png
 
-    fig, axes = plt.subplots(n_rows, n_cols,
-                             figsize=(3.0 * n_cols, 3.0 * n_rows),
-                             squeeze=False)
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(3.0 * n_cols, 3.0 * n_rows), squeeze=False)
     letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
     k = 0
     for i, rname in enumerate(row_names):
@@ -198,22 +215,33 @@ def plot_parcellation_cluster_grid(
             if i == 0:
                 ax.set_title(view.replace("_", " ").title(), fontsize=11)
             if j == 0:
-                n_k = int(np.unique(np.asarray(labelings[rname])[
-                    np.asarray(labelings[rname]) >= 0]).size)
-                ax.set_ylabel(f"{rname}\n(k={n_k})", fontsize=11, rotation=90,
-                              labelpad=10)
+                labf = np.asarray(labelings[rname], dtype=float)
+                n_k = int(np.unique(labf[np.isfinite(labf) & (labf >= 0)]).size)
+                ax.set_ylabel(f"{rname}\n(k={n_k})", fontsize=11, rotation=90, labelpad=10)
             if panel_letters:
-                ax.text(0.03, 0.97, letters[k % len(letters)],
-                        transform=ax.transAxes, fontsize=12, fontweight="bold",
-                        va="top", ha="left")
+                ax.text(
+                    0.03,
+                    0.97,
+                    letters[k % len(letters)],
+                    transform=ax.transAxes,
+                    fontsize=12,
+                    fontweight="bold",
+                    va="top",
+                    ha="left",
+                )
             k += 1
 
     if title:
         fig.suptitle(title, fontsize=14, fontweight="bold")
     fig.tight_layout()
 
-    meta = {"cell_paths": cell_paths, "shape": (n_rows, n_cols),
-            "rows": row_names, "views": views, "engine": engine}
+    meta = {
+        "cell_paths": cell_paths,
+        "shape": (n_rows, n_cols),
+        "rows": row_names,
+        "views": views,
+        "engine": engine,
+    }
     if save is not None:
         save = Path(save)
         save.parent.mkdir(parents=True, exist_ok=True)

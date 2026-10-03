@@ -108,7 +108,22 @@ class Timer:
 
 
 def seed_everything(seed: int = 42) -> None:
-    """Set random seeds for NumPy, Python, and optional frameworks.
+    """Set random seeds for SpectralBrain, NumPy, Python, and optional frameworks.
+
+    Besides the global ``random``/``np.random`` legacy state and Torch, this
+    sets the SpectralBrain library-wide default seed
+    (:func:`spectralbrain.runtime.set_global_seed`), which every library
+    function taking ``seed=None`` falls back to (FPS subsampling, jitter,
+    clustering, …).  Generators created with ``np.random.default_rng()``
+    *outside* SpectralBrain are not affected.
+
+    Notes
+    -----
+    ``PYTHONHASHSEED`` is exported for **child processes** only (e.g. joblib
+    ``loky`` workers); hash randomisation of the running interpreter is
+    fixed at start-up and cannot be changed here.  For JAX, the
+    ``--xla_gpu_deterministic_ops=true`` flag is added to ``XLA_FLAGS``
+    (once); it only takes effect if JAX's backend has not yet initialised.
 
     Parameters
     ----------
@@ -116,9 +131,12 @@ def seed_everything(seed: int = 42) -> None:
     """
     import random
 
+    from spectralbrain.runtime import set_global_seed
+
+    set_global_seed(seed)
     random.seed(seed)
     np.random.seed(seed)  # noqa: NPY002 -- intentional global legacy-state seeding
-    os.environ["PYTHONHASHSEED"] = str(seed)
+    os.environ["PYTHONHASHSEED"] = str(seed)  # inherited by subprocesses only
 
     try:
         import torch
@@ -132,11 +150,12 @@ def seed_everything(seed: int = 42) -> None:
     try:
         import jax  # noqa: F401 -- availability probe
 
-        # JAX uses explicit PRNG keys, not global state.
-        # Set env var for deterministic ops.
-        os.environ["XLA_FLAGS"] = (
-            os.environ.get("XLA_FLAGS", "") + " --xla_gpu_deterministic_reductions"
-        )
+        # JAX uses explicit PRNG keys, not global state.  Request
+        # deterministic GPU ops (the old ``--xla_gpu_deterministic_reductions``
+        # flag was removed from XLA and aborts start-up on recent versions).
+        flags = os.environ.get("XLA_FLAGS", "")
+        if "--xla_gpu_deterministic_ops" not in flags:
+            os.environ["XLA_FLAGS"] = (flags + " --xla_gpu_deterministic_ops=true").strip()
     except ImportError:
         pass
 
@@ -155,7 +174,7 @@ def get_reproducibility_info() -> dict[str, str]:
 
     import scipy
 
-    from spectralbrain.runtime import __version__
+    from spectralbrain import __version__
 
     info = {
         "python": sys.version.split()[0],

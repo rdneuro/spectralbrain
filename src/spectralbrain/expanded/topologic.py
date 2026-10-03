@@ -57,19 +57,18 @@ import numpy as np
 import scipy.sparse as sp
 
 from spectralbrain.core.base import SpectralDecomposition
+from spectralbrain.expanded._base import (
+    BackendSpec,
+    _validate_mesh,
+    operator_eigensystem,
+    require_optional,
+)
 from spectralbrain.runtime import (
     Faces,
     ScalarMap,
     SparseMatrix,
     Vertices,
     get_logger,
-)
-
-from spectralbrain.expanded._base import (
-    BackendSpec,
-    _validate_mesh,
-    operator_eigensystem,
-    require_optional,
 )
 
 logger = get_logger(__name__)
@@ -130,15 +129,13 @@ def build_incidence(
     ed: list[float] = []
     for fi in range(n_f):
         a, b, c = (int(f[fi, 0]), int(f[fi, 1]), int(f[fi, 2]))
-        for (x, y) in ((a, b), (b, c), (c, a)):
+        for x, y in ((a, b), (b, c), (c, a)):
             key = (x, y) if x < y else (y, x)
             sign = 1.0 if x < y else -1.0
             er.append(lookup[key])
             ec.append(fi)
             ed.append(sign)
-    B2 = sp.coo_matrix(
-        (np.asarray(ed), (np.asarray(er), np.asarray(ec))), shape=(n_e, n_f)
-    ).tocsc()
+    B2 = sp.coo_matrix((np.asarray(ed), (np.asarray(er), np.asarray(ec))), shape=(n_e, n_f)).tocsc()
     return B1, B2, edges
 
 
@@ -289,6 +286,15 @@ def _to_networkx(adjacency: Any) -> Any:
     return nx.from_scipy_sparse_array(A)
 
 
+def _is_weighted(g: Any) -> bool:
+    """True if any edge carries a ``weight`` attribute different from 1."""
+    for _, _, data in g.edges(data=True):
+        w = data.get("weight", 1.0)
+        if w is not None and not np.isclose(float(w), 1.0):
+            return True
+    return False
+
+
 def forman_ricci_curvature(
     adjacency: Any,
 ) -> tuple[ScalarMap, np.ndarray, ScalarMap]:
@@ -304,8 +310,8 @@ def forman_ricci_curvature(
     Parameters
     ----------
     adjacency : sparse matrix, ndarray, or networkx.Graph
-        The (undirected) graph; for a connectome, a binary/weighted ROI×ROI
-        adjacency.
+        The (undirected) graph; for a connectome, a ROI×ROI adjacency.
+        Edge weights are **ignored** (a warning is logged if present).
 
     Returns
     -------
@@ -317,6 +323,12 @@ def forman_ricci_curvature(
         Per-edge Forman curvature.
     """
     g = _to_networkx(adjacency)
+    if _is_weighted(g):
+        logger.warning(
+            "forman_ricci_curvature: the graph has non-unit edge weights, but "
+            "the unweighted Forman curvature 4 − deg(u) − deg(v) ignores them "
+            "(binarised topology is used)."
+        )
     deg = dict(g.degree())
     n = g.number_of_nodes()
     edge_index: list[tuple[int, int]] = []
@@ -348,7 +360,7 @@ def _emd_linprog(
     # row marginals (m constraints) + column marginals (k constraints)
     a_eq = np.zeros((m + k, m * k))
     for i in range(m):
-        a_eq[i, i * k:(i + 1) * k] = 1.0
+        a_eq[i, i * k : (i + 1) * k] = 1.0
     for j in range(k):
         a_eq[m + j, j::k] = 1.0
     b_eq = np.concatenate([p, q])
@@ -414,9 +426,12 @@ def ollivier_ricci_curvature(
         Laziness of the random walk (mass retained at the source).
     method : str
         ``"graphriccicurvature"`` uses the optimised ``GraphRicciCurvature``
-        package; ``"builtin"`` uses an exact local LP solver (no extra
-        dependency); ``"auto"`` prefers the package and falls back to
-        builtin.
+        package (edge ``weight`` = edge length); ``"builtin"`` uses an exact
+        local LP solver (no extra dependency) on the **unweighted** hop
+        metric; ``"auto"`` prefers the package and falls back to builtin.
+        Because the two treat weights differently, a warning is logged
+        when weights are present and the builtin solver is used (including
+        an ``"auto"`` fallback).
 
     Returns
     -------
@@ -426,6 +441,17 @@ def ollivier_ricci_curvature(
     """
     g = _to_networkx(adjacency)
     n = g.number_of_nodes()
+    weighted = _is_weighted(g)
+
+    def _builtin(reason: str) -> tuple[list[tuple[int, int]], list[float]]:
+        if weighted:
+            logger.warning(
+                "ollivier_ricci_curvature: %s — the builtin solver uses the "
+                "unweighted hop metric and uniform walks; edge weights are "
+                "ignored (results differ from GraphRicciCurvature).",
+                reason,
+            )
+        return _ollivier_builtin(g, alpha)
 
     use_pkg = method in ("auto", "graphriccicurvature")
     if use_pkg:
@@ -443,9 +469,14 @@ def ollivier_ricci_curvature(
         except ImportError:
             if method == "graphriccicurvature":
                 raise
-            edge_index, edge_curv = _ollivier_builtin(g, alpha)
+            if weighted:
+                logger.warning(
+                    "ollivier_ricci_curvature(method='auto'): GraphRicciCurvature "
+                    "not installed; falling back to the builtin solver."
+                )
+            edge_index, edge_curv = _builtin("auto fallback")
     else:
-        edge_index, edge_curv = _ollivier_builtin(g, alpha)
+        edge_index, edge_curv = _builtin("method='builtin'")
 
     node_curv = np.zeros(n, dtype=np.float64)
     deg = dict(g.degree())
@@ -590,9 +621,7 @@ def magnetic_laplacian(
     # Hermitian off-diagonal: Aₛ ∘ exp(iΘ)
     As_coo = As.tocoo()
     phase = np.exp(1j * np.asarray(theta[As_coo.row, As_coo.col]).ravel())
-    H_off = sp.coo_matrix(
-        (As_coo.data * phase, (As_coo.row, As_coo.col)), shape=A.shape
-    ).tocsr()
+    H_off = sp.coo_matrix((As_coo.data * phase, (As_coo.row, As_coo.col)), shape=A.shape).tocsr()
     deg = np.asarray(As.sum(axis=1)).ravel()
     L = sp.diags(deg).astype(np.complex128) - H_off
     if normalized:
@@ -686,13 +715,10 @@ def connection_laplacian(
             t1j, t2j = t1[j], t2[j]
         else:
             axis = axis / s
+
             # Rodrigues rotation of j's frame onto i's tangent plane
             def rot(x: np.ndarray) -> np.ndarray:
-                return (
-                    x * c
-                    + np.cross(axis, x) * s
-                    + axis * np.dot(axis, x) * (1 - c)
-                )
+                return x * c + np.cross(axis, x) * s + axis * np.dot(axis, x) * (1 - c)
 
             t1j, t2j = rot(t1[j]), rot(t2[j])
         o = np.array(
@@ -711,8 +737,12 @@ def connection_laplacian(
         # off-diagonal block (a,b) = -O_ab ; (b,a) = -O_abᵀ (symmetry)
         for r in range(2):
             for c2 in range(2):
-                rows.append(2 * a + r); cols.append(2 * b + c2); data.append(-o_ab[r, c2])
-                rows.append(2 * b + c2); cols.append(2 * a + r); data.append(-o_ab[r, c2])
+                rows.append(2 * a + r)
+                cols.append(2 * b + c2)
+                data.append(-o_ab[r, c2])
+                rows.append(2 * b + c2)
+                cols.append(2 * a + r)
+                data.append(-o_ab[r, c2])
     S = sp.coo_matrix((data, (rows, cols)), shape=(2 * n_v, 2 * n_v)).tocsc()
     # diagonal blocks deg_i · I2
     diag = np.repeat(deg, 2)
@@ -933,22 +963,18 @@ def reeb_graph_features(reeb: Any) -> dict[str, int]:
 
 
 __all__ = [
-    # incidence + Hodge
-    "build_incidence",
-    "hodge_laplacian",
-    "hodge_decompose",
     "betti_numbers",
-    # Ricci
-    "forman_ricci_curvature",
-    "ollivier_ricci_curvature",
-    "ricci_curvature_mesh",
-    # bundle / directed
-    "magnetic_laplacian",
-    "magnetic_decompose",
-    "connection_laplacian",
+    "build_incidence",
     "connection_decompose",
-    "sheaf_laplacian",
-    # Reeb
+    "connection_laplacian",
+    "forman_ricci_curvature",
+    "hodge_decompose",
+    "hodge_laplacian",
+    "magnetic_decompose",
+    "magnetic_laplacian",
+    "ollivier_ricci_curvature",
     "reeb_graph",
     "reeb_graph_features",
+    "ricci_curvature_mesh",
+    "sheaf_laplacian",
 ]

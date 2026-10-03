@@ -32,16 +32,23 @@ from __future__ import annotations
 import logging
 import os
 import tempfile
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Optional, Sequence
+from typing import Any
 
 import numpy as np
+
+from spectralbrain.viz import _camera as _cam
 
 logger = logging.getLogger("spectralbrain.viz.tracts3d")
 
 PathLike = "str | os.PathLike[str]"
 
 # Canonical camera viewpoints (azimuth, elevation) in the RAS+ world frame.
+#: Camera presets in the shared RAS convention of :mod:`spectralbrain.viz._camera`
+#: (azimuth from +x towards +y, elevation towards +z): ``left`` camera at −x,
+#: ``anterior`` at +y, ``superior`` at +z.  Every backend (FURY, PyVista)
+#: builds an explicit position/focal-point/view-up camera from these angles.
 TRACT_VIEWS: dict[str, dict[str, float]] = {
     "left": {"azimuth": 180.0, "elevation": 0.0},
     "right": {"azimuth": 0.0, "elevation": 0.0},
@@ -67,42 +74,52 @@ def _ensure_offscreen() -> None:
 def _require_fury():
     _ensure_offscreen()
     try:
-        from fury import actor, window  # noqa: F401
+        from fury import actor, window
+
         return actor, window
     except ImportError as exc:  # pragma: no cover
-        raise ImportError("FURY is required for streamline rendering. "
-                          "Install with: pip install fury dipy") from exc
+        raise ImportError(
+            "FURY is required for streamline rendering. Install with: pip install fury dipy"
+        ) from exc
 
 
 def _require_dipy_io():
     try:
-        from dipy.io.streamline import load_tractogram  # noqa: F401
-        from dipy.tracking.streamline import (  # noqa: F401
-            select_random_set_of_streamlines, transform_streamlines)
+        from dipy.io.streamline import load_tractogram
+        from dipy.tracking.streamline import (
+            select_random_set_of_streamlines,
+            transform_streamlines,
+        )
+
         return load_tractogram, select_random_set_of_streamlines, transform_streamlines
     except ImportError as exc:  # pragma: no cover
-        raise ImportError("DIPY is required to load streamlines. "
-                          "Install with: pip install dipy") from exc
+        raise ImportError(
+            "DIPY is required to load streamlines. Install with: pip install dipy"
+        ) from exc
 
 
 def _require_pyvista():
     _ensure_offscreen()
     try:
         import pyvista as pv
+
         pv.OFF_SCREEN = True
         return pv
     except ImportError as exc:  # pragma: no cover
-        raise ImportError("PyVista is required for bundle-surface rendering. "
-                          "Install with: pip install pyvista") from exc
+        raise ImportError(
+            "PyVista is required for bundle-surface rendering. Install with: pip install pyvista"
+        ) from exc
 
 
 def _require_skimage_mc():
     try:
         from skimage.measure import marching_cubes
+
         return marching_cubes
     except ImportError as exc:  # pragma: no cover
-        raise ImportError("scikit-image is required for mask->mesh. "
-                          "Install with: pip install scikit-image") from exc
+        raise ImportError(
+            "scikit-image is required for mask->mesh. Install with: pip install scikit-image"
+        ) from exc
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -112,6 +129,7 @@ def get_cmap(kind: str = "sequential"):
     """Perceptually-uniform colormap by role (``sequential``/``diverging``)."""
     try:
         from cmcrameri import cm as cmc
+
         if kind == "sequential":
             return cmc.batlow
         if kind == "diverging":
@@ -119,11 +137,13 @@ def get_cmap(kind: str = "sequential"):
     except Exception:
         pass
     import matplotlib.pyplot as plt
+
     return plt.get_cmap("viridis" if kind == "sequential" else "RdBu_r")
 
 
-def robust_clim(values: np.ndarray, low: float = 2.0, high: float = 98.0,
-                symmetric: bool = False) -> tuple[float, float]:
+def robust_clim(
+    values: np.ndarray, low: float = 2.0, high: float = 98.0, symmetric: bool = False
+) -> tuple[float, float]:
     """Robust colour limits from percentiles (optionally symmetric on zero)."""
     v = np.asarray(values, float)
     v = v[np.isfinite(v)]
@@ -134,6 +154,36 @@ def robust_clim(values: np.ndarray, low: float = 2.0, high: float = 98.0,
         m = max(abs(lo), abs(hi))
         return (-m, m)
     return (float(lo), float(hi))
+
+
+def resolve_scalar_clim(
+    values: np.ndarray, clim: tuple | None = None, robust: bool = True, symmetric: bool = False
+) -> tuple[float, float]:
+    """Colour limits used by the scalar renderers (shared with the colorbar)."""
+    if clim is not None:
+        return float(clim[0]), float(clim[1])
+    if robust:
+        return robust_clim(values, symmetric=symmetric)
+    v = np.asarray(values, float)
+    v = v[np.isfinite(v)]
+    if v.size == 0:
+        return (0.0, 1.0)
+    if symmetric:
+        m = float(np.max(np.abs(v)))
+        return (-m, m)
+    return (float(v.min()), float(v.max()))
+
+
+def _scalar_rgb(
+    values, cmap, lo: float, hi: float, nan_rgb: tuple = (0.74, 0.74, 0.74)
+) -> np.ndarray:
+    """Linear ``Normalize(lo, hi)`` colouring; NaN points get ``nan_rgb``."""
+    v = np.asarray(values, float)
+    span = (hi - lo) or 1.0
+    rgb = np.asarray(cmap(np.clip((v - lo) / span, 0, 1)))[..., :3]
+    rgb = np.array(rgb, dtype=float, copy=True)
+    rgb[~np.isfinite(v)] = nan_rgb
+    return rgb
 
 
 def _dec_colors(streamlines) -> list[np.ndarray]:
@@ -154,8 +204,7 @@ def _dec_colors(streamlines) -> list[np.ndarray]:
 # ──────────────────────────────────────────────────────────────────────
 # 1. Streamlines
 # ──────────────────────────────────────────────────────────────────────
-def load_streamlines(path: PathLike, reference: Optional[PathLike] = None,
-                     to_space: str = "world"):
+def load_streamlines(path: PathLike, reference: PathLike | None = None, to_space: str = "world"):
     """Load a ``.trk``/``.tck`` tractogram into world (RAS+ mm) coordinates.
 
     ``.tck`` (MRtrix) stores no affine and needs ``reference`` (a NIfTI).
@@ -163,20 +212,29 @@ def load_streamlines(path: PathLike, reference: Optional[PathLike] = None,
     """
     load_tractogram, _, _ = _require_dipy_io()
     from dipy.io.stateful_tractogram import Space
+
     ref = reference if reference is not None else "same"
     sft = load_tractogram(str(path), ref, to_space=Space.RASMM)
     return list(sft.streamlines), sft.affine
 
 
-def render_streamlines(streamlines, *, color_by: str = "orientation",
-                       scalars: Optional[Sequence[np.ndarray]] = None,
-                       tube: bool = True, linewidth: float = 0.4,
-                       cmap: Any = None, clim: Optional[tuple] = None,
-                       robust: bool = True, view: str = "oblique",
-                       n_max: int = 20000, bg: str = _DEFAULT_BG,
-                       size: tuple[int, int] = _DEFAULT_SIZE,
-                       out_path: Optional[PathLike] = None,
-                       random_state: int = 0) -> Path:
+def render_streamlines(
+    streamlines,
+    *,
+    color_by: str = "orientation",
+    scalars: Sequence[np.ndarray] | None = None,
+    tube: bool = True,
+    linewidth: float = 0.4,
+    cmap: Any = None,
+    clim: tuple | None = None,
+    robust: bool = True,
+    view: str = "oblique",
+    n_max: int = 20000,
+    bg: str = _DEFAULT_BG,
+    size: tuple[int, int] = _DEFAULT_SIZE,
+    out_path: PathLike | None = None,
+    random_state: int = 0,
+) -> Path:
     """Render a streamline bundle offscreen (FURY) and snapshot to PNG.
 
     Parameters
@@ -213,11 +271,13 @@ def render_streamlines(streamlines, *, color_by: str = "orientation",
         if scalars is None:
             raise ValueError("color_by='scalar' requires `scalars`.")
         allv = np.concatenate([np.asarray(s, float).ravel() for s in scalars])
-        lo, hi = clim or (robust_clim(allv) if robust else (allv.min(), allv.max()))
+        lo, hi = resolve_scalar_clim(allv, clim=clim, robust=robust)
         cm = cmap if cmap is not None else get_cmap("sequential")
-        rng_span = (hi - lo) or 1.0
-        colors = [cm(np.clip((np.asarray(s, float) - lo) / rng_span, 0, 1))[:, :3]
-                  for s in scalars]
+        if isinstance(cm, str):
+            import matplotlib.pyplot as plt
+
+            cm = plt.get_cmap(cm)
+        colors = [_scalar_rgb(s, cm, lo, hi) for s in scalars]
     else:
         raise ValueError("color_by must be 'orientation' or 'scalar'.")
 
@@ -228,36 +288,49 @@ def render_streamlines(streamlines, *, color_by: str = "orientation",
     else:
         stream_actor = actor.line(sl, colors=colors, linewidth=max(linewidth, 1.0))
     scene.add(stream_actor)
-    _set_fury_camera(scene, view)
+    _set_fury_camera(scene, view, np.vstack([np.asarray(x, float) for x in sl]))
 
     # depth peeling + anti-aliasing for correct transparency / clean edges
     out = Path(out_path) if out_path else Path(tempfile.mkstemp(suffix=".png")[1])
     out.parent.mkdir(parents=True, exist_ok=True)
     try:
-        window.record(scene=scene, out_path=str(out), size=size,
-                      multi_samples=8, reset_camera=False)
+        window.record(
+            scene=scene, out_path=str(out), size=size, multi_samples=8, reset_camera=False
+        )
     except TypeError:  # older FURY positional/keyword drift
         window.record(scene, out_path=str(out), size=size)
     logger.info("Saved streamline render → %s", out)
     return out
 
 
-def _set_fury_camera(scene, view: str) -> None:
-    scene.reset_camera()
-    preset = TRACT_VIEWS.get(view, TRACT_VIEWS["oblique"])
-    try:
-        scene.azimuth(preset["azimuth"])
-        scene.elevation(preset["elevation"])
-    except Exception:  # pragma: no cover - camera API drift
-        pass
+def _set_fury_camera(scene, view: str, points: np.ndarray | None = None) -> None:
+    """Place the FURY camera explicitly (RAS convention, see TRACT_VIEWS).
+
+    Relative ``azimuth``/``elevation`` rotations act on VTK's default camera
+    (which looks down from +z), so they produced mislabelled views; an
+    explicit position/focal point/view-up is used instead.
+    """
+    if points is None or len(points) == 0:
+        scene.reset_camera()
+        points = np.array(scene.GetActiveCamera().GetFocalPoint(), float)[None, :]
+    cam = _cam.camera_for_view(view, points, angles=TRACT_VIEWS)
+    scene.set_camera(
+        position=cam["position"], focal_point=cam["focal_point"], view_up=cam["viewup"]
+    )
+    scene.reset_clipping_range()
 
 
 # ──────────────────────────────────────────────────────────────────────
 # 2. Bundle surfaces with scalar / spectral overlays
 # ──────────────────────────────────────────────────────────────────────
-def mask_to_mesh(mask: np.ndarray, affine: Optional[np.ndarray] = None,
-                 level: float = 0.5, smooth_sigma: float = 1.0,
-                 taubin_iter: int = 25, raw: bool = False):
+def mask_to_mesh(
+    mask: np.ndarray,
+    affine: np.ndarray | None = None,
+    level: float = 0.5,
+    smooth_sigma: float = 1.0,
+    taubin_iter: int = 25,
+    raw: bool = False,
+):
     """Marching-cubes surface from a binary tract mask, mapped to world coords.
 
     With ``raw=False`` (default) the surface is produced by the shared,
@@ -275,30 +348,44 @@ def mask_to_mesh(mask: np.ndarray, affine: Optional[np.ndarray] = None,
     if raw:
         marching_cubes = _require_skimage_mc()
         verts, faces, _n, _v = marching_cubes(
-            np.asarray(mask, float), level=level, method="lewiner",
-            allow_degenerate=False)
+            np.asarray(mask, float), level=level, method="lewiner", allow_degenerate=False
+        )
         homog = np.c_[verts, np.ones(len(verts))]
         verts = (aff @ homog.T).T[:, :3]
         return np.asarray(verts, np.float64), np.asarray(faces, np.int64)
 
     from spectralbrain.io.meshing import volume_to_mesh
+
     verts, faces = volume_to_mesh(
-        np.asarray(mask), aff, raw=False, closed=False, level=level,
-        field_mode="gaussian", sigma_vox=float(smooth_sigma),
+        np.asarray(mask),
+        aff,
+        raw=False,
+        closed=False,
+        level=level,
+        field_mode="gaussian",
+        sigma_vox=float(smooth_sigma),
         taubin_iterations=int(taubin_iter),
     )
     return np.asarray(verts, np.float64), np.asarray(faces, np.int64)
 
 
-def render_bundle_surface(vertices: np.ndarray, faces: np.ndarray, *,
-                          scalars: Optional[np.ndarray] = None,
-                          cmap: Any = None, clim: Optional[tuple] = None,
-                          symmetric: bool = False, robust: bool = True,
-                          view: str = "oblique", bg: str = _DEFAULT_BG,
-                          size: tuple[int, int] = _DEFAULT_SIZE,
-                          metallic: float = 0.1, roughness: float = 0.6,
-                          nan_color: str = "#BDBDBD",
-                          out_path: Optional[PathLike] = None) -> Path:
+def render_bundle_surface(
+    vertices: np.ndarray,
+    faces: np.ndarray,
+    *,
+    scalars: np.ndarray | None = None,
+    cmap: Any = None,
+    clim: tuple | None = None,
+    symmetric: bool = False,
+    robust: bool = True,
+    view: str = "oblique",
+    bg: str = _DEFAULT_BG,
+    size: tuple[int, int] = _DEFAULT_SIZE,
+    metallic: float = 0.1,
+    roughness: float = 0.6,
+    nan_color: str = "#BDBDBD",
+    out_path: PathLike | None = None,
+) -> Path:
     """Render a bundle surface mesh with an optional per-vertex scalar overlay.
 
     PyVista PBR render with depth peeling + SSAA. For signed maps (t, d, r) pass
@@ -320,16 +407,30 @@ def render_bundle_surface(vertices: np.ndarray, faces: np.ndarray, *,
     if scalars is not None:
         s = np.asarray(scalars, float)
         if clim is None:
-            clim = robust_clim(s, symmetric=symmetric) if robust else (np.nanmin(s), np.nanmax(s))
+            clim = resolve_scalar_clim(s, robust=robust, symmetric=symmetric)
         cm = cmap if cmap is not None else get_cmap("diverging" if symmetric else "sequential")
         mesh["scalars"] = s
-        plotter.add_mesh(mesh, scalars="scalars", cmap=cm, clim=clim,
-                         nan_color=nan_color, smooth_shading=True,
-                         pbr=True, metallic=metallic, roughness=roughness,
-                         show_scalar_bar=True)
+        plotter.add_mesh(
+            mesh,
+            scalars="scalars",
+            cmap=cm,
+            clim=clim,
+            nan_color=nan_color,
+            smooth_shading=True,
+            pbr=True,
+            metallic=metallic,
+            roughness=roughness,
+            show_scalar_bar=True,
+        )
     else:
-        plotter.add_mesh(mesh, color="#cccccc", smooth_shading=True, pbr=True,
-                         metallic=metallic, roughness=roughness)
+        plotter.add_mesh(
+            mesh,
+            color="#cccccc",
+            smooth_shading=True,
+            pbr=True,
+            metallic=metallic,
+            roughness=roughness,
+        )
 
     _set_pv_camera(plotter, V, view)
     out = Path(out_path) if out_path else Path(tempfile.mkstemp(suffix=".png")[1])
@@ -340,10 +441,14 @@ def render_bundle_surface(vertices: np.ndarray, faces: np.ndarray, *,
     return out
 
 
-def spectral_overlay(vertices: np.ndarray, faces: np.ndarray,
-                     kind: str = "hks", n_eigen: int = 100,
-                     t_index: int = 30, laplacian_method: str = "cotangent",
-                     ) -> np.ndarray:
+def spectral_overlay(
+    vertices: np.ndarray,
+    faces: np.ndarray,
+    kind: str = "hks",
+    n_eigen: int = 100,
+    t_index: int = 30,
+    laplacian_method: str = "cotangent",
+) -> np.ndarray:
     """Compute an HKS/WKS per-vertex field on a bundle surface for overlay.
 
     Uses SpectralBrain's own LBO + descriptor machinery so the bundle surface is
@@ -353,13 +458,16 @@ def spectral_overlay(vertices: np.ndarray, faces: np.ndarray,
     non-manifold inputs (requires ``robust_laplacian``). Returns a (V,) field.
     """
     from spectralbrain.core.meshes import BrainMesh
+
     mesh = BrainMesh(np.asarray(vertices, float), np.asarray(faces, np.int64))
     decomp = mesh.decompose(k=n_eigen, laplacian_method=laplacian_method)
     if kind == "hks":
         from spectralbrain.spectral.descriptors import compute_hks
+
         desc = np.asarray(compute_hks(decomp))
     elif kind == "wks":
         from spectralbrain.spectral.descriptors import compute_wks
+
         desc = np.asarray(compute_wks(decomp))
     else:
         raise ValueError("kind must be 'hks' or 'wks'.")
@@ -368,59 +476,98 @@ def spectral_overlay(vertices: np.ndarray, faces: np.ndarray,
 
 
 def _set_pv_camera(plotter, vertices: np.ndarray, view: str) -> None:
+    """Explicit PyVista camera in the shared RAS convention.
+
+    Accepts the TRACT_VIEWS names and the cluster/mesh preset names
+    (``left_lateral``, ``right_medial``, ...); unknown names raise ValueError.
+    """
     c = vertices.mean(axis=0)
     radius = float(np.linalg.norm(vertices - c, axis=1).max()) * 2.6
-    preset = TRACT_VIEWS.get(view, TRACT_VIEWS["oblique"])
-    az = np.deg2rad(preset["azimuth"])
-    el = np.deg2rad(preset["elevation"])
-    pos = c + radius * np.array([np.cos(el) * np.cos(az),
-                                 np.cos(el) * np.sin(az),
-                                 np.sin(el)])
-    up = (0, 0, 1) if abs(preset["elevation"]) < 80 else (0, 1, 0)
-    plotter.camera_position = [tuple(pos), tuple(c), up]
+    d = _cam.view_direction(view, TRACT_VIEWS)
+    pos = c + radius * d
+    plotter.camera_position = [tuple(pos), tuple(c), _cam.view_up(d)]
 
 
 # ──────────────────────────────────────────────────────────────────────
 # 3. Multi-POV montage & publication panels
 # ──────────────────────────────────────────────────────────────────────
-def streamlines_multiview(streamlines, *,
-                          views: Sequence[str] = ("left", "anterior",
-                                                  "superior", "oblique"),
-                          color_by: str = "orientation",
-                          scalars: Optional[Sequence[np.ndarray]] = None,
-                          titles: Optional[Sequence[str]] = None,
-                          colorbar: Optional[dict] = None,
-                          tube: bool = True, bg: str = _DEFAULT_BG,
-                          size: tuple[int, int] = (1200, 1200),
-                          out_path: Optional[PathLike] = None,
-                          random_state: int = 0):
+def streamlines_multiview(
+    streamlines,
+    *,
+    views: Sequence[str] = ("left", "anterior", "superior", "oblique"),
+    color_by: str = "orientation",
+    scalars: Sequence[np.ndarray] | None = None,
+    titles: Sequence[str] | None = None,
+    colorbar: dict | None = None,
+    tube: bool = True,
+    bg: str = _DEFAULT_BG,
+    size: tuple[int, int] = (1200, 1200),
+    out_path: PathLike | None = None,
+    random_state: int = 0,
+    cmap: Any = None,
+    clim: tuple | None = None,
+    robust: bool = True,
+):
     """Render one bundle from several canonical POVs and composite into a panel.
 
     This is the multi-POV tract figure: each view is rendered offscreen, then all
     are assembled into a single hybrid raster+vector matplotlib figure with an
     optional shared colorbar. Returns ``(fig, png_paths)``.
+
+    For ``color_by="scalar"`` the colour limits and colormap are resolved
+    **once** (``clim`` / ``colorbar["clim"]`` if given, else robust 2-98%) and
+    used for every view *and* for the shared colorbar, so the colorbar always
+    matches the rendered colours.
     """
+    for v in views:
+        _cam.view_direction(v, TRACT_VIEWS)  # fail fast on unknown view names
+    if color_by == "scalar" and scalars is not None:
+        cb_in = dict(colorbar) if colorbar is not None else None
+        if clim is None and cb_in is not None and "clim" in cb_in:
+            clim = cb_in["clim"]
+        allv = np.concatenate([np.asarray(s, float).ravel() for s in scalars])
+        clim = resolve_scalar_clim(allv, clim=clim, robust=robust)
+        if cmap is None:
+            kind = cb_in.get("kind", "sequential") if cb_in is not None else "sequential"
+            cmap = get_cmap(kind)
+        if cb_in is not None:
+            cb_in["clim"] = clim
+            cb_in["cmap"] = cmap
+            colorbar = cb_in
     tmp = Path(tempfile.mkdtemp())
     pngs = []
     for v in views:
         p = tmp / f"tract_{v}.png"
-        render_streamlines(streamlines, color_by=color_by, scalars=scalars,
-                           tube=tube, view=v, bg=bg, size=size, out_path=p,
-                           random_state=random_state)
+        render_streamlines(
+            streamlines,
+            color_by=color_by,
+            scalars=scalars,
+            tube=tube,
+            view=v,
+            bg=bg,
+            size=size,
+            out_path=p,
+            random_state=random_state,
+            cmap=cmap,
+            clim=clim,
+            robust=robust,
+        )
         pngs.append(p)
     titles = list(titles) if titles is not None else [v.capitalize() for v in views]
-    fig = compose_tract_panel(pngs, titles=titles, colorbar=colorbar,
-                              out_path=out_path)
+    fig = compose_tract_panel(pngs, titles=titles, colorbar=colorbar, out_path=out_path)
     return fig, pngs
 
 
-def compose_tract_panel(images: Sequence[PathLike], *,
-                        titles: Optional[Sequence[str]] = None,
-                        colorbar: Optional[dict] = None,
-                        ncols: Optional[int] = None,
-                        panel_letters: bool = True,
-                        out_path: Optional[PathLike] = None,
-                        dpi: int = 300):
+def compose_tract_panel(
+    images: Sequence[PathLike],
+    *,
+    titles: Sequence[str] | None = None,
+    colorbar: dict | None = None,
+    ncols: int | None = None,
+    panel_letters: bool = True,
+    out_path: PathLike | None = None,
+    dpi: int = 300,
+):
     """Composite rendered PNGs into a publication panel (hybrid raster+vector).
 
     Parameters
@@ -428,22 +575,23 @@ def compose_tract_panel(images: Sequence[PathLike], *,
     images : sequence of PNG paths
     titles : sequence of str, optional
     colorbar : dict, optional
-        ``{"kind": "sequential"|"diverging", "clim": (lo, hi), "label": str}`` to
-        draw a shared vector colorbar.
+        ``{"kind": "sequential"|"diverging", "clim": (lo, hi), "label": str,
+        "cmap": Colormap}`` to draw a shared vector colorbar.  The colorbar uses
+        a linear ``Normalize(lo, hi)`` — the same mapping the renderers use —
+        and ``cmap`` (if given) overrides the ``kind`` default.
     ncols : int, optional
         Columns (defaults to len(images) up to 4).
     """
-    import matplotlib.pyplot as plt
-    import matplotlib.image as mpimg
     import matplotlib.cm as mcm
-    from matplotlib.colors import Normalize, TwoSlopeNorm
+    import matplotlib.image as mpimg
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import Normalize
 
     imgs = [mpimg.imread(str(p)) for p in images]
     n = len(imgs)
     ncols = ncols or min(n, 4)
     nrows = int(np.ceil(n / ncols))
-    fig, axes = plt.subplots(nrows, ncols, figsize=(3.2 * ncols, 3.2 * nrows),
-                             squeeze=False)
+    fig, axes = plt.subplots(nrows, ncols, figsize=(3.2 * ncols, 3.2 * nrows), squeeze=False)
     letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
     for i, ax in enumerate(axes.ravel()):
         if i < n:
@@ -451,16 +599,27 @@ def compose_tract_panel(images: Sequence[PathLike], *,
             if titles is not None and i < len(titles):
                 ax.set_title(titles[i], fontsize=11)
             if panel_letters:
-                ax.text(0.02, 0.98, letters[i], transform=ax.transAxes,
-                        fontsize=13, fontweight="bold", va="top", ha="left")
+                ax.text(
+                    0.02,
+                    0.98,
+                    letters[i],
+                    transform=ax.transAxes,
+                    fontsize=13,
+                    fontweight="bold",
+                    va="top",
+                    ha="left",
+                )
         ax.axis("off")
 
     if colorbar is not None:
         kind = colorbar.get("kind", "sequential")
         lo, hi = colorbar.get("clim", (0.0, 1.0))
-        cm = get_cmap(kind)
-        norm = (TwoSlopeNorm(0.0, lo, hi) if kind == "diverging" and lo < 0 < hi
-                else Normalize(lo, hi))
+        cm = colorbar.get("cmap") or get_cmap(kind)
+        if isinstance(cm, str):
+            cm = plt.get_cmap(cm)
+        # Renders map scalars linearly onto [lo, hi]; a TwoSlopeNorm here would
+        # disagree with the rendered colours whenever |lo| != |hi|.
+        norm = Normalize(lo, hi)
         sm = mcm.ScalarMappable(norm=norm, cmap=cm)
         sm.set_array([])
         cbar = fig.colorbar(sm, ax=axes.ravel().tolist(), fraction=0.025, pad=0.02)
@@ -480,15 +639,21 @@ def compose_tract_panel(images: Sequence[PathLike], *,
     return fig
 
 
-def add_glass_brain(plotter, brain_mask: np.ndarray, affine: np.ndarray, *,
-                    opacity: float = 0.12, color: str = "#cccccc",
-                    level: float = 0.5):
+def add_glass_brain(
+    plotter,
+    brain_mask: np.ndarray,
+    affine: np.ndarray,
+    *,
+    opacity: float = 0.12,
+    color: str = "#cccccc",
+    level: float = 0.5,
+):
     """Add a translucent glass-brain shell to a PyVista plotter for context."""
-    verts, faces = mask_to_mesh(brain_mask, affine=affine, level=level,
-                                smooth_sigma=1.5, taubin_iter=15)
+    verts, faces = mask_to_mesh(
+        brain_mask, affine=affine, level=level, smooth_sigma=1.5, taubin_iter=15
+    )
     pv = _require_pyvista()
-    shell = pv.PolyData(verts, np.column_stack(
-        [np.full(len(faces), 3), faces]).ravel())
+    shell = pv.PolyData(verts, np.column_stack([np.full(len(faces), 3), faces]).ravel())
     plotter.add_mesh(shell, color=color, opacity=opacity, smooth_shading=True)
     return plotter
 
@@ -502,6 +667,7 @@ __all__ = [
     "mask_to_mesh",
     "render_bundle_surface",
     "render_streamlines",
+    "resolve_scalar_clim",
     "robust_clim",
     "spectral_overlay",
     "streamlines_multiview",

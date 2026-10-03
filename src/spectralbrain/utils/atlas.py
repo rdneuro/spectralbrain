@@ -19,6 +19,8 @@ files when available.
 
 from __future__ import annotations
 
+import warnings
+from collections.abc import Sequence
 from typing import Literal
 
 from spectralbrain.runtime import get_logger
@@ -105,10 +107,14 @@ HIPPOCAMPAL_SUBFIELDS: dict[int, str] = {
     233: "whole_hippocampal_body",
 }
 
-# Right-hemisphere labels are + 1000.
-HIPPOCAMPAL_SUBFIELDS_RIGHT: dict[int, str] = {
-    k + 1000: v.replace("left", "right") for k, v in HIPPOCAMPAL_SUBFIELDS.items()
-}
+# FreeSurfer writes one hippocampal-subfield volume per hemisphere
+# (``lh.hippoAmygLabels*.mgz`` / ``rh.hippoAmygLabels*.mgz``) and both use
+# the *same* label IDs — there is no "+1000" right-hemisphere code.  The
+# right-hemisphere table is therefore identical to the left one.
+HIPPOCAMPAL_SUBFIELDS_RIGHT: dict[int, str] = dict(HIPPOCAMPAL_SUBFIELDS)
+
+# Atlases whose label IDs carry no hemisphere (one file per hemisphere).
+_HEMISPHERE_AGNOSTIC: frozenset[str] = frozenset({"hippocampal_subfields"})
 
 
 # ======================================================================
@@ -213,10 +219,7 @@ YEO_17_NETWORKS: dict[int, str] = {
 
 _REGISTRIES: dict[str, dict[int, str]] = {
     "aseg": ASEG_LABELS,
-    "hippocampal_subfields": {
-        **HIPPOCAMPAL_SUBFIELDS,
-        **HIPPOCAMPAL_SUBFIELDS_RIGHT,
-    },
+    "hippocampal_subfields": dict(HIPPOCAMPAL_SUBFIELDS),
     "thalamic_nuclei": {
         **THALAMIC_NUCLEI,
         **THALAMIC_NUCLEI_RIGHT,
@@ -249,11 +252,17 @@ def get_label_name(atlas: str, label_id: int) -> str:
 def get_label_id(atlas: str, name: str) -> int | None:
     """Reverse lookup: region name → label ID.
 
+    An exact (case-insensitive) name match always wins.  Otherwise a
+    case-insensitive substring match is used; if several regions match
+    (e.g. ``"Hippocampus"`` → Left *and* Right) the first in table order is
+    returned and a :class:`UserWarning` lists the alternatives — pass the
+    full name (``"Left-Hippocampus"``) to disambiguate.
+
     Parameters
     ----------
     atlas : str
     name : str
-        Region name (case-insensitive substring match).
+        Region name (exact, or case-insensitive substring).
 
     Returns
     -------
@@ -262,9 +271,20 @@ def get_label_id(atlas: str, name: str) -> int | None:
     registry = _REGISTRIES.get(atlas, {})
     name_lower = name.lower()
     for lid, lname in registry.items():
-        if name_lower in lname.lower():
+        if lname.lower() == name_lower:
             return lid
-    return None
+    matches = [(lid, lname) for lid, lname in registry.items() if name_lower in lname.lower()]
+    if not matches:
+        return None
+    if len(matches) > 1:
+        alts = ", ".join(f"{n} ({i})" for i, n in matches)
+        msg = (
+            f"get_label_id({atlas!r}, {name!r}) is ambiguous; returning "
+            f"{matches[0][1]} ({matches[0][0]}). Candidates: {alts}"
+        )
+        logger.warning(msg)
+        warnings.warn(msg, UserWarning, stacklevel=2)
+    return matches[0][0]
 
 
 def list_labels(atlas: str) -> dict[int, str]:
@@ -297,7 +317,8 @@ def get_structure_ids(
     list of int
     """
     registry = _REGISTRIES.get(atlas, {})
-    if hemisphere == "both":
+    if hemisphere == "both" or atlas in _HEMISPHERE_AGNOSTIC:
+        # Hemisphere-agnostic atlases use the same IDs in the lh./rh. files.
         return sorted(registry.keys())
 
     ids = []
@@ -310,10 +331,80 @@ def get_structure_ids(
     return sorted(ids)
 
 
+_SCHAEFER_7_TOKENS: dict[str, str] = {
+    "Vis": "Visual",
+    "SomMot": "Somatomotor",
+    "DorsAttn": "DorsalAttention",
+    "SalVentAttn": "VentralAttention",
+    "Limbic": "Limbic",
+    "Cont": "Frontoparietal",
+    "Default": "Default",
+}
+
+# Schaefer 17-network label tokens → names used in :data:`YEO_17_NETWORKS`.
+_SCHAEFER_17_TOKENS: dict[str, str] = {
+    "VisCent": "VisCent",
+    "VisPeri": "VisPeri",
+    "SomMotA": "SomMotA",
+    "SomMotB": "SomMotB",
+    "DorsAttnA": "DorsAttnA",
+    "DorsAttnB": "DorsAttnB",
+    "SalVentAttnA": "SalVentAttnA",
+    "SalVentAttnB": "SalVentAttnB",
+    "LimbicA": "LimbicA",
+    "LimbicB": "LimbicB",
+    "ContA": "ContA",
+    "ContB": "ContB",
+    "ContC": "ContC",
+    "DefaultA": "DefaultA",
+    "DefaultB": "DefaultB",
+    "DefaultC": "DefaultC",
+    "TempPar": "TempPar",
+}
+
+
+def schaefer_name_to_yeo(name: str, n_networks: int | None = None) -> str:
+    """Parse the Yeo network from a Schaefer parcel name.
+
+    Parameters
+    ----------
+    name : str
+        A Schaefer label such as ``"7Networks_LH_Vis_1"`` or
+        ``"17Networks_RH_DefaultA_PFCm_2"``.
+    n_networks : int, optional
+        7 or 17.  Inferred from the ``"<n>Networks_"`` prefix if omitted.
+
+    Returns
+    -------
+    str
+        Network name (values of :data:`YEO_7_NETWORKS` / :data:`YEO_17_NETWORKS`).
+
+    Raises
+    ------
+    ValueError
+        If the name does not follow the Schaefer convention.
+    """
+    parts = str(name).split("_")
+    if len(parts) < 3 or not parts[0].endswith("Networks"):
+        raise ValueError(f"Not a Schaefer parcel name: {name!r}")
+    if n_networks is None:
+        try:
+            n_networks = int(parts[0][: -len("Networks")])
+        except ValueError as exc:
+            raise ValueError(f"Not a Schaefer parcel name: {name!r}") from exc
+    token = parts[2]
+    table = _SCHAEFER_7_TOKENS if n_networks == 7 else _SCHAEFER_17_TOKENS
+    if token not in table:
+        raise ValueError(f"Unknown {n_networks}-network token {token!r} in {name!r}")
+    return table[token]
+
+
 def schaefer_to_yeo(
     parcel_id: int,
     n_parcels: int = 200,
     n_networks: int = 7,
+    *,
+    parcel_names: Sequence[str] | None = None,
 ) -> str:
     """Map a Schaefer parcel ID to its Yeo network name.
 
@@ -328,6 +419,11 @@ def schaefer_to_yeo(
         Total parcels (100, 200, 400, etc.).
     n_networks : int
         7 or 17.
+    parcel_names : sequence of str, optional
+        The atlas label names in parcel order (index ``parcel_id - 1``),
+        e.g. from the Schaefer LUT/annotation or
+        ``nilearn.datasets.fetch_atlas_schaefer_2018()["labels"]``.  When
+        given, the mapping is **exact**.
 
     Returns
     -------
@@ -336,12 +432,32 @@ def schaefer_to_yeo(
 
     Notes
     -----
-    This is a heuristic based on the standard Schaefer ordering.
-    For exact mapping, load the annotation file and parse names.
+    Without *parcel_names* the mapping is a heuristic that assumes an
+    equal number of parcels per network, which is **not** true for the
+    Schaefer atlases (e.g. Schaefer-100/7: LH Vis = parcels 1–9, but the
+    heuristic assigns 8–9 to Somatomotor).  A :class:`UserWarning` is
+    emitted in that case.
     """
+    if parcel_names is not None:
+        if not 1 <= parcel_id <= len(parcel_names):
+            raise ValueError(
+                f"parcel_id {parcel_id} out of range for {len(parcel_names)} parcel names"
+            )
+        name = parcel_names[parcel_id - 1]
+        if isinstance(name, bytes):
+            name = name.decode()
+        return schaefer_name_to_yeo(name, n_networks)
+
+    warnings.warn(
+        "schaefer_to_yeo() without parcel_names uses an equal-size-network "
+        "heuristic that mislabels many Schaefer parcels; pass the atlas label "
+        "names via parcel_names= for an exact mapping.",
+        UserWarning,
+        stacklevel=2,
+    )
     networks = YEO_7_NETWORKS if n_networks == 7 else YEO_17_NETWORKS
     parcels_per_hemi = n_parcels // 2
-    parcels_per_net = parcels_per_hemi // n_networks
+    parcels_per_net = max(1, parcels_per_hemi // n_networks)
 
     # Determine which network this parcel belongs to.
     hemi_id = (parcel_id - 1) % parcels_per_hemi
@@ -360,5 +476,6 @@ __all__ = [
     "get_label_name",
     "get_structure_ids",
     "list_labels",
+    "schaefer_name_to_yeo",
     "schaefer_to_yeo",
 ]

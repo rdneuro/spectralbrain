@@ -326,15 +326,22 @@ def null_eigenvalue_permutation(eigenvalues, eigenvectors, *, n_surrogates=1000,
 
 
 def null_phase_randomisation(descriptor, eigenvectors, *, n_surrogates=1000, seed=None):
-    """Null 2: randomise phases in spectral domain. Tests vertex-level structure."""
+    """Null 2: randomise phases in spectral domain. Tests vertex-level structure.
+
+    The descriptor is projected onto the (real) eigenbasis. For a real basis
+    the only "phases" are the coefficient signs, so each surrogate flips the
+    sign of every non-constant coefficient at random. This preserves the
+    spectral power ``|c_k|^2`` exactly and keeps mode 0 (the mean / DC
+    component) fixed.
+    """
     rng = np.random.default_rng(seed)
-    desc = np.atleast_2d(descriptor.T).T  # ensure (N, T)
+    desc = np.atleast_2d(np.asarray(descriptor, dtype=np.float64).T).T  # ensure (N, T)
     coeffs = eigenvectors.T @ desc
-    amps = np.abs(coeffs)
     surrogates = []
     for _ in range(n_surrogates):
-        phases = rng.uniform(0, 2 * np.pi, coeffs.shape)
-        surrogates.append((eigenvectors @ (amps * np.cos(phases))).squeeze())
+        signs = rng.choice([-1.0, 1.0], size=coeffs.shape)
+        signs[0] = 1.0  # keep the constant mode
+        surrogates.append((eigenvectors @ (coeffs * signs)).squeeze())
     return surrogates
 
 
@@ -390,7 +397,7 @@ def null_edge_rewiring(connectome, *, n_surrogates=1000, n_swaps_per_edge=10, se
     C = np.asarray(connectome, dtype=np.float64)
     rows, cols = np.triu_indices(C.shape[0], k=1)
     weights = C[rows, cols]
-    nz = weights > 0
+    nz = weights != 0
     er, ec, ew = rows[nz].copy(), cols[nz].copy(), weights[nz].copy()
     ne = len(er)
     child_seeds = np.random.SeedSequence(seed).spawn(n_surrogates)
@@ -398,17 +405,33 @@ def null_edge_rewiring(connectome, *, n_surrogates=1000, n_swaps_per_edge=10, se
     def _one_surrogate(child_seed: np.random.SeedSequence) -> np.ndarray:
         rng = np.random.default_rng(child_seed)
         r, c, w = er.copy(), ec.copy(), ew.copy()
-        for _ in range(ne * n_swaps_per_edge):
-            if ne < 2:
-                break
-            e1, e2 = rng.choice(ne, 2, replace=False)
-            if rng.random() < 0.5:
-                r[e1], r[e2] = r[e2], r[e1]
-            else:
-                c[e1], c[e2] = c[e2], c[e1]
+        present = {(int(a), int(b)) for a, b in zip(r, c)}
+        if ne >= 2:
+            for _ in range(ne * n_swaps_per_edge):
+                e1, e2 = rng.choice(ne, 2, replace=False)
+                a, b = int(r[e1]), int(c[e1])
+                cc, d = int(r[e2]), int(c[e2])
+                if rng.random() < 0.5:
+                    n1, n2 = (a, d), (cc, b)
+                else:
+                    n1, n2 = (a, cc), (b, d)
+                n1 = (min(n1), max(n1))
+                n2 = (min(n2), max(n2))
+                # Reject swaps creating self-loops or multi-edges
+                # (Maslov & Sneppen 2002): degrees are preserved exactly.
+                if n1[0] == n1[1] or n2[0] == n2[1] or n1 == n2:
+                    continue
+                if n1 in present or n2 in present:
+                    continue
+                present.discard((a, b))
+                present.discard((min(cc, d), max(cc, d)))
+                present.add(n1)
+                present.add(n2)
+                r[e1], c[e1] = n1
+                r[e2], c[e2] = n2
         M = np.zeros_like(C)
         M[r, c] = w
-        M += M.T
+        M[c, r] = w
         return M
 
     if n_jobs == 1:
@@ -832,15 +855,25 @@ def _random_sphere_points(n, radius, rng):
     return radius * np.column_stack([r_xy * np.cos(phi), r_xy * np.sin(phi), z])
 
 
-def null_eigenstrapping(data, eigenvalues, eigenvectors, mass, *,
-                        n_surrogates=1000, eigenvalue_tol=1e-3, seed=0):
+def null_eigenstrapping(
+    data,
+    eigenvalues,
+    eigenvectors,
+    mass,
+    *,
+    n_surrogates=1000,
+    eigenvalue_tol=1e-3,
+    seed=0,
+    grouping="harmonic",
+    residual="permute",
+):
     """Null 7: spatial-autocorrelation-preserving surrogates by rotating LBO
     geometric eigenmodes (Koussis, Pang et al. 2025).
 
     The recommended null for **bounded** cortical/subcortical surfaces, where the
     spin test is biased (Bazinet, Liu & Misic 2025). The map is expanded in the
-    M-orthonormal LBO eigenbasis; near-degenerate eigenmodes are grouped and
-    randomly rotated within each group, preserving the power spectrum (hence the
+    M-orthonormal LBO eigenbasis; eigenmodes are grouped (Koussis blocks of
+    sizes 1, 3, 5, ... by default) and randomly rotated within each group, preserving the power spectrum (hence the
     spatial autocorrelation) while randomising phase. Built on the same
     Laplace-Beltrami operator as the HKS/WKS descriptors.
 
@@ -855,7 +888,12 @@ def null_eigenstrapping(data, eigenvalues, eigenvectors, mass, *,
         Lumped mass diagonal (vertex areas).
     n_surrogates : int
     eigenvalue_tol : float
-        Relative tolerance for grouping near-degenerate eigenvalues.
+        Relative tolerance for grouping near-degenerate eigenvalues
+        (``grouping="degenerate"`` only).
+    grouping : {"harmonic", "degenerate"}
+        Mode grouping; ``"harmonic"`` uses Koussis et al. blocks 1, 3, 5, ...
+    residual : {"permute", "add", "none"}
+        Treatment of the map's component outside the K modes.
     seed : int
 
     Returns
@@ -864,9 +902,18 @@ def null_eigenstrapping(data, eigenvalues, eigenvectors, mass, *,
         ``n_surrogates`` surrogate maps, each shape (V,).
     """
     from spectralbrain.statistics._clustercore.nulls import eigenstrapping_surrogates
+
     surr = eigenstrapping_surrogates(
-        data, eigenvalues, eigenvectors, mass, n_surrogates=n_surrogates,
-        eigenvalue_tol=eigenvalue_tol, random_state=seed)
+        data,
+        eigenvalues,
+        eigenvectors,
+        mass,
+        n_surrogates=n_surrogates,
+        eigenvalue_tol=eigenvalue_tol,
+        random_state=seed,
+        grouping=grouping,
+        residual=residual,
+    )
     return [np.asarray(row) for row in surr]
 
 
@@ -889,8 +936,8 @@ def null_brainsmash(data, distance, *, n_surrogates=1000, seed=0, **kwargs):
     list of ndarray
     """
     from spectralbrain.statistics._clustercore.nulls import brainsmash_surrogates
-    surr = brainsmash_surrogates(data, distance, n_surrogates=n_surrogates,
-                                 random_state=seed, **kwargs)
+
+    surr = brainsmash_surrogates(data, distance, n_surrogates=n_surrogates, seed=seed, **kwargs)
     return [np.asarray(row) for row in surr]
 
 

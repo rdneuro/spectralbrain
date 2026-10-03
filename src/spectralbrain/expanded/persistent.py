@@ -16,14 +16,14 @@ Persistence diagrams
 
 Vectorisations
     :func:`betti_curve`, :func:`persistence_landscape` and
-    :func:`persistence_statistics` (built-in), plus the persistence image
-    through the optional ``persim`` backend — turning a diagram into a
+    :func:`persistence_statistics` and :func:`persistence_image` (all
+    built-in) — turning a diagram into a
     fixed-length feature vector for statistics and learning.
 
 Persistent Laplacian
     The ``q = 0`` persistent Laplacian of a vertex-subset pair ``K ⊆ L``
-    (Wang, Nguyen & Wei 2020): the graph Laplacian of the ``L``-edges
-    induced on ``K``.  Its kernel dimension is the persistent Betti number
+    (Wang, Nguyen & Wei 2020): the Schur complement of ``L``'s graph
+    Laplacian onto the vertices of ``K``.  Its kernel dimension is the persistent Betti number
     ``β₀^{K,L}``; at ``K = L`` it is the ordinary graph Laplacian.
 
 Hodge–Dirac operator
@@ -34,7 +34,7 @@ Hodge–Dirac operator
     ``combinatorial_dirac`` to distinguish it from the extrinsic
     quaternionic :func:`spectralbrain.expanded.extrinsic.dirac_operator`.)
 
-The optional dependencies (``ripser``, ``gudhi``, ``persim``) are lazily
+The optional dependencies (``ripser``, ``gudhi``) are lazily
 imported and declared in the ``expanded`` extra; the built-in routines work
 without them.
 
@@ -58,6 +58,10 @@ import numpy as np
 import scipy.sparse as sp
 
 from spectralbrain.core.base import SpectralDecomposition
+from spectralbrain.expanded._base import (
+    BackendSpec,
+    require_optional,
+)
 from spectralbrain.runtime import (
     DescriptorMatrix,
     Faces,
@@ -65,11 +69,6 @@ from spectralbrain.runtime import (
     SparseMatrix,
     Vertices,
     get_logger,
-)
-
-from spectralbrain.expanded._base import (
-    BackendSpec,
-    require_optional,
 )
 
 logger = get_logger(__name__)
@@ -239,8 +238,13 @@ def betti_curve(
     *,
     n_bins: int = 100,
     value_range: tuple[float, float] | None = None,
+    include_essential: bool = True,
 ) -> GlobalDescriptor:
     """Betti curve ``β(t)`` = number of bars alive at filtration ``t``.
+
+    A bar ``(b, d)`` is alive on ``b ≤ t < d``; essential bars
+    (``d = inf``, e.g. the surviving connected components in ``H₀``) are
+    alive for every ``t ≥ b`` and are counted by default.
 
     Parameters
     ----------
@@ -248,17 +252,28 @@ def betti_curve(
     n_bins : int
         Resolution of the sampling grid.
     value_range : (float, float), optional
-        Sampling range (from the finite bars if ``None``).
+        Sampling range (from the bars if ``None``: smallest birth to the
+        largest finite death/birth).
+    include_essential : bool
+        Count infinite-death bars (``True``, the mathematically correct
+        Betti number).  ``False`` reproduces a finite-bars-only curve.
 
     Returns
     -------
     ndarray, shape (n_bins,)
     """
-    bars = _finite_bars(diagram)
+    d_all = np.asarray(diagram, dtype=np.float64).reshape(-1, 2)
+    d_all = d_all[np.isfinite(d_all[:, 0])]
+    bars = d_all if include_essential else _finite_bars(d_all)
     if bars.shape[0] == 0:
         return np.zeros(n_bins, dtype=np.float64)
     if value_range is None:
-        value_range = (float(bars[:, 0].min()), float(bars[:, 1].max()))
+        lo = float(bars[:, 0].min())
+        finite_d = bars[np.isfinite(bars[:, 1]), 1]
+        hi = max([float(bars[:, 0].max())] + ([float(finite_d.max())] if finite_d.size else []))
+        if hi <= lo:
+            hi = lo + 1.0
+        value_range = (lo, hi)
     grid = np.linspace(value_range[0], value_range[1], n_bins)
     curve = np.zeros(n_bins, dtype=np.float64)
     for b, d in bars:
@@ -277,7 +292,8 @@ def persistence_landscape(
 
     Each bar ``(b, d)`` contributes a tent function
     ``Λ(t) = max(0, min(t − b, d − t))``; the ``k``-th landscape is the
-    ``k``-th largest tent value at each ``t``.
+    ``k``-th largest tent value at each ``t``.  Essential (infinite-death)
+    bars have unbounded tents and are excluded.
 
     Parameters
     ----------
@@ -314,7 +330,8 @@ def persistence_statistics(diagram: np.ndarray) -> dict[str, float]:
     Returns
     -------
     dict
-        ``n_bars`` (finite), ``total_persistence`` (Σ lifetimes),
+        ``n_bars`` (finite; essential infinite bars are excluded from all
+        statistics), ``total_persistence`` (Σ lifetimes),
         ``max_persistence``, ``mean_persistence``, ``std_persistence`` and
         ``persistence_entropy`` (Shannon entropy of the normalised
         lifetimes).
@@ -348,28 +365,56 @@ def persistence_image(
     *,
     pixels: tuple[int, int] = (20, 20),
     spread: float = 0.1,
+    birth_range: tuple[float, float] | None = None,
+    pers_range: tuple[float, float] | None = None,
 ) -> DescriptorMatrix:
-    """Persistence image (Adams et al. 2017) via the optional ``persim``.
+    """Persistence image (Adams et al. 2017).
+
+    Each finite bar is mapped to ``(birth, persistence)`` and replaced by
+    an isotropic Gaussian of standard deviation *spread*, weighted linearly
+    by its persistence; the surface is integrated exactly over a
+    ``pixels[0] × pixels[1]`` grid (birth × persistence).  Implemented
+    natively (no ``persim`` dependency); matches persim's default
+    linear-weight / Gaussian-CDF construction.
 
     Parameters
     ----------
     diagram : ndarray, shape (n_bars, 2)
     pixels : (int, int)
-        Output resolution.
+        Output resolution along (birth, persistence).
     spread : float
-        Gaussian kernel bandwidth.
+        Gaussian kernel bandwidth (same units as the filtration).
+    birth_range, pers_range : (float, float), optional
+        Image extent.  ``None`` = fitted to this diagram's bars (padded by
+        ``3·spread`` so each Gaussian's mass is captured).  **Pass fixed ranges to compare images across
+        diagrams** — fitted ranges differ per diagram.
 
     Returns
     -------
     ndarray, shape ``pixels``
         The vectorised persistence surface.
     """
-    persim = require_optional("persim", purpose="persistence images")
+    from scipy.special import ndtr
+
     bars = _finite_bars(diagram)
-    pim = persim.PersistenceImager(pixel_size=1.0 / max(pixels))
-    pim.kernel_params = {"sigma": spread}
-    img = pim.transform(bars)
-    return np.asarray(img, dtype=np.float64)
+    nb, npers = int(pixels[0]), int(pixels[1])
+    out = np.zeros((nb, npers), dtype=np.float64)
+    if bars.shape[0] == 0:
+        return out
+    births = bars[:, 0]
+    pers = bars[:, 1] - bars[:, 0]
+    sig = max(float(spread), _EPS)
+    if birth_range is None:
+        birth_range = (float(births.min()) - 3 * sig, float(births.max()) + 3 * sig)
+    if pers_range is None:
+        pers_range = (0.0, float(pers.max()) + 3 * sig)
+    bx = np.linspace(birth_range[0], birth_range[1], nb + 1)
+    py = np.linspace(pers_range[0], pers_range[1], npers + 1)
+    for b, p in zip(births, pers):
+        cx = np.diff(ndtr((bx - b) / sig))  # (nb,)
+        cy = np.diff(ndtr((py - p) / sig))  # (npers,)
+        out += p * np.outer(cx, cy)
+    return out
 
 
 # ======================================================================
@@ -399,34 +444,67 @@ def persistent_laplacian(
     """``q = 0`` persistent Laplacian of a vertex-subset pair ``K ⊆ L``.
 
     With ``L`` the full graph and ``K`` the induced subgraph on ``subset``,
-    the ``0``-persistent Laplacian is the graph Laplacian built from the
-    ``L``-edges whose **both** endpoints lie in ``K`` — i.e. the Laplacian
-    of the induced subgraph (Wang, Nguyen & Wei 2020).  Its kernel
-    dimension is the persistent Betti number ``β₀^{K,L}`` (number of
-    components of ``K`` once ``L``'s edges are added); ``subset = None``
-    recovers the ordinary graph Laplacian.
+    the ``0``-persistent Laplacian is the **Schur complement** of ``L``'s
+    graph Laplacian onto the vertices of ``K``,
+
+        Δ₀^{K,L} = L_KK − L_KC L_CC⁻¹ L_CK,   C = V(L) \\ V(K)
+
+    (Wang, Nguyen & Wei 2020; Mémoli, Wan & Wang 2022).  Its kernel
+    dimension is the persistent Betti number ``β₀^{K,L}`` — the number of
+    components of ``L`` that contain vertices of ``K`` (components of ``K``
+    merged by paths through ``L``).  ``subset = None`` recovers the
+    ordinary graph Laplacian.
 
     Parameters
     ----------
     adjacency : sparse matrix, ndarray, or networkx.Graph
-        Adjacency of ``L``.
+        Adjacency of ``L`` (weights allowed).
     subset : ndarray of int, optional
         Vertex indices defining ``K`` (all vertices if ``None``).
 
     Returns
     -------
     sparse matrix
-        Symmetric positive semi-definite persistent Laplacian on ``K``.
+        Symmetric positive semi-definite persistent Laplacian on ``K``
+        (generally dense: ``|K|²`` entries).
     """
     a = _to_sparse_adjacency(adjacency)
+    deg = np.asarray(a.sum(axis=1)).ravel()
+    L_full = sp.csr_matrix(sp.diags(deg) - a)
     if subset is None:
-        sub = a
-    else:
-        idx = np.asarray(subset, dtype=np.int64)
-        sub = a[idx][:, idx]
-    deg = np.asarray(sub.sum(axis=1)).ravel()
-    L = sp.diags(deg) - sub
-    return sp.csc_matrix(0.5 * (L + L.T))
+        return sp.csc_matrix(0.5 * (L_full + L_full.T))
+
+    n = a.shape[0]
+    idx = np.unique(np.asarray(subset, dtype=np.int64))
+    in_k = np.zeros(n, dtype=bool)
+    in_k[idx] = True
+    comp_idx = np.where(~in_k)[0]
+    L_kk = L_full[idx][:, idx].toarray()
+    if comp_idx.size == 0:
+        return sp.csc_matrix(0.5 * (L_kk + L_kk.T))
+
+    # Components of the complement that never touch K are decoupled
+    # (their L_KC block is zero) and would make L_CC singular: drop them.
+    from scipy.sparse.csgraph import connected_components
+
+    a_cc = a[comp_idx][:, comp_idx]
+    n_comp, lab = connected_components(a_cc, directed=False)
+    touches = np.asarray(abs(a[comp_idx][:, idx]).sum(axis=1)).ravel() > 0
+    keep_comp = np.zeros(n_comp, dtype=bool)
+    keep_comp[np.unique(lab[touches])] = True
+    c_keep = comp_idx[keep_comp[lab]]
+    if c_keep.size == 0:
+        return sp.csc_matrix(0.5 * (L_kk + L_kk.T))
+
+    from scipy.sparse.linalg import splu
+
+    L_cc = sp.csc_matrix(L_full[c_keep][:, c_keep])
+    L_ck = L_full[c_keep][:, idx].toarray()
+    X = splu(L_cc).solve(L_ck)  # L_CC⁻¹ L_CK (grounded → nonsingular)
+    schur = L_kk - L_ck.T @ X
+    schur = 0.5 * (schur + schur.T)
+    schur[np.abs(schur) < 1e-14 * max(1.0, float(np.abs(schur).max()))] = 0.0
+    return sp.csc_matrix(schur)
 
 
 def persistent_laplacian_spectrum(
@@ -529,12 +607,12 @@ def combinatorial_dirac(
     total = nv + ne + nf
     D = sp.lil_matrix((total, total), dtype=np.float64)
     # vertex–edge block
-    D[0:nv, nv:nv + ne] = B1
-    D[nv:nv + ne, 0:nv] = B1.T
+    D[0:nv, nv : nv + ne] = B1
+    D[nv : nv + ne, 0:nv] = B1.T
     # edge–triangle block
     if nf > 0:
-        D[nv:nv + ne, nv + ne:total] = B2
-        D[nv + ne:total, nv:nv + ne] = B2.T
+        D[nv : nv + ne, nv + ne : total] = B2
+        D[nv + ne : total, nv : nv + ne] = B2.T
     D = D.tocsc()
     return sp.csc_matrix(0.5 * (D + D.T))
 
@@ -581,18 +659,14 @@ def combinatorial_dirac_spectrum(
 
 
 __all__ = [
-    # diagrams
-    "graph_persistence_h0",
-    "vietoris_rips_diagram",
-    # vectorisations
     "betti_curve",
-    "persistence_landscape",
-    "persistence_statistics",
-    "persistence_image",
-    # persistent Laplacian
-    "persistent_laplacian",
-    "persistent_laplacian_spectrum",
-    # Hodge–Dirac
     "combinatorial_dirac",
     "combinatorial_dirac_spectrum",
+    "graph_persistence_h0",
+    "persistence_image",
+    "persistence_landscape",
+    "persistence_statistics",
+    "persistent_laplacian",
+    "persistent_laplacian_spectrum",
+    "vietoris_rips_diagram",
 ]

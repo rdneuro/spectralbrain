@@ -1050,7 +1050,7 @@ def _gnmf_cpu(H, A_off, D_diag, r, lam, alpha, n_iter, tol, rng):
                     + lam * np.trace(W.T @ (D_diag[:, None] * W - A_off @ W))
                     + alpha * np.abs(W).sum()
                 )
-                if abs(prev_obj - obj) / (abs(prev_obj) + eps) < tol:
+                if np.isfinite(prev_obj) and abs(prev_obj - obj) / (abs(prev_obj) + eps) < tol:
                     update(n_iter - it)
                     break
                 prev_obj = obj
@@ -1114,7 +1114,7 @@ def _gnmf_gpu(H, A_off, D_diag, r, lam, alpha, n_iter, tol, rng):
             if it % 10 == 0:
                 residual = torch.norm(H_t - W_t @ F_t).item() ** 2
                 obj = 0.5 * residual
-                if abs(prev_obj - obj) / (abs(prev_obj) + eps) < tol:
+                if np.isfinite(prev_obj) and abs(prev_obj - obj) / (abs(prev_obj) + eps) < tol:
                     update(n_iter - it)
                     break
                 prev_obj = obj
@@ -1170,9 +1170,11 @@ def cluster_dpmm(
     random_state : int
     backend : str
         ``"variational"`` uses sklearn BayesianGaussianMixture (fast).
-        ``"pymc"`` uses full MCMC with optional MRF prior (slow, rich).
+        ``"pymc"`` uses ADVI on the stick-breaking mixture (slow, rich).
     mrf_beta : float
-        Potts MRF coupling strength (pymc backend only).
+        Potts MRF coupling strength. Not supported by either backend at
+        present: a value > 0 together with ``adjacency`` raises
+        ``NotImplementedError`` rather than being silently ignored.
 
     Returns
     -------
@@ -1200,6 +1202,10 @@ def cluster_dpmm(
         ).fit_transform(X)
 
     if backend == "variational":
+        if adjacency is not None and mrf_beta > 0:
+            raise NotImplementedError(
+                "The variational DPMM has no spatial MRF prior; use mrf_beta=0."
+            )
         return _dpmm_variational(X, max_components, random_state)
     elif backend == "pymc":
         return _dpmm_pymc(X, adjacency, max_components, mrf_beta, random_state)
@@ -1255,10 +1261,18 @@ def _dpmm_variational(X, K, seed):
 
 def _dpmm_pymc(X, adjacency, K, mrf_beta, seed):
     """Full Bayesian DPMM with optional MRF spatial prior via PyMC."""
+    if adjacency is not None and mrf_beta > 0:
+        # A Potts prior needs explicit discrete assignments coupled to the
+        # likelihood, which the marginalised mixture + ADVI cannot represent.
+        raise NotImplementedError(
+            "The Potts MRF prior (adjacency with mrf_beta > 0) is not supported by "
+            "the PyMC DPMM backend; use mrf_beta=0 or a spatial method such as "
+            "cluster_ddcrp."
+        )
     pm, _az = _require_pymc()
     import pytensor.tensor as pt
 
-    n, d = X.shape
+    _n, d = X.shape
 
     with pm.Model() as model:
         alpha = pm.Gamma("alpha", 1.0, 1.0)
@@ -1274,16 +1288,6 @@ def _dpmm_pymc(X, adjacency, K, mrf_beta, seed):
         comp_dists = [pm.Normal.dist(mu=mu[k], sigma=sigma[k], shape=d) for k in range(K)]
         pm.Mixture("obs", w=w, comp_dists=comp_dists, observed=X)
 
-        # MRF spatial prior (if adjacency provided)
-        if adjacency is not None and mrf_beta > 0:
-            z = pm.Categorical("z", p=w, shape=n)
-            A_coo = sp.coo_matrix(adjacency)
-            edges = np.column_stack([A_coo.row, A_coo.col])
-            pm.Potential(
-                "mrf",
-                mrf_beta * pt.sum(pt.eq(z[edges[:, 0]], z[edges[:, 1]])),
-            )
-
     with model:
         approx = pm.fit(20000, method="advi", random_seed=seed)
         trace = approx.sample(1000)
@@ -1293,10 +1297,15 @@ def _dpmm_pymc(X, adjacency, K, mrf_beta, seed):
     mu_post = trace.posterior["mu"].values.mean(axis=(0, 1))  # (K, d)
 
     # assign each point to nearest component weighted by w
-    from scipy.spatial.distance import cdist
-
-    D_km = cdist(X, mu_post)
-    log_resp = np.log(w_post[None, :] + 1e-12) - 0.5 * D_km**2
+    sig_post = trace.posterior["sigma"].values.mean(axis=(0, 1))  # (K, d)
+    log_resp = np.zeros((X.shape[0], K))
+    for k in range(K):
+        z = (X - mu_post[k]) / (sig_post[k] + 1e-12)
+        log_resp[:, k] = (
+            np.log(w_post[k] + 1e-12)
+            - 0.5 * np.sum(z**2, axis=1)
+            - np.sum(np.log(sig_post[k] + 1e-12))
+        )
     labels = log_resp.argmax(axis=1).astype(np.int64)
     probs = np.exp(log_resp - log_resp.max(axis=1, keepdims=True))
     probs /= probs.sum(axis=1, keepdims=True)
@@ -1345,10 +1354,8 @@ def cluster_persistence(
     ClusterResult
         With ``persistence_pairs`` and ``diagram`` in metadata.
     """
-    _require_gudhi()
-
-    density = -np.asarray(H_scalar, dtype=np.float64)
-    n = len(density)
+    field = np.asarray(H_scalar, dtype=np.float64)
+    n = len(field)
 
     # build adjacency list from sparse matrix
     A = sp.coo_matrix(adjacency)
@@ -1357,43 +1364,47 @@ def cluster_persistence(
         if i != j:
             graph[i].append(j)
 
+    # Convention (both code paths): clusters are the basins of the *maxima*
+    # of ``H_scalar`` (H is the density). ToMATo works on super-level sets of
+    # the density; the union-find fallback works on sub-level sets of -H.
     try:
         from gudhi.clustering.tomato import Tomato
+    except ImportError:
+        Tomato = None
 
-        tomato = Tomato(
-            graph_type="manual",
-            density_type="manual",
-        )
-        tomato.fit(graph, weights=density)
-
-        if n_clusters is not None:
-            tomato.n_clusters_ = n_clusters
-        elif persistence_threshold is not None:
-            # set via diagram analysis
-            tomato.n_clusters_ = int(
-                np.sum(tomato.diagram_[:, 1] - tomato.diagram_[:, 0] > persistence_threshold)
-            )
-            tomato.n_clusters_ = max(1, tomato.n_clusters_)
-
-        labels = tomato.labels_.astype(np.int64)
-        n_clust = len(set(labels)) - (1 if -1 in labels else 0)
-
-        return ClusterResult(
-            labels=labels,
-            n_clusters=n_clust,
-            method="persistence_tomato",
-            quality={},
-            metadata={
-                "diagram": (tomato.diagram_ if hasattr(tomato, "diagram_") else None),
-            },
-        )
-
-    except (ImportError, AttributeError):
-        # fallback: manual union-find persistence on H₀
+    if Tomato is None:
         logger.warning(
             "GUDHI Tomato not available; using manual sub-level persistence via union-find."
         )
-        return _persistence_sublevel_h0(density, graph, n, persistence_threshold, n_clusters)
+        return _persistence_sublevel_h0(-field, graph, n, persistence_threshold, n_clusters)
+
+    tomato = Tomato(graph_type="manual", density_type="manual")
+    tomato.fit(graph, weights=field)
+
+    diagram = np.asarray(getattr(tomato, "diagram_", np.empty((0, 2))), dtype=np.float64)
+    diagram = diagram.reshape(-1, 2)
+    # Super-level persistence: birth (peak height) >= death (saddle height).
+    persistence = diagram[:, 0] - diagram[:, 1]
+    n_essential = len(getattr(tomato, "max_weight_per_cc_", [None]))
+
+    if n_clusters is not None:
+        tomato.n_clusters_ = int(n_clusters)
+    elif persistence_threshold is not None:
+        tomato.n_clusters_ = max(1, int(np.sum(persistence > persistence_threshold)) + n_essential)
+
+    labels = np.asarray(tomato.labels_).astype(np.int64)
+    n_clust = len(set(labels.tolist())) - (1 if -1 in labels else 0)
+
+    return ClusterResult(
+        labels=labels,
+        n_clusters=n_clust,
+        method="persistence_tomato",
+        quality={},
+        metadata={
+            "diagram": diagram,
+            "persistence": persistence,
+        },
+    )
 
 
 def _persistence_sublevel_h0(density, graph, n, tau, k):
@@ -1512,7 +1523,9 @@ def cluster_spectral_coclustering(
     n_clusters : int
         Number of co-clusters.
     adjacency : sparse or None
-        If provided, applies Laplacian smoothing post-hoc.
+        If provided, applies Laplacian smoothing post-hoc. Either a mesh
+        adjacency (non-negative weights; ``L = D - A`` is built) or a graph
+        Laplacian (non-positive off-diagonals) is accepted.
     laplacian_smoothing : float
         Tikhonov regularisation weight μ for spatial coherence.
 
@@ -1540,7 +1553,7 @@ def cluster_spectral_coclustering(
     if adjacency is not None and laplacian_smoothing > 0:
         from scipy.sparse.linalg import spsolve
 
-        L = sp.csr_matrix(adjacency, dtype=np.float64)
+        L = _as_graph_laplacian(adjacency)
         I = sp.eye(H.shape[0], format="csr")
         K = len(np.unique(row_labels))
         prob = np.zeros((H.shape[0], K), dtype=np.float64)
@@ -1767,15 +1780,13 @@ def cluster_spatiotemporal_gnmf(
     A_off.data = np.abs(A_off.data)
     D_s = np.asarray(A_off.sum(axis=1)).flatten()
 
-    # 1D chain Laplacian for temporal axis
-    L_t = np.zeros((T, T), dtype=np.float64)
-    for i in range(T):
-        if i > 0:
-            L_t[i, i] += 1.0
-            L_t[i, i - 1] = -1.0
-        if i < T - 1:
-            L_t[i, i] += 1.0
-            L_t[i, i + 1] = -1.0
+    # 1D chain Laplacian for temporal axis, split as L_t = D_t - A_t so the
+    # multiplicative update keeps non-negative numerator and denominator.
+    A_t = np.zeros((T, T), dtype=np.float64)
+    idx_t = np.arange(T - 1)
+    A_t[idx_t, idx_t + 1] = 1.0
+    A_t[idx_t + 1, idx_t] = 1.0
+    D_t = np.diag(A_t.sum(axis=1))
 
     W = rng.random((n, n_components)).astype(np.float64) + 0.1
     F = rng.random((n_components, T)).astype(np.float64) + 0.1
@@ -1784,8 +1795,8 @@ def cluster_spatiotemporal_gnmf(
     with progress_simple("ST-GNMF", total=n_iter) as update:
         for it in range(n_iter):
             # update F with temporal smoothness
-            num_F = W.T @ H
-            den_F = W.T @ W @ F + lam_temporal * F @ L_t + eps
+            num_F = W.T @ H + lam_temporal * F @ A_t
+            den_F = W.T @ W @ F + lam_temporal * F @ D_t + eps
             F *= num_F / np.maximum(den_F, eps)
 
             # update W with spatial smoothness
@@ -1796,8 +1807,12 @@ def cluster_spatiotemporal_gnmf(
             W *= num_W / np.maximum(den_W, eps)
 
             if it % 10 == 0:
-                obj = 0.5 * np.linalg.norm(H - W @ F, "fro") ** 2
-                if abs(prev_obj - obj) / (abs(prev_obj) + eps) < tol:
+                obj = (
+                    0.5 * np.linalg.norm(H - W @ F, "fro") ** 2
+                    + lam_spatial * np.sum(W * (D_s[:, None] * W - A_off @ W))
+                    + lam_temporal * np.sum(F * (F @ (D_t - A_t)))
+                )
+                if np.isfinite(prev_obj) and abs(prev_obj - obj) / (abs(prev_obj) + eps) < tol:
                     update(n_iter - it)
                     break
                 prev_obj = obj
@@ -1972,8 +1987,9 @@ def fuse_concatenate(
     -------
     FusionResult
     """
-    Hh = np.asarray(hks, dtype=np.float64)
-    Hw = np.asarray(wks, dtype=np.float64)
+    # Work on copies: the normalisation below is in place.
+    Hh = np.array(hks, dtype=np.float64, copy=True)
+    Hw = np.array(wks, dtype=np.float64, copy=True)
 
     if log_transform:
         Hh = np.log(np.maximum(Hh, 1e-12))
@@ -2150,7 +2166,9 @@ def confirm_clusters_bayesian(
     adjacency : sparse or None
         Mesh adjacency for MRF prior.
     mrf_beta : float
-        Potts coupling strength.
+        Potts coupling strength. With ``adjacency`` the MAP labelling is
+        regularised by a Potts MRF prior (iterated conditional modes on the
+        posterior responsibilities).
     n_samples : int
         MCMC posterior samples.
     n_tune : int
@@ -2171,22 +2189,21 @@ def confirm_clusters_bayesian(
     labels = np.asarray(labels, dtype=np.int64)
     valid = labels >= 0
     H_valid = H[valid]
-    lab_valid = labels[valid]
+    # Label-agnostic: map arbitrary cluster ids to 0..K-1 and back.
+    label_values, lab_valid = np.unique(labels[valid], return_inverse=True)
 
     # reduce dimensions
     X = np.log(H_valid + 1e-12)
     if X.shape[1] > dim_reduction:
         X = skd.PCA(n_components=dim_reduction, random_state=random_state).fit_transform(X)
 
-    K = len(np.unique(lab_valid))
+    K = label_values.size
     n, d = X.shape
 
     # compute empirical cluster means as informative priors
     mu_prior = np.zeros((K, d))
     for k in range(K):
-        mask = lab_valid == k
-        if mask.any():
-            mu_prior[k] = X[mask].mean(axis=0)
+        mu_prior[k] = X[lab_valid == k].mean(axis=0)
 
     with pm.Model() as model:
         # cluster-specific priors centred on empirical means
@@ -2204,7 +2221,12 @@ def confirm_clusters_bayesian(
             random_seed=random_state,
             return_inferencedata=True,
             progressbar=True,
+            idata_kwargs={"log_likelihood": True},
         )
+
+    from spectralbrain.statistics.bayesian import check_sampling
+
+    diagnostics = check_sampling(trace, var_names=["mu", "w"])
 
     # --- compute MAP labels ---
     w_post = trace.posterior["w"].values.mean(axis=(0, 1))  # (K,)
@@ -2221,30 +2243,55 @@ def confirm_clusters_bayesian(
             - np.sum(np.log(sig_post[k] + 1e-12))
         )
 
+    # --- optional Potts MRF spatial prior (ICM on the MAP labelling) ---
+    if adjacency is not None and mrf_beta > 0:
+        A = sp.csr_matrix(adjacency)[valid][:, valid]
+        A = ((abs(A) + abs(A).T) > 0).astype(np.float64)
+        A.setdiag(0)
+        A.eliminate_zeros()
+        cur = log_resp.argmax(axis=1)
+        for _ in range(20):
+            onehot = np.zeros((n, K))
+            onehot[np.arange(n), cur] = 1.0
+            same_counts = np.asarray(A @ onehot)  # neighbours per label
+            new = (log_resp + mrf_beta * same_counts).argmax(axis=1)
+            if np.array_equal(new, cur):
+                break
+            cur = new
+        onehot = np.zeros((n, K))
+        onehot[np.arange(n), cur] = 1.0
+        log_resp = log_resp + mrf_beta * np.asarray(A @ onehot)
+    elif mrf_beta != 1.0 and adjacency is None:
+        warnings.warn("mrf_beta has no effect without `adjacency`.", UserWarning, stacklevel=2)
+
     probs = np.exp(log_resp - log_resp.max(axis=1, keepdims=True))
     probs /= probs.sum(axis=1, keepdims=True)
-    posterior_labels = probs.argmax(axis=1).astype(np.int64)
+    posterior_idx = probs.argmax(axis=1).astype(np.int64)
+    posterior_labels = label_values[posterior_idx].astype(np.int64)
 
-    # --- model comparison ---
+    # --- model comparison (never silently NaN) ---
+    waic_val, loo_val = float("nan"), float("nan")
+    errors = {}
     try:
-        waic_val = float(az.waic(trace, model).elpd_waic)
-    except Exception:
-        waic_val = float("nan")
-
+        waic_val = float(az.waic(trace).elpd_waic)
+    except (ValueError, TypeError, KeyError) as exc:
+        errors["waic"] = repr(exc)
+        warnings.warn(f"WAIC could not be computed: {exc!r}", RuntimeWarning, stacklevel=2)
     try:
-        loo_val = float(az.loo(trace, model).elpd_loo)
-    except Exception:
-        loo_val = float("nan")
+        loo_val = float(az.loo(trace).elpd_loo)
+    except (ValueError, TypeError, KeyError) as exc:
+        errors["loo"] = repr(exc)
+        warnings.warn(f"LOO could not be computed: {exc!r}", RuntimeWarning, stacklevel=2)
 
     # --- agreement ---
-    ari = float(skm.adjusted_rand_score(lab_valid, posterior_labels))
+    ari = float(skm.adjusted_rand_score(lab_valid, posterior_idx))
 
-    # --- credible intervals per cluster ---
+    # --- credible intervals per cluster (keyed by the original label) ---
     ci = {}
     for k in range(K):
         mu_k = trace.posterior["mu"].values[:, :, k, :]  # (chain, draw, d)
         mu_flat = mu_k.reshape(-1, d)
-        ci[k] = {
+        ci[int(label_values[k])] = {
             "mean": mu_flat.mean(axis=0),
             "hdi_3": np.percentile(mu_flat, 3, axis=0),
             "hdi_97": np.percentile(mu_flat, 97, axis=0),
@@ -2263,7 +2310,13 @@ def confirm_clusters_bayesian(
         loo=loo_val,
         cluster_credible_intervals=ci,
         agreement_with_input=ari,
-        metadata={"trace": trace, "model": model},
+        metadata={
+            "trace": trace,
+            "model": model,
+            "label_values": label_values,
+            "diagnostics": diagnostics,
+            "errors": errors,
+        },
     )
 
 
@@ -2449,7 +2502,11 @@ def auto_cluster(
                     "Skipping method '%s' (missing adjacency or unknown)",
                     method,
                 )
-        except Exception as e:
+        except (ValueError, ArithmeticError, np.linalg.LinAlgError, RuntimeError) as e:
+            # Keep the battery going, but never drop a method silently.
+            warnings.warn(
+                f"auto_cluster: method '{method}' failed: {e!r}", RuntimeWarning, stacklevel=2
+            )
             logger.error("Method '%s' failed: %s", method, e)
             continue
 
@@ -2548,6 +2605,7 @@ def cluster_vineyards(
                     if pairs_filtered
                     else np.empty((0, 2))
                 ),
+                "vertices": np.array([v for _, _, v in pairs_filtered], dtype=np.int64),
             }
             tick(1)
 
@@ -2637,6 +2695,7 @@ def _link_vines(diagrams, T):
 
     for si in range(T):
         bd = diagrams[si]["bd_array"]
+        verts = diagrams[si].get("vertices", -np.ones(bd.shape[0], dtype=np.int64))
 
         if bd.shape[0] == 0:
             prev_pts = None
@@ -2652,6 +2711,7 @@ def _link_vines(diagrams, T):
                             "scale_index": si,
                             "birth": float(bd[pi, 0]),
                             "death": float(bd[pi, 1]),
+                            "vertex": int(verts[pi]),
                         }
                     ]
                 )
@@ -2686,6 +2746,7 @@ def _link_vines(diagrams, T):
                     "scale_index": si,
                     "birth": float(bd[ci, 0]),
                     "death": float(bd[ci, 1]),
+                    "vertex": int(verts[ci]),
                 }
             )
             curr_vine_ids[ci] = vid
@@ -2699,6 +2760,7 @@ def _link_vines(diagrams, T):
                             "scale_index": si,
                             "birth": float(bd[ci, 0]),
                             "death": float(bd[ci, 1]),
+                            "vertex": int(verts[ci]),
                         }
                     ]
                 )
@@ -2950,8 +3012,12 @@ def cluster_tensor_decomposition(
             torch = _require_torch()
             tl.set_backend("pytorch")
             T_tl = tl.tensor(T_data, dtype=torch.float32, device=torch.device("cuda"))
-        except Exception:
-            logger.warning("GPU tensorly failed, falling back to numpy")
+        except (ImportError, RuntimeError) as exc:
+            warnings.warn(
+                f"GPU tensorly failed ({exc!r}); falling back to numpy.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
             tl.set_backend("numpy")
             T_tl = tl.tensor(T_data)
     else:
@@ -3102,7 +3168,7 @@ def denoise_joint_timevertex(
     n, T = H.shape
 
     # --- graph spectral basis ---
-    L = sp.csr_matrix(adjacency, dtype=np.float64)
+    L = _as_graph_laplacian(adjacency)
     from scipy.sparse.linalg import eigsh
 
     k = min(n_eigenvectors, n - 1)
@@ -3125,7 +3191,8 @@ def denoise_joint_timevertex(
 
     # --- apply filter ---
     H_filtered_joint = H_joint * G
-    H_filtered_graph = idct(H_filtered_joint, type=2, axis=1) / (2 * T)
+    # scipy.fft.idct(type=2) is already the exact inverse of dct(type=2).
+    H_filtered_graph = idct(H_filtered_joint, type=2, axis=1)
     H_filtered = U @ H_filtered_graph  # (N, T)
 
     return H_filtered
@@ -3170,7 +3237,7 @@ def cluster_joint_spectral(
     n, _T = H.shape
 
     # --- graph spectral basis ---
-    L = sp.csr_matrix(adjacency, dtype=np.float64)
+    L = _as_graph_laplacian(adjacency)
     from scipy.sparse.linalg import eigsh
 
     k = min(n_eigenvectors, n - 1)
@@ -3185,7 +3252,8 @@ def cluster_joint_spectral(
 
     band_edges = np.linspace(0, k, n_freq_bands + 1, dtype=int)
     energy_features = np.zeros((n, n_freq_bands), dtype=np.float64)
-
+    # Graph Fourier transform of every time-profile: H_hat = U^T H (k, T).
+    H_hat = U.T @ H
     with progress_simple("Joint spectral energy", total=n_freq_bands) as tick:
         for bi in range(n_freq_bands):
             j_start = band_edges[bi]
@@ -3193,13 +3261,10 @@ def cluster_joint_spectral(
             if j_end <= j_start:
                 tick(1)
                 continue
-
-            # energy of vertex i in this graph-frequency band
-            # = sum_j=j_start..j_end-1 sum_t |U[i,j] * H[i,t]|²
-            # = sum_j U[i,j]² * sum_t H[i,t]²
-            U_band_sq = np.sum(U[:, j_start:j_end] ** 2, axis=1)  # (N,)
-            H_energy = np.sum(H**2, axis=1)  # (N,)
-            energy_features[:, bi] = U_band_sq * H_energy
+            # Band-limited reconstruction H_b = U_b U_b^T H; the energy of
+            # vertex i in this graph-frequency band is sum_t H_b[i, t]^2.
+            H_band = U[:, j_start:j_end] @ H_hat[j_start:j_end]
+            energy_features[:, bi] = np.sum(H_band**2, axis=1)
             tick(1)
 
     # normalise
@@ -3524,7 +3589,7 @@ def cluster_multiview(
     skc = _require_sklearn_cluster()
 
     # --- View 1: Laplacian eigenfunctions ---
-    L = sp.csr_matrix(adjacency, dtype=np.float64)
+    L = _as_graph_laplacian(adjacency)
     from scipy.sparse.linalg import eigsh
 
     k_geo = min(n_eigenvectors_geo, n - 1)
@@ -3709,13 +3774,27 @@ def cluster_wavelet_coefficients(
     n, _T = H.shape
 
     # --- Laplacian eigenbasis ---
-    L = sp.csr_matrix(adjacency, dtype=np.float64)
+    L = _as_graph_laplacian(adjacency)
     from scipy.sparse.linalg import eigsh
 
     k = min(n_eigenvectors, n - 1)
     eigenvalues, U = eigsh(L, k=k, which="SM")
     eigenvalues = np.maximum(eigenvalues, 0.0)
-    lam_max = eigenvalues[-1] if eigenvalues[-1] > 0 else 1.0
+    from scipy.sparse.linalg import ArpackNoConvergence
+
+    # Hammond et al. set the scales from the true spectral upper bound
+    # lambda_max of the full Laplacian, not the largest of the k computed.
+    try:
+        lam_max = float(eigsh(L, k=1, which="LA", return_eigenvectors=False)[0])
+    except ArpackNoConvergence as exc:  # -> Gershgorin bound
+        warnings.warn(
+            f"lambda_max via ARPACK failed ({exc!r}); using a Gershgorin bound.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        lam_max = float(2.0 * np.max(np.abs(L.diagonal())))
+    if lam_max <= 0:
+        lam_max = 1.0
 
     # --- wavelet kernel ---
     scales = np.logspace(
@@ -3853,3 +3932,24 @@ def _resolve_backend(backend: str) -> bool:
         return torch.cuda.is_available()
     except ImportError:
         return False
+
+
+def _as_graph_laplacian(adjacency: SparseMatrix) -> sp.csr_matrix:
+    """Return a graph Laplacian from either an adjacency or a Laplacian.
+
+    A matrix whose rows sum to (numerically) zero is taken to already be a
+    Laplacian (e.g. the cotangent stiffness matrix, whose off-diagonals may
+    have either sign) and is returned unchanged. Otherwise it is treated as
+    a (non-negative) adjacency/affinity and converted to ``L = D - |A|``.
+    """
+    M = sp.csr_matrix(adjacency, dtype=np.float64)
+    row_sums = np.abs(np.asarray(M.sum(axis=1)).ravel())
+    scale = np.abs(M).sum(axis=1).A.ravel() + 1e-300
+    if np.all(row_sums <= 1e-8 * scale):
+        return M
+    off = M - sp.diags(M.diagonal())
+    off.eliminate_zeros()
+    A = abs(off)
+    A = (A + A.T) * 0.5
+    deg = np.asarray(A.sum(axis=1)).ravel()
+    return (sp.diags(deg) - A).tocsr()

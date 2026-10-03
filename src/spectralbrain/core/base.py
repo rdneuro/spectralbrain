@@ -48,6 +48,7 @@ from spectralbrain.runtime import (
     SparseMatrix,
     Vertices,
     get_logger,
+    resolve_seed,
 )
 
 logger = get_logger(__name__)
@@ -582,7 +583,7 @@ def procrustes_align(
     H = src.T @ tgt  # (3, 3)
     U, _S, Vt = np.linalg.svd(H)
     d = np.linalg.det(Vt.T @ U.T)
-    D = np.diag([1, 1, np.sign(d)])  # fix reflection
+    D = np.diag([1.0, 1.0, 1.0 if d >= 0 else -1.0])  # fix reflection
     R = Vt.T @ D @ U.T  # (3, 3)
 
     # Optimal scale.
@@ -613,7 +614,8 @@ def farthest_point_sampling(
     n_samples : int
         Number of points to select.
     seed : int, optional
-        RNG seed for the initial point.
+        RNG seed for the initial point.  ``None`` falls back to the
+        library-wide seed set by :func:`~spectralbrain.utils.seed_everything`.
 
     Returns
     -------
@@ -631,7 +633,7 @@ def farthest_point_sampling(
     if n_samples >= N:
         return points.copy(), np.arange(N)
 
-    rng = np.random.default_rng(seed)
+    rng = np.random.default_rng(resolve_seed(seed))
     indices = np.zeros(n_samples, dtype=np.int64)
     indices[0] = rng.integers(N)
 
@@ -703,6 +705,28 @@ def radius_search(
     return tree.query_ball_point(q, r=radius, workers=-1)
 
 
+def _knn_excluding_self(points: Points, k: int) -> tuple[np.ndarray, np.ndarray]:
+    """kNN self-query returning the *k* nearest **other** points.
+
+    Queries ``k + 1`` neighbours and drops the query point itself (which
+    also handles exact duplicates robustly by removing the self index
+    wherever it appears in the row).
+    """
+    N = points.shape[0]
+    kq = min(k + 1, N)
+    distances, indices = knn_search(points, k=kq)
+    distances = np.asarray(distances).reshape(N, kq)
+    indices = np.asarray(indices).reshape(N, kq)
+    self_idx = np.arange(N)[:, None]
+    is_self = indices == self_idx
+    # Drop exactly one entry per row: the self index if present, else the last.
+    drop = np.where(is_self.any(axis=1), is_self.argmax(axis=1), kq - 1)
+    keep = np.ones((N, kq), dtype=bool)
+    keep[np.arange(N), drop] = False
+    k_eff = kq - 1
+    return distances[keep].reshape(N, k_eff), indices[keep].reshape(N, k_eff)
+
+
 def compute_adjacency_from_knn(
     points: Points,
     k: int = 20,
@@ -722,18 +746,22 @@ def compute_adjacency_from_knn(
     Returns
     -------
     SparseMatrix, shape (N, N)
-        Binary adjacency.
+        Binary adjacency (no self-loops; each point linked to its *k*
+        nearest *other* points).
     """
     import scipy.sparse as sp
 
-    _distances, indices = knn_search(points, k=k)
+    _distances, indices = _knn_excluding_self(points, k)
     N = points.shape[0]
+    k_eff = indices.shape[1]
 
-    rows = np.repeat(np.arange(N), k)
+    rows = np.repeat(np.arange(N), k_eff)
     cols = indices.ravel()
-    data = np.ones(N * k, dtype=np.float64)
+    data = np.ones(N * k_eff, dtype=np.float64)
 
     A = sp.csr_matrix((data, (rows, cols)), shape=(N, N))
+    A.setdiag(0)
+    A.eliminate_zeros()
     if symmetric:
         A = A.maximum(A.T)
     return A
@@ -807,7 +835,11 @@ def marching_cubes(
     affine : ndarray, shape (4, 4)
         Voxel-to-world affine.
     level : float, optional
-        Iso-surface level.  Default 0.5 (for binary masks).
+        Iso-surface level.  If ``None`` (default) the volume is first
+        **binarised** (``volume != 0``) and the 0.5 iso-surface of the mask
+        is extracted, so label values (e.g. 17) do not shift the surface.
+        If given explicitly, the iso-surface of the raw scalar volume at
+        that level is extracted (intensity / probability maps).
     step_size : int
         Subsampling step for speed.
 
@@ -816,7 +848,9 @@ def marching_cubes(
     vertices : ndarray, shape (N, 3)
         World-space coordinates.
     faces : ndarray, shape (F, 3)
-        Triangle indices, 0-indexed.
+        Triangle indices, 0-indexed, wound counter-clockwise when viewed
+        from outside (outward normals, positive signed volume for closed
+        surfaces) for any affine, including reflecting ones (det < 0).
     """
     try:
         from skimage.measure import marching_cubes as _mc
@@ -825,15 +859,26 @@ def marching_cubes(
             "scikit-image is required for marching cubes.\n  pip install scikit-image"
         ) from exc
 
+    affine = np.asarray(affine, dtype=np.float64)
     if level is None:
+        vol = (np.asarray(volume) != 0).astype(np.float64)
         level = 0.5
+    else:
+        vol = np.asarray(volume, dtype=np.float64)
 
-    vol = volume.astype(np.float64)
     verts_vox, faces, _normals, _values = _mc(
         vol,
         level=level,
         step_size=step_size,
     )
+
+    # skimage's default ``gradient_direction="descent"`` (inside = higher
+    # values) yields triangles wound *inward* in voxel index space; reverse
+    # them so normals point outward.  A reflecting affine (det < 0, e.g.
+    # FreeSurfer LIA) flips handedness again.
+    faces = faces[:, ::-1]
+    if np.linalg.det(affine[:3, :3]) < 0:
+        faces = faces[:, ::-1]
 
     # Transform to world coordinates.
     ones = np.ones((verts_vox.shape[0], 1))
@@ -842,7 +887,7 @@ def marching_cubes(
 
     return (
         np.asarray(verts_world, dtype=np.float64),
-        np.asarray(faces, dtype=np.int64),
+        np.ascontiguousarray(faces, dtype=np.int64),
     )
 
 
@@ -905,8 +950,8 @@ def estimate_point_density(
     density : ndarray, shape (N,)
         Points per mm³ (approximate).
     """
-    distances, _ = knn_search(points, k=k)
-    r_k = distances[:, -1]  # (N,) distance to k-th NN
+    distances, _ = _knn_excluding_self(points, k)
+    r_k = distances[:, -1]  # (N,) distance to k-th NN (self excluded)
     r_k = np.clip(r_k, 1e-10, None)  # avoid div by zero
     volume_k = (4 / 3) * np.pi * r_k**3
     return k / volume_k

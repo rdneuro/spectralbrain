@@ -115,14 +115,20 @@ def _require_pymeshfix() -> Any:
 # ======================================================================
 # §1  Volume → scalar field
 # ======================================================================
-def _binarize(volume: np.ndarray, label: int | Sequence[int] | None,
-              level: float) -> np.ndarray:
+def _binarize(volume: np.ndarray, label: int | Sequence[int] | None, level: float) -> np.ndarray:
     """Return a boolean mask from a label volume or an intensity threshold."""
     volume = np.asarray(volume)
     if label is None:
         return volume > level
     labels = [label] if np.isscalar(label) else list(label)
     return np.isin(volume, labels)
+
+
+def _voxel_sizes(affine: np.ndarray) -> np.ndarray:
+    """Voxel edge lengths (mm) encoded in a voxel-to-world affine."""
+    vs = np.linalg.norm(np.asarray(affine, float)[:3, :3], axis=0)
+    vs[~np.isfinite(vs) | (vs <= 0)] = 1.0
+    return vs
 
 
 def _mask_to_field(
@@ -132,6 +138,7 @@ def _mask_to_field(
     presmooth_vox: float = 0.5,
     sigma_vox: float = 0.6,
     pad: int = 4,
+    voxel_size: Sequence[float] | np.ndarray | None = None,
 ) -> tuple[np.ndarray, float, int]:
     """Convert a binary mask into a smooth scalar field for marching cubes.
 
@@ -143,13 +150,20 @@ def _mask_to_field(
         Robust for thin, curved structures. ``"gaussian"`` — Gaussian-smoothed
         occupancy in [0, 1], iso-level 0.5.
     presmooth_vox : float
-        Gaussian σ (voxels) on the binary occupancy before the SDF/occupancy
-        step. ``0`` disables.
+        Gaussian σ on the binary occupancy before the SDF/occupancy step, in
+        units of the *finest* voxel edge. ``0`` disables.
     sigma_vox : float
-        Gaussian σ (voxels) applied to the field itself. ``0`` disables.
+        Gaussian σ applied to the field itself, in units of the finest voxel
+        edge. ``0`` disables.
     pad : int
         Zero-padding (voxels) on every side so the surface closes even when the
         structure touches the volume border (needed for watertightness).
+    voxel_size : sequence of 3 float, optional
+        Physical voxel edge lengths (mm). When given, the distance transform
+        and both Gaussian kernels are made isotropic **in millimetres**
+        (anisotropic voxels are no longer smoothed/distanced more along the
+        coarse axis). ``None`` (or isotropic voxels) reproduces the
+        voxel-unit behaviour exactly.
 
     Returns
     -------
@@ -164,26 +178,63 @@ def _mask_to_field(
     if pad > 0:
         mask = np.pad(mask, pad, mode="constant", constant_values=False)
 
+    if voxel_size is None:
+        rel = np.ones(3)
+    else:
+        vs = np.asarray(voxel_size, float).reshape(3)
+        rel = vs / vs.min()  # voxel edge in units of the finest edge
+
+    def _sig(s: float) -> np.ndarray:
+        return float(s) / rel  # per-axis σ (voxels) for an isotropic mm σ
+
     occ = mask.astype(np.float64)
     if presmooth_vox and presmooth_vox > 0:
-        occ = ndi.gaussian_filter(occ, presmooth_vox)
+        occ = ndi.gaussian_filter(occ, _sig(presmooth_vox))
 
     if mode == "gaussian":
-        field = ndi.gaussian_filter(occ, sigma_vox) if sigma_vox > 0 else occ
+        field = ndi.gaussian_filter(occ, _sig(sigma_vox)) if sigma_vox > 0 else occ
         return field, 0.5, pad
 
     if mode == "sdf":
         binm = occ >= 0.5
         if not binm.any():
             raise ValueError("Mask is empty after smoothing; cannot build an SDF.")
-        d_in = ndi.distance_transform_edt(binm)
-        d_out = ndi.distance_transform_edt(~binm)
+        d_in = ndi.distance_transform_edt(binm, sampling=rel)
+        d_out = ndi.distance_transform_edt(~binm, sampling=rel)
         sdf = d_out - d_in  # positive outside, negative inside
         if sigma_vox and sigma_vox > 0:
-            sdf = ndi.gaussian_filter(sdf, sigma_vox)
+            sdf = ndi.gaussian_filter(sdf, _sig(sigma_vox))
         return sdf, 0.0, pad
 
     raise ValueError(f"Unknown field mode {mode!r}; use 'sdf' or 'gaussian'.")
+
+
+def _orient_faces_outward(
+    field: np.ndarray,
+    verts_vox: np.ndarray,
+    faces: np.ndarray,
+    *,
+    inside_low: bool,
+) -> np.ndarray:
+    """Return *faces* wound so normals point out of the object (voxel space).
+
+    The outward direction is read from the field itself (``+∇f`` when the
+    inside has the low values, as in an SDF; ``-∇f`` when the inside is high,
+    as in an occupancy map). A majority vote over faces makes the decision
+    robust to noise and works for open (non-watertight) surfaces too.
+    """
+    if faces.size == 0:
+        return faces
+    grads = np.gradient(np.asarray(field, np.float64))
+    tri = verts_vox[faces]  # (F, 3, 3)
+    cen = tri.mean(axis=1)
+    normal = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
+    coords = cen.T
+    g = np.stack([ndi.map_coordinates(gi, coords, order=1, mode="nearest") for gi in grads], 1)
+    if not inside_low:
+        g = -g
+    score = np.sign(np.einsum("ij,ij->i", normal, g)).sum()
+    return faces[:, ::-1].copy() if score < 0 else faces
 
 
 def _marching_cubes_field(
@@ -191,23 +242,44 @@ def _marching_cubes_field(
     level: float,
     affine: np.ndarray,
     pad: int,
+    *,
+    inside_low: bool | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Marching cubes on a scalar field → world-space ``(vertices, faces)``.
 
     Runs in voxel space (spacing 1), removes the padding offset, then maps to
     world coordinates through the affine — mirroring the native path so that
     anisotropic voxels and orientation are handled identically.
+
+    Faces are wound so that normals point **outward** in world space,
+    independent of the sign of ``det(affine)`` (e.g. FreeSurfer LIA volumes
+    have a negative determinant, which mirrors the geometry and would
+    otherwise flip every normal inward).
+
+    Parameters
+    ----------
+    inside_low : bool, optional
+        ``True`` if the object has field values *below* ``level`` (SDF),
+        ``False`` if above (occupancy). Default: inferred from ``level``
+        (``level == 0`` → SDF convention).
     """
     from skimage.measure import marching_cubes as _mc
 
-    verts_vox, faces, _normals, _values = _mc(
-        np.asarray(field, np.float64), level=level, method="lewiner"
-    )
+    field = np.asarray(field, np.float64)
+    if inside_low is None:
+        inside_low = level == 0.0
+    verts_vox, faces, _normals, _values = _mc(field, level=level, method="lewiner")
+    faces = _orient_faces_outward(field, verts_vox, np.asarray(faces), inside_low=inside_low)
     verts_vox = verts_vox - float(pad)
     ones = np.ones((verts_vox.shape[0], 1))
-    verts_world = (np.asarray(affine, float) @ np.hstack([verts_vox, ones]).T).T[:, :3]
-    return (np.ascontiguousarray(verts_world, dtype=np.float64),
-            np.ascontiguousarray(faces, dtype=np.int64))
+    A = np.asarray(affine, float)
+    verts_world = (A @ np.hstack([verts_vox, ones]).T).T[:, :3]
+    if np.linalg.det(A[:3, :3]) < 0:  # mirroring affine reverses the winding
+        faces = faces[:, ::-1]
+    return (
+        np.ascontiguousarray(verts_world, dtype=np.float64),
+        np.ascontiguousarray(faces, dtype=np.int64),
+    )
 
 
 # ======================================================================
@@ -215,8 +287,9 @@ def _marching_cubes_field(
 # ======================================================================
 def _to_trimesh(verts: np.ndarray, faces: np.ndarray) -> _trimesh_t.Trimesh:
     trimesh = _require_trimesh()
-    return trimesh.Trimesh(vertices=np.asarray(verts, float),
-                           faces=np.asarray(faces, np.int64), process=False)
+    return trimesh.Trimesh(
+        vertices=np.asarray(verts, float), faces=np.asarray(faces, np.int64), process=False
+    )
 
 
 def _largest_component(mesh: _trimesh_t.Trimesh) -> _trimesh_t.Trimesh:
@@ -257,8 +330,9 @@ def _make_watertight(mesh: _trimesh_t.Trimesh, info: dict[str, Any]) -> _trimesh
     return _to_trimesh(mf.v, mf.f)
 
 
-def _taubin(mesh: _trimesh_t.Trimesh, iterations: int,
-            lamb: float, nu: float) -> _trimesh_t.Trimesh:
+def _taubin(
+    mesh: _trimesh_t.Trimesh, iterations: int, lamb: float, nu: float
+) -> _trimesh_t.Trimesh:
     """Volume-preserving Taubin smoothing (trimesh)."""
     trimesh = _require_trimesh()
     return trimesh.smoothing.filter_taubin(mesh, lamb=lamb, nu=nu, iterations=iterations)
@@ -269,13 +343,14 @@ def _target_n_points(area_mm2: float, edge_mm: float) -> int:
 
     ``n_faces ≈ Area / ((√3/4)·edge²)`` and ``n_verts ≈ n_faces / 2``.
     """
-    tri_area = (np.sqrt(3.0) / 4.0) * edge_mm ** 2
+    tri_area = (np.sqrt(3.0) / 4.0) * edge_mm**2
     n_faces = area_mm2 / max(tri_area, 1e-9)
     return int(max(200, round(n_faces / 2.0)))
 
 
-def _isotropic_remesh(mesh: _trimesh_t.Trimesh, n_points: int,
-                      info: dict[str, Any]) -> _trimesh_t.Trimesh:
+def _isotropic_remesh(
+    mesh: _trimesh_t.Trimesh, n_points: int, info: dict[str, Any]
+) -> _trimesh_t.Trimesh:
     """Isotropic remeshing via ACVD (pyacvd)."""
     pv, pyacvd = _require_pyacvd()
     pd = pv.wrap(mesh)  # trimesh -> pyvista PolyData
@@ -364,8 +439,12 @@ def refine_mesh(
     if faces.ndim != 2 or faces.shape[1] != 3:
         raise ValueError(f"faces must be (F, 3), got {faces.shape}")
 
-    info: dict[str, Any] = {"closed": closed, "keep_largest": keep_largest,
-                            "watertight": watertight, "remesh": None}
+    info: dict[str, Any] = {
+        "closed": closed,
+        "keep_largest": keep_largest,
+        "watertight": watertight,
+        "remesh": None,
+    }
 
     mesh = _to_trimesh(verts, faces)
     if keep_largest:
@@ -389,8 +468,13 @@ def refine_mesh(
     out_f = np.asarray(mesh.faces, np.int64)
     info["n_vertices"] = len(out_v)
     info["n_faces"] = len(out_f)
-    logger.info("refine_mesh: %d verts, %d faces (closed=%s, remesh=%s)",
-                len(out_v), len(out_f), closed, info["remesh"])
+    logger.info(
+        "refine_mesh: %d verts, %d faces (closed=%s, remesh=%s)",
+        len(out_v),
+        len(out_f),
+        closed,
+        info["remesh"],
+    )
     if return_info:
         return out_v, out_f, info
     return out_v, out_f
@@ -442,7 +526,9 @@ def volume_to_mesh(
         ``"gaussian"`` when ``closed=False`` (an SDF iso-surface is ill-suited
         to open sheets).
     presmooth_vox, sigma_vox, pad :
-        Field-construction parameters (see :func:`_mask_to_field`).
+        Field-construction parameters (see :func:`_mask_to_field`). The two
+        σ values are in units of the finest voxel edge and are applied
+        isotropically in millimetres (voxel sizes are read from *affine*).
     return_info : bool
         If True, also return a provenance dict.
     **refine_kwargs
@@ -470,12 +556,19 @@ def volume_to_mesh(
 
     # ---- raw / legacy path: faithful plain marching cubes -----------------
     if raw:
-        field = _binarize(volume, label, level).astype(np.float64) if label is not None \
+        field = (
+            _binarize(volume, label, level).astype(np.float64)
+            if label is not None
             else volume.astype(np.float64)
+        )
         lvl = 0.5 if label is not None else level
         verts, faces = _raw_marching_cubes(field, affine, level=lvl, step_size=step_size)
-        info = {"method": "raw", "level": lvl, "step_size": step_size,
-                "backend": "spectralbrain.core.marching_cubes"}
+        info = {
+            "method": "raw",
+            "level": lvl,
+            "step_size": step_size,
+            "backend": "spectralbrain.core.marching_cubes",
+        }
         if return_info:
             return verts, faces, info
         return verts, faces
@@ -487,12 +580,16 @@ def volume_to_mesh(
 
     mode: FieldMode = "gaussian" if not closed else field_mode
     field, iso, pad_used = _mask_to_field(
-        mask, mode=mode, presmooth_vox=presmooth_vox, sigma_vox=sigma_vox, pad=pad
+        mask,
+        mode=mode,
+        presmooth_vox=presmooth_vox,
+        sigma_vox=sigma_vox,
+        pad=pad,
+        voxel_size=_voxel_sizes(affine),
     )
-    verts, faces = _marching_cubes_field(field, iso, affine, pad_used)
+    verts, faces = _marching_cubes_field(field, iso, affine, pad_used, inside_low=(mode == "sdf"))
 
-    v, f, info = refine_mesh(verts, faces, closed=closed, return_info=True,
-                             **refine_kwargs)
+    v, f, info = refine_mesh(verts, faces, closed=closed, return_info=True, **refine_kwargs)
     info.update({"method": "improved", "field_mode": mode})
     if return_info:
         return v, f, info

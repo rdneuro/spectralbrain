@@ -28,10 +28,10 @@ columns come from sparse mat-vecs.
 Concatenating the SIWKS of the landmarks yields a compact per-subject global
 descriptor with strong statistical power and clear anatomical localisation.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional
 
 import numpy as np
 import scipy.sparse as sp
@@ -124,9 +124,7 @@ def compute_si_wks(
     -------
     DescriptorMatrix, shape (N, E)
     """
-    wks = compute_wks(
-        decomp, e_values, n_energies=n_energies, sigma=sigma, normalize=False
-    )
+    wks = compute_wks(decomp, e_values, n_energies=n_energies, sigma=sigma, normalize=False)
     lam = np.asarray(decomp.eigenvalues, dtype=float)
     lam_K = float(lam[lam > 1e-10][-1])  # largest non-trivial eigenvalue
     return np.asarray(wks, dtype=float) / lam_K
@@ -134,7 +132,7 @@ def compute_si_wks(
 
 def _adjacency_from_decomp(
     decomp: SpectralDecomposition,
-    faces: Optional[np.ndarray],
+    faces: np.ndarray | None,
     n_vertices: int,
 ) -> sp.csr_matrix:
     """1-ring adjacency: from ``faces`` if given, else from the stiffness pattern."""
@@ -143,8 +141,7 @@ def _adjacency_from_decomp(
         e = np.vstack([F[:, [0, 1]], F[:, [1, 2]], F[:, [2, 0]]])
         rows = np.concatenate([e[:, 0], e[:, 1]])
         cols = np.concatenate([e[:, 1], e[:, 0]])
-        A = sp.csr_matrix((np.ones(rows.shape[0]), (rows, cols)),
-                          shape=(n_vertices, n_vertices))
+        A = sp.csr_matrix((np.ones(rows.shape[0]), (rows, cols)), shape=(n_vertices, n_vertices))
     else:
         if decomp.stiffness is None:
             raise ValueError(
@@ -204,7 +201,7 @@ def heat_flow_entropy(
         lp, pp = lam[pos], phi[:, pos]
         if t is None:
             t = float(np.exp(0.5 * (np.log(1.0 / lp[-1]) + np.log(1.0 / lp[0]))))
-        h = (pp ** 2) @ np.exp(-lp * t)
+        h = (pp**2) @ np.exp(-lp * t)
     else:
         h = np.asarray(heat, dtype=float)
 
@@ -212,7 +209,7 @@ def heat_flow_entropy(
     hfe = np.zeros(n)
     indptr, indices = A.indptr, A.indices
     for i in range(n):
-        nbr = indices[indptr[i]:indptr[i + 1]]
+        nbr = indices[indptr[i] : indptr[i + 1]]
         if nbr.size == 0:
             continue
         d = np.abs(h[nbr] - h[i])
@@ -274,14 +271,14 @@ def _pivoted_cholesky(kernel: _MGPKernel, n_landmarks: int, jitter: float):
         piv = d[j]
         landmarks[l], scores[l], chosen[j] = j, piv, True
         if piv <= jitter:
-            landmarks, scores, G = landmarks[:l + 1], scores[:l + 1], G[:, :l + 1]
+            landmarks, scores, G = landmarks[: l + 1], scores[: l + 1], G[:, : l + 1]
             break
         col = kernel.column(j)
         if l > 0:
             col = col - G[:, :l] @ G[j, :l]
         g = col / np.sqrt(piv)
         G[:, l] = g
-        d = np.maximum(d - g ** 2, 0.0)
+        d = np.maximum(d - g**2, 0.0)
     return landmarks, d, scores
 
 
@@ -335,8 +332,11 @@ def mgp_landmarks(
     landmarks, residual_var, scores = _pivoted_cholesky(kernel, n_landmarks, jitter)
 
     logger.info(
-        "M-GP landmarking: selected %d landmarks from %d vertices "
-        "(SIWKS E=%d, knn=%d)", landmarks.shape[0], S.shape[0], n_energies, knn,
+        "M-GP landmarking: selected %d landmarks from %d vertices (SIWKS E=%d, knn=%d)",
+        landmarks.shape[0],
+        S.shape[0],
+        n_energies,
+        knn,
     )
 
     return MGPLandmarkResult(
