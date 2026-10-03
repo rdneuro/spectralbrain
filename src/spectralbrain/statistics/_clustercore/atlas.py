@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import logging
 from collections import deque
-from typing import Dict, List, Optional, Sequence, Tuple
+from collections.abc import Sequence
 
 import numpy as np
 
@@ -38,7 +38,7 @@ logger = logging.getLogger("spectralbrain.statistics._clustercore")
 
 
 def compare_partitions(labels_a: np.ndarray, labels_b: np.ndarray,
-                       mask: Optional[np.ndarray] = None) -> Dict[str, float]:
+                       mask: np.ndarray | None = None) -> dict[str, float]:
     """ARI, AMI, NMI and variation of information between two labellings.
 
     Parameters
@@ -59,8 +59,12 @@ def compare_partitions(labels_a: np.ndarray, labels_b: np.ndarray,
     partitions, or interpret against a size-matched null (see
     :func:`cluster_atlas_concordance`).
     """
-    from sklearn.metrics import (adjusted_rand_score, adjusted_mutual_info_score,
-                                 normalized_mutual_info_score)
+    from sklearn.metrics import (
+        adjusted_mutual_info_score,
+        adjusted_rand_score,
+        normalized_mutual_info_score,
+    )
+
     from .partition import variation_of_information
 
     a = np.asarray(labels_a)
@@ -79,7 +83,7 @@ def compare_partitions(labels_a: np.ndarray, labels_b: np.ndarray,
 
 
 def parcel_overlap(cluster_labels: np.ndarray, atlas_labels: np.ndarray,
-                   background: Optional[int] = None) -> Dict[str, object]:
+                   background: int | None = None) -> dict[str, object]:
     """Dice/Jaccard overlap between data-driven clusters and atlas ROIs.
 
     Parameters
@@ -234,7 +238,7 @@ def random_parcellation(adjacency_list: Sequence[np.ndarray], n_parcels: int,
 def homogeneity_vs_null(features: np.ndarray, labels: np.ndarray,
                         adjacency_list: Sequence[np.ndarray], n_null: int = 100,
                         method: str = "correlation", seed: int = 0,
-                        progress: bool = False) -> Dict[str, float]:
+                        progress: bool = False) -> dict[str, float]:
     """Observed within-parcel homogeneity vs a size-matched random-parcellation null.
 
     Returns
@@ -254,20 +258,27 @@ def homogeneity_vs_null(features: np.ndarray, labels: np.ndarray,
             rp = random_parcellation(adjacency_list, n_parcels, seed=seed + i)
             null[i] = spectral_homogeneity(features, rp, method=method)
             adv()
-    null_mean, null_std = float(np.nanmean(null)), float(np.nanstd(null))
+    finite = np.isfinite(null)
+    if not finite.all():
+        import warnings
+        warnings.warn(f"homogeneity_vs_null: {int((~finite).sum())} null draw(s) were "
+                      "non-finite and are excluded.", RuntimeWarning, stacklevel=2)
+    null_f = null[finite]
+    null_mean = float(np.mean(null_f)) if null_f.size else float("nan")
+    null_std = float(np.std(null_f)) if null_f.size else float("nan")
     z = (observed - null_mean) / null_std if null_std > 0 else float("nan")
-    p = float((np.sum(null >= observed) + 1) / (n_null + 1))
+    p = float((np.sum(null_f >= observed) + 1) / (null_f.size + 1))
     return {"observed": float(observed), "null_mean": null_mean,
             "null_std": null_std, "z": float(z), "p": p, "n_parcels": n_parcels}
 
 
 def cluster_atlas_concordance(cluster_labels: np.ndarray, atlas_labels: np.ndarray,
-                              adjacency_list: Optional[Sequence[np.ndarray]] = None,
-                              distance: Optional[np.ndarray] = None,
-                              coords: Optional[np.ndarray] = None,
-                              background: Optional[int] = None,
+                              adjacency_list: Sequence[np.ndarray] | None = None,
+                              distance: np.ndarray | None = None,
+                              coords: np.ndarray | None = None,
+                              background: int | None = None,
                               n_null: int = 100, seed: int = 0,
-                              progress: bool = False) -> Dict[str, object]:
+                              progress: bool = False) -> dict[str, object]:
     """Full cluster-vs-atlas concordance report with a size-matched null.
 
     Computes ARI/AMI/NMI/VI and mean best-Dice between the data-driven clusters
@@ -298,8 +309,9 @@ def cluster_atlas_concordance(cluster_labels: np.ndarray, atlas_labels: np.ndarr
         ``metrics`` (compare_partitions), ``overlap`` (parcel_overlap summary),
         ``spARI`` (if available), and ``ari_null`` (observed/null_mean/z/p).
     """
-    from ._progress import progress_bar
     from sklearn.metrics import adjusted_rand_score
+
+    from ._progress import progress_bar
 
     cl = np.asarray(cluster_labels)
     at = np.asarray(atlas_labels)
@@ -309,7 +321,7 @@ def cluster_atlas_concordance(cluster_labels: np.ndarray, atlas_labels: np.ndarr
 
     metrics = compare_partitions(cl, at, mask=mask)
     overlap = parcel_overlap(cl, at, background=background)
-    report: Dict[str, object] = {
+    report: dict[str, object] = {
         "metrics": metrics,
         "overlap": {"mean_best_dice": overlap["mean_best_dice"],
                     "n_clusters": int(overlap["cluster_ids"].size),
@@ -325,7 +337,8 @@ def cluster_atlas_concordance(cluster_labels: np.ndarray, atlas_labels: np.ndarr
 
     if adjacency_list is not None:
         obs = float(adjusted_rand_score(cl[mask], at[mask]))
-        n_parcels = int(np.unique(cl[mask]).size)
+        # Noise (-1) is not a parcel: match the number of real clusters.
+        n_parcels = int(np.unique(cl[mask & (cl >= 0)]).size)
         null = np.empty(n_null)
         with progress_bar("ARI null", total=n_null, disable=not progress) as adv:
             for i in range(n_null):
@@ -342,7 +355,7 @@ def cluster_atlas_concordance(cluster_labels: np.ndarray, atlas_labels: np.ndarr
 
 
 def aggregate_across_subjects(values: Sequence[float], n_boot: int = 5000,
-                              ci: float = 0.95, seed: int = 0) -> Dict[str, float]:
+                              ci: float = 0.95, seed: int = 0) -> dict[str, float]:
     """Median + bootstrap CI of a per-subject metric (clinical-cohort summary).
 
     For a small clinical cohort, prefer per-subject cluster-vs-atlas comparison

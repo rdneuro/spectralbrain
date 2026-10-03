@@ -11,8 +11,10 @@ Fred & Jain (2005), Combining multiple clusterings using evidence accumulation,
 IEEE TPAMI 27(6):835-850.
 """
 from __future__ import annotations
+
 import logging
-from typing import List, Optional, Sequence
+from collections.abc import Sequence
+
 import numpy as np
 
 logger = logging.getLogger("spectralbrain.statistics._clustercore")
@@ -36,13 +38,17 @@ def co_association_matrix(partitions: Sequence[np.ndarray]) -> np.ndarray:
         raise ValueError("All partitions must have the same length.")
     co = np.zeros((n, n), dtype=np.float64)
     for p in partitions:
-        co += (p[:, None] == p[None, :]).astype(np.float64)
+        # Noise (label < 0) never co-clusters with anything, itself included
+        # only on the diagonal.
+        same = (p[:, None] == p[None, :]) & (p[:, None] >= 0)
+        co += same.astype(np.float64)
     co /= len(partitions)
+    np.fill_diagonal(co, 1.0)
     return co
 
 
-def consensus_partition(co_association: np.ndarray, n_clusters: Optional[int] = None,
-                        connectivity=None, threshold: Optional[float] = None,
+def consensus_partition(co_association: np.ndarray, n_clusters: int | None = None,
+                        connectivity=None, threshold: float | None = None,
                         ) -> np.ndarray:
     """Derive a consensus partition from a co-association matrix.
 
@@ -86,9 +92,14 @@ def stability_per_vertex(co_association: np.ndarray, labels: np.ndarray) -> np.n
     stab = np.zeros(labels.shape[0])
     for c in np.unique(labels):
         idx = np.where(labels == c)[0]
-        if idx.size > 1:
+        if c < 0:
+            stab[idx] = np.nan  # noise vertices have no cluster to be stable in
+        elif idx.size > 1:
             block = co[np.ix_(idx, idx)]
             stab[idx] = (block.sum(axis=1) - 1.0) / (idx.size - 1)
         else:
-            stab[idx] = 1.0
+            # A singleton's stability is how often it was *not* merged with
+            # anything else: 1 - its mean co-association with other vertices.
+            others = np.delete(co[idx[0]], idx[0])
+            stab[idx] = 1.0 - float(others.mean()) if others.size else 1.0
     return stab

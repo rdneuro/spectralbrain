@@ -22,6 +22,7 @@ Sections
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -305,7 +306,8 @@ def tfce(
     Returns
     -------
     ndarray, shape (N,)
-        TFCE-enhanced statistic map.
+        Signed TFCE-enhanced statistic map: positive and negative tails are
+        enhanced separately (never merged) and the sign of the input is kept.
 
     References
     ----------
@@ -316,60 +318,72 @@ def tfce(
     from scipy.sparse.csgraph import connected_components
 
     adj = sp.csr_matrix(adjacency)
-    stat = np.abs(statistic_map)
-    max_stat = stat.max()
-    if max_stat < 1e-10:
-        return np.zeros_like(stat)
+    stat_full = np.asarray(statistic_map, dtype=np.float64)
 
-    thresholds = np.linspace(0, max_stat, n_steps + 1)[1:]
-    dh = thresholds[1] - thresholds[0] if len(thresholds) > 1 else max_stat
-    tfce_map = np.zeros_like(stat, dtype=np.float64)
+    def _tfce_one_sign(stat: np.ndarray) -> np.ndarray:
+        """TFCE of a non-negative map (one tail)."""
+        out = np.zeros_like(stat, dtype=np.float64)
+        max_stat = stat.max() if stat.size else 0.0
+        if max_stat < 1e-10:
+            return out
+        thresholds = np.linspace(0, max_stat, n_steps + 1)[1:]
+        dh = thresholds[1] - thresholds[0] if len(thresholds) > 1 else max_stat
+        for h in thresholds:
+            mask = stat >= h
+            if not mask.any():
+                continue
+            idx = np.where(mask)[0]
+            sub_adj = adj[idx][:, idx]
+            n_comp, comp_labels = connected_components(sub_adj, directed=False)
+            extents = np.bincount(comp_labels, minlength=n_comp)
+            out[idx] += (extents[comp_labels] ** E) * (h**H) * dh
+        return out
 
-    for h in thresholds:
-        # Supra-threshold mask.
-        mask = stat >= h
-        if not mask.any():
-            continue
-
-        # Find connected components in supra-threshold subgraph.
-        sub_adj = adj[mask][:, mask]
-        n_comp, comp_labels = connected_components(sub_adj, directed=False)
-
-        # Cluster extent for each vertex.
-        for c in range(n_comp):
-            c_mask = comp_labels == c
-            extent = c_mask.sum()
-            # Add contribution: e^E · h^H · dh.
-            vertices_in_cluster = np.where(mask)[0][c_mask]
-            tfce_map[vertices_in_cluster] += (extent**E) * (h**H) * dh
-
-    return tfce_map
+    # Positive and negative tails are enhanced separately so that adjacent
+    # vertices of opposite sign are never merged into one cluster.
+    pos = _tfce_one_sign(np.clip(stat_full, 0.0, None))
+    neg = _tfce_one_sign(np.clip(-stat_full, 0.0, None))
+    return pos - neg
 
 
 def _correct_pvalues(
     p_values: np.ndarray,
     method: str,
 ) -> np.ndarray:
-    """Apply multiple comparison correction."""
+    """Apply multiple comparison correction (NaN p-values are left as NaN
+    and excluded from the family size)."""
+    p_values = np.asarray(p_values, dtype=np.float64)
     if method == "none":
         return p_values.copy()
     elif method == "bonferroni":
-        return np.minimum(p_values * len(p_values), 1.0)
+        m = int(np.isfinite(p_values).sum())
+        return np.minimum(p_values * max(m, 1), 1.0)
     elif method == "fdr":
         return _fdr_bh(p_values)
     raise ValueError(f"Unknown correction: {method!r}")
 
 
 def _fdr_bh(p_values: np.ndarray) -> np.ndarray:
-    """Benjamini-Hochberg FDR correction."""
-    n = len(p_values)
-    order = np.argsort(p_values)
-    ranked_p = p_values[order]
+    """Benjamini-Hochberg FDR correction.
+
+    Non-finite p-values are ignored (returned as NaN) instead of poisoning
+    the step-up cumulative minimum for every other test.
+    """
+    p_values = np.asarray(p_values, dtype=np.float64)
+    result = np.full_like(p_values, np.nan)
+    finite = np.isfinite(p_values)
+    pv = p_values[finite]
+    n = pv.size
+    if n == 0:
+        return result
+    order = np.argsort(pv)
+    ranked_p = pv[order]
     adjusted = ranked_p * n / (np.arange(1, n + 1))
     # Enforce monotonicity.
     adjusted = np.minimum.accumulate(adjusted[::-1])[::-1]
-    result = np.empty_like(p_values)
-    result[order] = np.minimum(adjusted, 1.0)
+    out = np.empty_like(pv)
+    out[order] = np.minimum(adjusted, 1.0)
+    result[finite] = out
     return result
 
 
@@ -466,45 +480,58 @@ def vertexwise_correlation(
     desc = np.asarray(descriptors, dtype=np.float64)
     if desc.ndim == 3:
         desc = desc.mean(axis=-1)
-    scores = np.asarray(scores, dtype=np.float64)
-    S = desc.shape[0]
+    scores = np.asarray(scores, dtype=np.float64).ravel()
 
-    # Number of covariates removed (for partial-correlation degrees of freedom).
+    cov = None
     n_cov = 0
     if covariates is not None:
         cov = np.asarray(covariates, dtype=np.float64)
         if cov.ndim == 1:
             cov = cov[:, None]
         n_cov = cov.shape[1]
-        # Residualise scores and every vertex column on the covariates.
-        scores = _residualise(scores, cov)
-        desc = _residualise_columns(desc, cov)
 
-    if method == "spearman":
-        # Spearman = Pearson on ranks.
-        x = _rank_columns(desc)
-        y = sp_stats.rankdata(scores)
-    else:
-        x = desc
-        y = scores
-
-    # Vectorised Pearson across vertices.
-    xc = x - x.mean(axis=0)
-    yc = y - y.mean()
-    denom = np.sqrt((xc**2).sum(axis=0) * (yc**2).sum())
-    r_vals = np.where(denom > 1e-30, (xc * yc[:, None]).sum(axis=0) / (denom + 1e-30), 0.0)
-    r_vals = np.clip(r_vals, -1.0, 1.0)
-
-    # Two-sided p-value from t-distribution with df = S - 2 - n_cov.
-    df = S - 2 - n_cov
-    if df <= 0:
-        raise ValueError(
-            f"Not enough samples for {n_cov} covariates: df = {df} (need S > {2 + n_cov})."
+    # Subjects with a missing score or covariate are dropped (explicitly).
+    row_ok = np.isfinite(scores)
+    if cov is not None:
+        row_ok &= np.all(np.isfinite(cov), axis=1)
+    if not row_ok.all():
+        warnings.warn(
+            f"vertexwise_correlation: dropping {int((~row_ok).sum())} subject(s) "
+            "with non-finite score/covariates.",
+            RuntimeWarning,
+            stacklevel=2,
         )
-    with np.errstate(divide="ignore", invalid="ignore"):
-        t_stat = r_vals * np.sqrt(df / (1.0 - r_vals**2))
-    t_stat = np.nan_to_num(t_stat, nan=0.0, posinf=0.0, neginf=0.0)
-    p_vals = 2.0 * sp_stats.t.sf(np.abs(t_stat), df)
+        desc = desc[row_ok]
+        scores = scores[row_ok]
+        if cov is not None:
+            cov = cov[row_ok]
+
+    N = desc.shape[1]
+    r_vals = np.zeros(N, dtype=np.float64)
+    p_vals = np.ones(N, dtype=np.float64)
+
+    col_complete = np.all(np.isfinite(desc), axis=0)
+    if col_complete.any():
+        r, p = _corr_block(desc[:, col_complete], scores, cov, method)
+        r_vals[col_complete] = r
+        p_vals[col_complete] = p
+    incomplete = np.where(~col_complete)[0]
+    if incomplete.size:
+        warnings.warn(
+            f"vertexwise_correlation: {incomplete.size} vertex column(s) contain "
+            "non-finite values; they are tested on their available subjects only.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        for v in incomplete:
+            ok = np.isfinite(desc[:, v])
+            if ok.sum() < 3 + n_cov:
+                r_vals[v], p_vals[v] = np.nan, np.nan
+                continue
+            r, p = _corr_block(
+                desc[ok, v : v + 1], scores[ok], cov[ok] if cov is not None else None, method
+            )
+            r_vals[v], p_vals[v] = r[0], p[0]
 
     p_corr = _correct_pvalues(p_vals, method=correction)
 
@@ -513,9 +540,48 @@ def vertexwise_correlation(
         p_values=p_vals,
         p_corrected=p_corr,
         correction=correction,
-        significant=p_corr < alpha,
+        significant=np.nan_to_num(p_corr, nan=1.0) < alpha,
         alpha=alpha,
     )
+
+
+def _corr_block(
+    desc: np.ndarray, scores: np.ndarray, cov: np.ndarray | None, method: str
+) -> tuple[np.ndarray, np.ndarray]:
+    """Pearson/Spearman (partial) correlation of each column with ``scores``.
+
+    For Spearman with covariates the data are rank-transformed first and the
+    ranks are then residualised (partial Spearman).
+    """
+    S = desc.shape[0]
+    n_cov = 0 if cov is None else cov.shape[1]
+    if method == "spearman":
+        x = _rank_columns(desc)
+        y = sp_stats.rankdata(scores)
+    else:
+        x = desc
+        y = scores
+    if cov is not None:
+        y = _residualise(y, cov)
+        x = _residualise_columns(x, cov)
+
+    xc = x - x.mean(axis=0)
+    yc = y - y.mean()
+    denom = np.sqrt((xc**2).sum(axis=0) * (yc**2).sum())
+    with np.errstate(divide="ignore", invalid="ignore"):
+        r_vals = np.where(denom > 1e-30, (xc * yc[:, None]).sum(axis=0) / denom, 0.0)
+    r_vals = np.clip(r_vals, -1.0, 1.0)
+
+    df = S - 2 - n_cov
+    if df <= 0:
+        raise ValueError(
+            f"Not enough samples for {n_cov} covariates: df = {df} (need S > {2 + n_cov})."
+        )
+    with np.errstate(divide="ignore", invalid="ignore"):
+        t_stat = r_vals * np.sqrt(df / (1.0 - r_vals**2))
+    t_stat = np.nan_to_num(t_stat, nan=0.0, posinf=np.inf, neginf=-np.inf)
+    p_vals = 2.0 * sp_stats.t.sf(np.abs(t_stat), df)
+    return r_vals, p_vals
 
 
 def _residualise_columns(Y: np.ndarray, X: np.ndarray) -> np.ndarray:
@@ -963,7 +1029,24 @@ def js_divergence(a: np.ndarray, b: np.ndarray, **kwargs) -> float:
     -------
     float
     """
-    return 0.5 * kl_divergence(a, b, **kwargs) + 0.5 * kl_divergence(b, a, **kwargs)
+    bins = kwargs.pop("bins", 50)
+    if kwargs:
+        raise TypeError(f"Unexpected keyword arguments: {sorted(kwargs)}")
+    a, b = np.ravel(a), np.ravel(b)
+    lo = min(a.min(), b.min())
+    hi = max(a.max(), b.max())
+    edges = np.linspace(lo, hi, bins + 1)
+    p = np.histogram(a, bins=edges)[0].astype(np.float64)
+    q = np.histogram(b, bins=edges)[0].astype(np.float64)
+    p /= p.sum()
+    q /= q.sum()
+    m = 0.5 * (p + q)
+
+    def _kl(x: np.ndarray, y: np.ndarray) -> float:
+        nz = x > 0
+        return float(np.sum(x[nz] * np.log(x[nz] / y[nz])))
+
+    return 0.5 * _kl(p, m) + 0.5 * _kl(q, m)
 
 
 def energy_distance(a: np.ndarray, b: np.ndarray) -> float:
@@ -1151,7 +1234,7 @@ def modularity(
     float
         Modularity Q.
     """
-    A = np.asarray(connectome, dtype=np.float64)
+    A = np.array(connectome, dtype=np.float64, copy=True)  # never mutate caller
     np.fill_diagonal(A, 0)
     m2 = A.sum()
     if m2 < 1e-10:
@@ -1187,7 +1270,7 @@ def participation_coefficient(
     -------
     ndarray, shape (R,)
     """
-    A = np.asarray(connectome, dtype=np.float64)
+    A = np.array(connectome, dtype=np.float64, copy=True)  # never mutate caller
     np.fill_diagonal(A, 0)
     labels = np.asarray(community_labels)
     communities = np.unique(labels)
@@ -1279,10 +1362,12 @@ def asymmetry_test(
     -------
     statistic, p_value : float
     """
-    L = np.asarray(left).ravel()
-    R = np.asarray(right).ravel()
-    n = min(len(L), len(R))
-    L, R = L[:n], R[:n]
+    L = np.asarray(left, dtype=np.float64).ravel()
+    R = np.asarray(right, dtype=np.float64).ravel()
+    if L.shape != R.shape:
+        raise ValueError(
+            f"left and right must be paired (same length); got {L.shape} and {R.shape}."
+        )
 
     if test == "paired_t":
         return tuple(float(x) for x in sp_stats.ttest_rel(L, R))

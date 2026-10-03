@@ -11,14 +11,13 @@ the spatial-autocorrelation bias.
 from __future__ import annotations
 
 import logging
-from typing import Dict, Optional
 
 import numpy as np
 
 logger = logging.getLogger("brainmosaic.statistics.cluster_stats")
 
 
-def intra_inter_homogeneity(features: np.ndarray, labels: np.ndarray) -> Dict[str, float]:
+def intra_inter_homogeneity(features: np.ndarray, labels: np.ndarray) -> dict[str, float]:
     """Within- vs between-cluster feature homogeneity.
 
     Returns
@@ -43,7 +42,7 @@ def intra_inter_homogeneity(features: np.ndarray, labels: np.ndarray) -> Dict[st
 
 
 def spatial_silhouette(features: np.ndarray, labels: np.ndarray,
-                       spatial_distance: Optional[np.ndarray] = None,
+                       spatial_distance: np.ndarray | None = None,
                        alpha: float = 0.5) -> float:
     """Silhouette score on a feature/spatial blended distance.
 
@@ -117,11 +116,14 @@ def rsa_compare(rdm_a: np.ndarray, rdm_b: np.ndarray, method: str = "spearman") 
     float
         Correlation coefficient between the off-diagonal entries.
     """
-    from scipy.stats import spearmanr, pearsonr, kendalltau
     a = np.asarray(rdm_a, float)
     b = np.asarray(rdm_b, float)
     iu = np.triu_indices(a.shape[0], k=1)
-    va, vb = a[iu], b[iu]
+    return _corr_vec(a[iu], b[iu], method)
+
+
+def _corr_vec(va: np.ndarray, vb: np.ndarray, method: str) -> float:
+    from scipy.stats import kendalltau, pearsonr, spearmanr
     if method == "spearman":
         return float(spearmanr(va, vb).correlation)
     if method == "pearson":
@@ -153,11 +155,8 @@ def mantel_test(rdm_a: np.ndarray, rdm_b: np.ndarray, n_perm: int = 10000,
     for _ in range(n_perm):
         perm = rng.permutation(n)
         bp = b[np.ix_(perm, perm)][iu]
-        from scipy.stats import spearmanr, pearsonr
-        if method == "spearman":
-            r = spearmanr(va, bp).correlation
-        else:
-            r = pearsonr(va, bp)[0]
+        # The null statistic must be the same statistic as the observed one.
+        r = _corr_vec(va, bp, method)
         if abs(r) >= abs(r_obs):
             count += 1
     return float(r_obs), float((count + 1) / (n_perm + 1))

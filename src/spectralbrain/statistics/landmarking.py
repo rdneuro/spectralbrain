@@ -31,7 +31,6 @@ descriptor with strong statistical power and clear anatomical localisation.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional
 
 import numpy as np
 import scipy.sparse as sp
@@ -134,7 +133,7 @@ def compute_si_wks(
 
 def _adjacency_from_decomp(
     decomp: SpectralDecomposition,
-    faces: Optional[np.ndarray],
+    faces: np.ndarray | None,
     n_vertices: int,
 ) -> sp.csr_matrix:
     """1-ring adjacency: from ``faces`` if given, else from the stiffness pattern."""

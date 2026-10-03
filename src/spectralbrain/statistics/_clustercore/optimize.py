@@ -23,8 +23,9 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import logging
-from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional, Sequence
+import warnings
+from collections.abc import Sequence
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -53,7 +54,7 @@ class SearchSpace:
     kappa0: tuple = (1e-3, 10.0)            # log
     nu0_offset: tuple = (1.0, 10.0)         # linear
     psi_scale: tuple = (1e-2, 1e2)          # log
-    n_pca: Optional[tuple] = None           # e.g. (2, 20) to also search a PCA reduction
+    n_pca: tuple | None = None           # e.g. (2, 20) to also search a PCA reduction
 
 
 @dataclass
@@ -76,9 +77,9 @@ class TuningResult:
         Full-budget ddCRP fit with ``best_params`` (if ``refit=True``).
     """
 
-    best_params: Dict[str, object]
+    best_params: dict[str, object]
     best_score: float
-    history: List[Dict[str, object]]
+    history: list[dict[str, object]]
     backend: str
     study: object = None
     refit_result: object = None
@@ -94,7 +95,7 @@ def _tuner_available(name: str) -> bool:
         return False
 
 
-def _resolve_tuner(backend: Optional[str]) -> str:
+def _resolve_tuner(backend: str | None) -> str:
     if backend is None:
         for cand in ("optuna", "hyperopt", "botorch"):
             if _tuner_available(cand):
@@ -109,7 +110,7 @@ def _resolve_tuner(backend: Optional[str]) -> str:
     return backend
 
 
-def _maybe_pca(X: np.ndarray, n_pca: Optional[int]) -> np.ndarray:
+def _maybe_pca(X: np.ndarray, n_pca: int | None) -> np.ndarray:
     if not n_pca:
         return X
     from sklearn.decomposition import PCA
@@ -137,9 +138,9 @@ class _Evaluator:
         self.eval_thin = eval_thin
         self.eval_chains = eval_chains
         self.random_state = random_state
-        self.history: List[Dict[str, object]] = []
+        self.history: list[dict[str, object]] = []
 
-    def __call__(self, params: Dict[str, object]) -> float:
+    def __call__(self, params: dict[str, object]) -> float:
         Xr = _maybe_pca(self.X, params.get("n_pca"))
         try:
             prior = NIWPrior.from_data(
@@ -157,9 +158,14 @@ class _Evaluator:
                 Xr, res.labels, objective=self.objective,
                 spatial_distance=self.spatial_distance,
                 co_association=res.co_association)
-        except Exception as exc:  # a bad config should not abort the whole search
-            logger.debug("Trial failed for %s: %s", params, exc)
-            score = DEGENERATE_SCORE
+        except (ValueError, ArithmeticError, np.linalg.LinAlgError) as exc:
+            # A numerically bad config should not abort the whole search, but
+            # it must not vanish silently either; programming errors propagate.
+            warnings.warn(f"ddCRP trial failed for {params}: {exc!r}", RuntimeWarning,
+                          stacklevel=2)
+            self.history.append({"params": dict(params), "score": float(DEGENERATE_SCORE),
+                                 "error": repr(exc)})
+            return float(DEGENERATE_SCORE)
         self.history.append({"params": dict(params), "score": float(score)})
         return float(score)
 
@@ -191,7 +197,7 @@ def _run_optuna(evaluator, space, n_trials, random_state, progress):
 
 
 def _run_hyperopt(evaluator, space, n_trials, random_state, progress):
-    from hyperopt import fmin, tpe, hp, Trials, STATUS_OK
+    from hyperopt import STATUS_OK, Trials, fmin, hp, tpe
     kinds = list(space.decay_kinds)
     hp_space = {
         "decay_kind": hp.choice("decay_kind", kinds),
@@ -222,12 +228,15 @@ def _run_hyperopt(evaluator, space, n_trials, random_state, progress):
 
 def _run_botorch(evaluator, space, n_trials, random_state, progress):
     import torch
-    from botorch.models import SingleTaskGP
-    from botorch.fit import fit_gpytorch_mll
     from botorch.acquisition import qLogExpectedImprovement
+    from botorch.fit import fit_gpytorch_mll
+    from botorch.models import SingleTaskGP
     from botorch.optim import optimize_acqf
     from gpytorch.mlls import ExactMarginalLogLikelihood
 
+    if space.n_pca is not None:
+        warnings.warn("The botorch tuner does not search `n_pca`; it is ignored.",
+                      RuntimeWarning, stacklevel=2)
     torch.manual_seed(random_state)
     dtype = torch.double
     # Continuous dims (some log-scaled): decay_scale, alpha, kappa0, nu0_offset, psi_scale
@@ -275,7 +284,8 @@ def _run_botorch(evaluator, space, n_trials, random_state, progress):
                                             num_restarts=5, raw_samples=64)
                     next_x = cand.detach()
                 except Exception as exc:
-                    logger.debug("BO step fell back to random: %s", exc)
+                    warnings.warn(f"BO step failed ({exc!r}); using a random candidate.",
+                                  RuntimeWarning, stacklevel=2)
                     next_x = torch.tensor(rng.random((1, d)), dtype=dtype)
                 score = evaluator(decode(next_x.numpy().ravel(), kind))
                 train_x = torch.cat([train_x, next_x])
@@ -325,13 +335,13 @@ def autotune_ddcrp(
     X: np.ndarray,
     adjacency_list: Sequence[np.ndarray],
     *,
-    backend: Optional[str] = None,
+    backend: str | None = None,
     n_trials: int = 40,
     objective: str = "silhouette",
-    spatial_distance: Optional[np.ndarray] = None,
-    distances: Optional[Sequence[np.ndarray]] = None,
-    vertices: Optional[np.ndarray] = None,
-    search_space: Optional[SearchSpace] = None,
+    spatial_distance: np.ndarray | None = None,
+    distances: Sequence[np.ndarray] | None = None,
+    vertices: np.ndarray | None = None,
+    search_space: SearchSpace | None = None,
     eval_draws: int = 30,
     eval_burn_in: int = 20,
     eval_thin: int = 2,
@@ -339,7 +349,7 @@ def autotune_ddcrp(
     random_state: int = 0,
     progress: bool = True,
     refit: bool = True,
-    refit_kwargs: Optional[dict] = None,
+    refit_kwargs: dict | None = None,
 ) -> TuningResult:
     """Optimise ddCRP hyperparameters from the data.
 
@@ -408,6 +418,12 @@ def autotune_ddcrp(
     best_params, best_score, study = driver(
         evaluator, space, n_trials, random_state, progress)
 
+    if best_params is None or not np.isfinite(best_score) or best_score <= DEGENERATE_SCORE:
+        n_err = sum(1 for h in evaluator.history if "error" in h)
+        warnings.warn(
+            f"ddCRP autotuning found no non-degenerate configuration in {n_trials} trials "
+            f"({n_err} failed with errors); best_params are not meaningful.",
+            RuntimeWarning, stacklevel=2)
     result = TuningResult(best_params=best_params, best_score=float(best_score),
                           history=evaluator.history, backend=tuner, study=study)
 

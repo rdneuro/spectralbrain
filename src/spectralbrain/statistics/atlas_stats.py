@@ -22,23 +22,27 @@ This module complements :mod:`spectralbrain.utils.atlas` (which provides atlas
 
 from __future__ import annotations
 
-from typing import Optional, Sequence
+from collections.abc import Sequence
 
 import numpy as np
 
 # Re-export the numpy-clean cores directly (harmonised names).
-from spectralbrain.statistics._clustercore.atlas import (  # noqa: F401
+from spectralbrain.statistics._clustercore.atlas import (
     aggregate_across_subjects,
     compare_partitions,
     parcel_overlap,
     spectral_homogeneity,
 )
 from spectralbrain.statistics._clustercore.atlas import (
-    random_parcellation as _random_parcellation,
-    homogeneity_vs_null as _homogeneity_vs_null,
     cluster_atlas_concordance as _cluster_atlas_concordance,
 )
-from spectralbrain.statistics._clustercore.partition import (  # noqa: F401
+from spectralbrain.statistics._clustercore.atlas import (
+    homogeneity_vs_null as _homogeneity_vs_null,
+)
+from spectralbrain.statistics._clustercore.atlas import (
+    random_parcellation as _random_parcellation,
+)
+from spectralbrain.statistics._clustercore.partition import (
     adjusted_rand_index,
     normalized_mutual_info,
     spatial_rand_index,
@@ -46,16 +50,16 @@ from spectralbrain.statistics._clustercore.partition import (  # noqa: F401
 )
 
 __all__ = [
-    "compare_partitions",
-    "parcel_overlap",
-    "spectral_homogeneity",
-    "random_parcellation",
-    "homogeneity_vs_null",
-    "cluster_atlas_concordance",
-    "aggregate_across_subjects",
-    "spatial_rand_index",
     "adjusted_rand_index",
+    "aggregate_across_subjects",
+    "cluster_atlas_concordance",
+    "compare_partitions",
+    "homogeneity_vs_null",
     "normalized_mutual_info",
+    "parcel_overlap",
+    "random_parcellation",
+    "spatial_rand_index",
+    "spectral_homogeneity",
     "variation_of_information",
 ]
 
@@ -69,9 +73,9 @@ def _adjacency(faces, adjacency_list, n_vertices):
     raise ValueError("Provide `faces` or `adjacency_list` for the size-matched null.")
 
 
-def random_parcellation(n_parcels: int, *, faces: Optional[np.ndarray] = None,
-                        adjacency_list: Optional[Sequence[np.ndarray]] = None,
-                        n_vertices: Optional[int] = None, seed: int = 0):
+def random_parcellation(n_parcels: int, *, faces: np.ndarray | None = None,
+                        adjacency_list: Sequence[np.ndarray] | None = None,
+                        n_vertices: int | None = None, seed: int = 0):
     """Contiguous size-matched random parcellation (graph Voronoi).
 
     Accepts either ``faces`` (preferred) or a precomputed ``adjacency_list``.
@@ -83,8 +87,8 @@ def random_parcellation(n_parcels: int, *, faces: Optional[np.ndarray] = None,
 
 
 def homogeneity_vs_null(features: np.ndarray, labels: np.ndarray, *,
-                        faces: Optional[np.ndarray] = None,
-                        adjacency_list: Optional[Sequence[np.ndarray]] = None,
+                        faces: np.ndarray | None = None,
+                        adjacency_list: Sequence[np.ndarray] | None = None,
                         n_null: int = 100, method: str = "correlation",
                         seed: int = 0, progress: bool = False) -> dict:
     """Within-parcel homogeneity vs a size-matched random-parcellation null.
@@ -98,11 +102,11 @@ def homogeneity_vs_null(features: np.ndarray, labels: np.ndarray, *,
 
 
 def cluster_atlas_concordance(cluster_labels: np.ndarray, atlas_labels: np.ndarray,
-                              *, faces: Optional[np.ndarray] = None,
-                              adjacency_list: Optional[Sequence[np.ndarray]] = None,
-                              distance: Optional[np.ndarray] = None,
-                              coords: Optional[np.ndarray] = None,
-                              background: Optional[int] = None,
+                              *, faces: np.ndarray | None = None,
+                              adjacency_list: Sequence[np.ndarray] | None = None,
+                              distance: np.ndarray | None = None,
+                              coords: np.ndarray | None = None,
+                              background: int | None = None,
                               n_null: int = 100, seed: int = 0,
                               progress: bool = False) -> dict:
     """Full cluster-vs-atlas concordance with a size-matched ARI null.

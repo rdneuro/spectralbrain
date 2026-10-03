@@ -22,6 +22,21 @@ from spectralbrain.statistics.analysis import (  # noqa: F401
     vertexwise_permutation,
     vertexwise_ttest,
 )
+
+# ── atlas_stats.py (cluster-vs-atlas comparison, ported from brainmosaic) ──
+from spectralbrain.statistics.atlas_stats import (  # noqa: F401
+    adjusted_rand_index,
+    aggregate_across_subjects,
+    cluster_atlas_concordance,
+    compare_partitions,
+    homogeneity_vs_null,
+    normalized_mutual_info,
+    parcel_overlap,
+    random_parcellation,
+    spatial_rand_index,
+    spectral_homogeneity,
+    variation_of_information,
+)
 from spectralbrain.statistics.bayesian import (  # noqa: F401
     BayesianConnectome,
     BayesianGroupComparison,
@@ -85,6 +100,15 @@ from spectralbrain.statistics.clustering import (  # noqa: F401
     fuse_joint_nmf,
     fuse_multi_kernel,
 )
+
+# ── ddcrp.py (ported from brainmosaic, harmonised) ──
+from spectralbrain.statistics.ddcrp import (  # noqa: F401
+    DDCRPTuningResult,
+    autotune_ddcrp,
+    cluster_consensus,
+    cluster_ddcrp,
+    cluster_ddcrp_functional,
+)
 from spectralbrain.statistics.eda import (  # noqa: F401
     DescriptorRecommendation,
     OptimalKResult,
@@ -97,6 +121,14 @@ from spectralbrain.statistics.eda import (  # noqa: F401
     optimal_k,
     recommend_descriptor,
     spectral_qc,
+)
+
+# ── landmarking.py (M-GP active-learning landmarking; SIWKS + HFE) ──
+from spectralbrain.statistics.landmarking import (  # noqa: F401
+    MGPLandmarkResult,
+    compute_si_wks,
+    heat_flow_entropy,
+    mgp_landmarks,
 )
 from spectralbrain.statistics.normative import (  # noqa: F401
     HarmonizationResult,
@@ -128,36 +160,4 @@ from spectralbrain.statistics.surrogates import (  # noqa: F401
     null_phase_randomisation,
     null_spin_permutation,
     null_subject_permutation,
-)
-
-# ── ddcrp.py (ported from brainmosaic, harmonised) ──
-from spectralbrain.statistics.ddcrp import (  # noqa: F401
-    DDCRPTuningResult,
-    autotune_ddcrp,
-    cluster_consensus,
-    cluster_ddcrp,
-    cluster_ddcrp_functional,
-)
-
-# ── atlas_stats.py (cluster-vs-atlas comparison, ported from brainmosaic) ──
-from spectralbrain.statistics.atlas_stats import (  # noqa: F401
-    adjusted_rand_index,
-    aggregate_across_subjects,
-    cluster_atlas_concordance,
-    compare_partitions,
-    homogeneity_vs_null,
-    normalized_mutual_info,
-    parcel_overlap,
-    random_parcellation,
-    spatial_rand_index,
-    spectral_homogeneity,
-    variation_of_information,
-)
-
-# ── landmarking.py (M-GP active-learning landmarking; SIWKS + HFE) ──
-from spectralbrain.statistics.landmarking import (  # noqa: F401
-    MGPLandmarkResult,
-    compute_si_wks,
-    heat_flow_entropy,
-    mgp_landmarks,
 )

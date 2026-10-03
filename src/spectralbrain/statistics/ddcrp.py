@@ -19,19 +19,20 @@ container, so they slot into the clustering API uniformly.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Optional, Sequence
+from typing import Any
 
 import numpy as np
 
 from spectralbrain.statistics.clustering import ClusterResult
 
 __all__ = [
+    "DDCRPTuningResult",
+    "autotune_ddcrp",
+    "cluster_consensus",
     "cluster_ddcrp",
     "cluster_ddcrp_functional",
-    "cluster_consensus",
-    "autotune_ddcrp",
-    "DDCRPTuningResult",
 ]
 
 
@@ -41,7 +42,8 @@ __all__ = [
 def _resolve_adjacency_list(n_vertices: int, faces, adjacency):
     """Build a per-vertex neighbour list from faces or a sparse adjacency."""
     from spectralbrain.statistics._clustercore import (
-        adjacency_list_from_faces, adjacency_list_from_sparse,
+        adjacency_list_from_faces,
+        adjacency_list_from_sparse,
     )
     if faces is not None:
         return adjacency_list_from_faces(np.asarray(faces), n_vertices)
@@ -88,14 +90,14 @@ def _to_cluster_result(r, method: str, extra_meta: dict) -> ClusterResult:
 def cluster_ddcrp(
     H: np.ndarray,
     *,
-    faces: Optional[np.ndarray] = None,
+    faces: np.ndarray | None = None,
     adjacency: Any = None,
-    vertices: Optional[np.ndarray] = None,
+    vertices: np.ndarray | None = None,
     decay_kind: str = "exponential",
-    decay_scale: Optional[float] = None,
+    decay_scale: float | None = None,
     alpha: float = 1.0,
     prior: Any = None,
-    n_components: Optional[int] = None,
+    n_components: int | None = None,
     n_draws: int = 200,
     burn_in: int = 100,
     thin: int = 2,
@@ -167,12 +169,12 @@ def cluster_ddcrp(
 def cluster_ddcrp_functional(
     curves_blocks: Sequence[np.ndarray],
     *,
-    faces: Optional[np.ndarray] = None,
+    faces: np.ndarray | None = None,
     adjacency: Any = None,
-    vertices: Optional[np.ndarray] = None,
+    vertices: np.ndarray | None = None,
     n_fpca: int = 5,
     decay_kind: str = "exponential",
-    decay_scale: Optional[float] = None,
+    decay_scale: float | None = None,
     alpha: float = 1.0,
     prior: Any = None,
     n_draws: int = 200,
@@ -226,8 +228,8 @@ def cluster_ddcrp_functional(
 def cluster_consensus(
     partitions: Sequence[np.ndarray],
     *,
-    n_clusters: Optional[int] = None,
-    threshold: Optional[float] = None,
+    n_clusters: int | None = None,
+    threshold: float | None = None,
 ) -> ClusterResult:
     """Consensus partition from an ensemble of labelings (co-association + AC).
 
@@ -253,13 +255,17 @@ def cluster_consensus(
         ``stability`` (mean within-cluster co-association).
     """
     from spectralbrain.statistics._clustercore import (
-        co_association_matrix, consensus_partition, stability_per_vertex,
+        co_association_matrix,
+        consensus_partition,
+        stability_per_vertex,
     )
 
     parts = [np.asarray(p, dtype=np.int64) for p in partitions]
     co = co_association_matrix(parts)
     if n_clusters is None and threshold is None:
         threshold = 0.5
+    elif n_clusters is not None and threshold is not None:
+        raise ValueError("Pass either `n_clusters` or `threshold`, not both.")
     labels = np.asarray(consensus_partition(co, n_clusters=n_clusters,
                                             threshold=threshold), dtype=np.int64)
     stab = stability_per_vertex(co, labels)
@@ -294,27 +300,27 @@ class DDCRPTuningResult:
     best_score: float
     history: list
     backend: str
-    cluster_result: Optional[ClusterResult] = None
+    cluster_result: ClusterResult | None = None
     metadata: dict = field(default_factory=dict)
 
 
 def autotune_ddcrp(
     H: np.ndarray,
     *,
-    faces: Optional[np.ndarray] = None,
+    faces: np.ndarray | None = None,
     adjacency: Any = None,
-    vertices: Optional[np.ndarray] = None,
-    backend: Optional[str] = None,
+    vertices: np.ndarray | None = None,
+    backend: str | None = None,
     n_trials: int = 40,
     objective: str = "silhouette",
-    spatial_distance: Optional[np.ndarray] = None,
+    spatial_distance: np.ndarray | None = None,
     eval_draws: int = 30,
     eval_burn_in: int = 20,
     eval_chains: int = 1,
     random_state: int = 42,
     progress: bool = True,
     refit: bool = True,
-    refit_kwargs: Optional[dict] = None,
+    refit_kwargs: dict | None = None,
 ) -> DDCRPTuningResult:
     """Optimise ddCRP hyperparameters from the data (avoids the K=1 collapse).
 

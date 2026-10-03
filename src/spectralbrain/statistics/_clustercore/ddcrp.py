@@ -26,8 +26,8 @@ from __future__ import annotations
 
 import logging
 import os
-from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional, Sequence
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 
 import numpy as np
 from scipy.special import gammaln
@@ -62,7 +62,7 @@ class NIWPrior:
 
     @classmethod
     def from_data(cls, X: np.ndarray, kappa0: float = 0.1,
-                  nu0_offset: float = 2.0, psi_scale: float = 1.0) -> "NIWPrior":
+                  nu0_offset: float = 2.0, psi_scale: float = 1.0) -> NIWPrior:
         """Weakly-informative prior centred on the data's global statistics."""
         X = np.asarray(X, float)
         d = X.shape[1]
@@ -158,7 +158,7 @@ def _make_marginal(prior: NIWPrior) -> Callable[[int, np.ndarray, np.ndarray], f
         return (d * (d - 1) / 4.0) * log_pi + gammaln(a + (1.0 - half) / 2.0).sum()
 
     const = (nu0 / 2.0) * _logdet_spd(psi0) - _mvgln(nu0 / 2.0)
-    gln_cache: Dict[int, float] = {}
+    gln_cache: dict[int, float] = {}
 
     def ml(n: int, sum_x: np.ndarray, sum_xx: np.ndarray) -> float:
         if n == 0:
@@ -282,7 +282,7 @@ class DDCRP:
     """
 
     def __init__(self, decay_kind: str = "window", decay_scale: float = 1.0,
-                 alpha: float = 1.0, prior: Optional[NIWPrior] = None,
+                 alpha: float = 1.0, prior: NIWPrior | None = None,
                  n_draws: int = 200, burn_in: int = 100, thin: int = 2,
                  chains: int = 4, random_state: int = 0) -> None:
         self.logf = make_decay(decay_kind, decay_scale)
@@ -313,8 +313,8 @@ class DDCRP:
         return seen
 
     def fit(self, X: np.ndarray, adjacency_list: Sequence[np.ndarray],
-            distances: Optional[Sequence[np.ndarray]] = None,
-            vertices: Optional[np.ndarray] = None,
+            distances: Sequence[np.ndarray] | None = None,
+            vertices: np.ndarray | None = None,
             progress: bool = True) -> DDCRPResult:
         """Run the sampler.
 
@@ -373,26 +373,26 @@ class DDCRP:
         XX = np.einsum("ij,ik->ijk", X, X)     # (V, d, d)
 
         rng_master = np.random.default_rng(self.random_state)
-        all_labels_draws: List[np.ndarray] = []
-        n_clusters_per_chain: List[List[int]] = []
+        all_labels_draws: list[np.ndarray] = []
+        n_clusters_per_chain: list[list[int]] = []
 
         total_sweeps = self.chains * (self.burn_in + self.n_draws)
         with progress_bar("ddCRP Gibbs", total=total_sweeps, disable=not progress) as advance:
-            for chain in range(self.chains):
+            for _chain in range(self.chains):
                 rng = np.random.default_rng(rng_master.integers(0, 2**31 - 1))
                 links = np.arange(n)                       # all self-linked
-                in_links: List[set] = [set() for _ in range(n)]
+                in_links: list[set] = [set() for _ in range(n)]
 
                 # Component bookkeeping: every node starts as its own singleton.
                 cid_of = np.arange(n)
-                members_of: Dict[int, set] = {c: {c} for c in range(n)}
-                stats_of: Dict[int, tuple] = {
+                members_of: dict[int, set] = {c: {c} for c in range(n)}
+                stats_of: dict[int, tuple] = {
                     c: (1, X[c], XX[c]) for c in range(n)}
-                ml_of: Dict[int, float] = {}
+                ml_of: dict[int, float] = {}
                 next_cid = n
-                chain_counts: List[int] = []
+                chain_counts: list[int] = []
 
-                def get_ml(c):
+                def get_ml(c, ml_of=ml_of, stats_of=stats_of):
                     v = ml_of.get(c)
                     if v is None:
                         s = stats_of[c]
@@ -435,8 +435,8 @@ class DDCRP:
 
                         ml_i = get_ml(comp_i)
                         neigh = adjacency_list[i]
-                        cand = list(neigh) + [i]
-                        cand_lp = list(log_prior_neigh[i]) + [self.log_alpha]
+                        cand = [*list(neigh), i]
+                        cand_lp = [*list(log_prior_neigh[i]), self.log_alpha]
 
                         scores = np.full(len(cand), -np.inf)
                         for k, (j, lp) in enumerate(zip(cand, cand_lp)):
@@ -490,7 +490,7 @@ class DDCRP:
                                 ml_of.pop(cj, None)
 
                     labels = _relabel_consecutive(cid_of.copy())
-                    chain_counts.append(int(len(np.unique(labels))))
+                    chain_counts.append(len(np.unique(labels)))
                     if _DDCRP_DEBUG:
                         from collections import defaultdict
                         agg = defaultdict(lambda: [0, np.zeros(d), np.zeros((d, d))])
@@ -530,12 +530,11 @@ def _relabel_consecutive(labels: np.ndarray) -> np.ndarray:
     return inv
 
 
-def _rhat(chains: List[np.ndarray]) -> float:
+def _rhat(chains: list[np.ndarray]) -> float:
     """Gelman-Rubin R-hat for a scalar across chains of equal length."""
     chains = [c for c in chains if c.size > 1]
     if len(chains) < 2:
         return float("nan")
-    m = len(chains)
     n = min(len(c) for c in chains)
     arr = np.stack([c[:n] for c in chains])          # (m, n)
     chain_means = arr.mean(axis=1)

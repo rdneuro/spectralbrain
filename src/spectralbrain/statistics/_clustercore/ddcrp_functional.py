@@ -17,8 +17,7 @@ References
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
-from typing import Optional, Sequence, Tuple
+from collections.abc import Sequence
 
 import numpy as np
 
@@ -28,7 +27,7 @@ logger = logging.getLogger("spectralbrain.statistics._clustercore")
 
 
 def fpca_compress(curves: np.ndarray, n_components: int = 5,
-                  center: bool = True) -> Tuple[np.ndarray, dict]:
+                  center: bool = True) -> tuple[np.ndarray, dict]:
     """Compress a stack of curves to functional-PCA scores.
 
     Uses scikit-fda's FPCA when available (proper basis expansion + smoothing),
@@ -58,19 +57,27 @@ def fpca_compress(curves: np.ndarray, n_components: int = 5,
     try:
         from skfda import FDataGrid
         from skfda.preprocessing.dim_reduction import FPCA
+    except ImportError:
+        FDataGrid = None
+    if FDataGrid is not None:
         grid = np.arange(curves.shape[1], dtype=float)
         fd = FDataGrid(data_matrix=curves, grid_points=grid)
-        fpca = FPCA(n_components=n_components)
+        fpca = FPCA(n_components=n_components, centering=center)
         scores = fpca.fit_transform(fd)
         evr = getattr(fpca, "explained_variance_ratio_", None)
         return np.asarray(scores), {"explained_variance_ratio": evr, "backend": "skfda"}
-    except Exception:
-        from sklearn.decomposition import PCA
-        X = curves - curves.mean(axis=0, keepdims=True) if center else curves
+    from sklearn.decomposition import PCA
+    if center:
+        X = curves - curves.mean(axis=0, keepdims=True)
         pca = PCA(n_components=n_components, random_state=0)
         scores = pca.fit_transform(X)
-        return scores, {"explained_variance_ratio": pca.explained_variance_ratio_,
-                        "backend": "pca-fallback"}
+        evr = pca.explained_variance_ratio_
+    else:
+        # Uncentred decomposition (sklearn PCA always centres): truncated SVD.
+        U, sv, _ = np.linalg.svd(curves, full_matrices=False)
+        scores = U[:, :n_components] * sv[:n_components]
+        evr = sv[:n_components] ** 2 / max(float((sv**2).sum()), 1e-300)
+    return scores, {"explained_variance_ratio": evr, "backend": "pca-fallback"}
 
 
 def cluster_ddcrp_functional(
@@ -80,16 +87,16 @@ def cluster_ddcrp_functional(
     decay_kind: str = "window",
     decay_scale: float = 1.0,
     alpha: float = 1.0,
-    prior: Optional[NIWPrior] = None,
+    prior: NIWPrior | None = None,
     n_draws: int = 200,
     burn_in: int = 100,
     thin: int = 2,
     chains: int = 4,
     random_state: int = 0,
-    distances: Optional[Sequence[np.ndarray]] = None,
-    vertices: Optional[np.ndarray] = None,
+    distances: Sequence[np.ndarray] | None = None,
+    vertices: np.ndarray | None = None,
     progress: bool = True,
-) -> Tuple[DDCRPResult, dict]:
+) -> tuple[DDCRPResult, dict]:
     """Functional ddCRP over one or more curve blocks (e.g. HKS and WKS).
 
     Each block is fPCA-compressed independently and the scores concatenated

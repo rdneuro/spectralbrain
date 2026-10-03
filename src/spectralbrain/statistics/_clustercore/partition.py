@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import logging
 import warnings
-from typing import Dict, Optional
 
 import numpy as np
 
@@ -67,7 +66,7 @@ def variation_of_information(labels_a: np.ndarray, labels_b: np.ndarray) -> floa
         return -np.sum(p * np.log2(p))
 
     # Mutual information in bits.
-    contingency: Dict = {}
+    contingency: dict = {}
     for ai, bi in zip(a, b):
         contingency[(ai, bi)] = contingency.get((ai, bi), 0) + 1
     _, ca = np.unique(a, return_counts=True)
@@ -87,7 +86,7 @@ def _pair_disagreement_weights(coords_or_dist: np.ndarray, length_scale: float,
     if is_distance:
         D = np.asarray(coords_or_dist, float)
     else:
-        from scipy.spatial.distance import squareform, pdist
+        from scipy.spatial.distance import pdist, squareform
         D = squareform(pdist(np.asarray(coords_or_dist, float)))
     ls = float(length_scale)
     if ls <= 0:
@@ -96,10 +95,10 @@ def _pair_disagreement_weights(coords_or_dist: np.ndarray, length_scale: float,
 
 
 def spatial_rand_index(labels_a: np.ndarray, labels_b: np.ndarray,
-                       coords: Optional[np.ndarray] = None,
-                       distance: Optional[np.ndarray] = None,
-                       length_scale: Optional[float] = None,
-                       adjusted: bool = True) -> Dict[str, object]:
+                       coords: np.ndarray | None = None,
+                       distance: np.ndarray | None = None,
+                       length_scale: float | None = None,
+                       adjusted: bool = True) -> dict[str, object]:
     """Spatially-aware (adjusted) Rand index.
 
     Concordant pairs (same/same or different/different in both partitions) score
@@ -140,7 +139,7 @@ def spatial_rand_index(labels_a: np.ndarray, labels_b: np.ndarray,
             length_scale = float(np.median(off[np.isfinite(off)]))
         W = _pair_disagreement_weights(D, length_scale, is_distance=True)
     else:
-        from scipy.spatial.distance import squareform, pdist
+        from scipy.spatial.distance import pdist
         Dvec = pdist(np.asarray(coords, float))
         if length_scale is None:
             length_scale = float(np.median(Dvec))

@@ -29,6 +29,7 @@ PyMC, ArviZ (optional, lazy-imported).
 from __future__ import annotations
 
 import abc
+import warnings
 from pathlib import Path
 from typing import Any, Literal
 
@@ -70,6 +71,59 @@ def _require_arviz():
         ) from exc
 
 
+def check_sampling(
+    trace: Any,
+    *,
+    var_names: list[str] | None = None,
+    rhat_threshold: float = 1.01,
+) -> dict[str, Any]:
+    """Inspect an InferenceData for divergences and poor convergence.
+
+    Emits a ``RuntimeWarning`` when NUTS reported divergent transitions or
+    when any monitored parameter has R-hat above ``rhat_threshold``.
+
+    Returns
+    -------
+    dict
+        ``n_divergences`` (int or None) and ``max_rhat`` (float or NaN).
+    """
+    out: dict[str, Any] = {"n_divergences": None, "max_rhat": float("nan")}
+    stats = getattr(trace, "sample_stats", None)
+    if stats is not None:
+        for key in ("diverging", "divergences"):
+            if key in stats:
+                n_div = int(np.asarray(stats[key].values).sum())
+                out["n_divergences"] = n_div
+                if n_div > 0:
+                    warnings.warn(
+                        f"{n_div} divergent transition(s) after tuning; the posterior "
+                        "may be biased (increase target_accept or reparameterise).",
+                        RuntimeWarning,
+                        stacklevel=3,
+                    )
+                break
+    posterior = getattr(trace, "posterior", None)
+    if posterior is not None and posterior.sizes.get("chain", 1) > 1:
+        try:
+            az = _require_arviz()
+            rhat = az.rhat(trace, var_names=var_names)
+            vals = [np.asarray(rhat[v].values, dtype=float).ravel() for v in rhat.data_vars]
+            vals = [v for v in vals if v.size]
+            if vals:
+                max_rhat = float(np.nanmax(np.concatenate(vals)))
+                out["max_rhat"] = max_rhat
+                if max_rhat > rhat_threshold:
+                    warnings.warn(
+                        f"max R-hat = {max_rhat:.3f} > {rhat_threshold}: chains have not "
+                        "converged (or labels switched); do not trust the posterior.",
+                        RuntimeWarning,
+                        stacklevel=3,
+                    )
+        except ImportError:
+            pass
+    return out
+
+
 # ======================================================================
 # §0  BASE CLASS
 # ======================================================================
@@ -94,6 +148,7 @@ class BayesianModel(abc.ABC):
         """Initialise the base Bayesian model with empty state."""
         self.trace_: Any = None
         self.model_: Any = None
+        self.diagnostics_: dict[str, Any] = {}
         self._is_fitted: bool = False
 
     @abc.abstractmethod
@@ -128,9 +183,16 @@ class BayesianModel(abc.ABC):
         draws, tune, chains, cores : int
             MCMC configuration.
         target_accept : float
+            Passed to every sampler (PyMC NUTS, nutpie, NumPyro, BlackJAX).
         seed : int
         **kwargs
             Extra arguments passed to the sampler.
+
+        Notes
+        -----
+        The pointwise log-likelihood is stored (for :meth:`score`) and the
+        trace is checked for divergences and R-hat; problems raise a
+        ``RuntimeWarning`` and are recorded in ``self.diagnostics_``.
 
         Returns
         -------
@@ -144,25 +206,34 @@ class BayesianModel(abc.ABC):
         # their own fit(); _build_model reads those, so no kwargs flow here.
         self.model_ = self._build_model(X, y)
 
+        idata_kwargs = dict(kwargs.pop("idata_kwargs", {}) or {})
+        idata_kwargs.setdefault("log_likelihood", True)
+
         with self.model_:
             if sampler in ("auto", "nuts"):
                 if sampler == "auto":
-                    # Try nutpie; fall back to PyMC NUTS on a *logged* failure
+                    # Try nutpie; fall back to PyMC NUTS on a *warned* failure
                     # (never silently swallow a real model error).
                     try:
                         import nutpie
-
-                        compiled = nutpie.compile_pymc_model(self.model_)
-                        self.trace_ = nutpie.sample(
-                            compiled, draws=draws, tune=tune, chains=chains, seed=seed
-                        )
-                        logger.info("Fitted with nutpie (%d draws × %d chains).", draws, chains)
-                        self._is_fitted = True
-                        return self
                     except ImportError:
+                        nutpie = None
                         logger.info("nutpie not installed; using PyMC NUTS.")
-                    except Exception as exc:
-                        logger.warning("nutpie failed (%s); falling back to PyMC NUTS.", exc)
+                    if nutpie is not None:
+                        try:
+                            self.trace_ = self._sample_nutpie(
+                                nutpie, draws, tune, chains, cores, target_accept, seed, kwargs
+                            )
+                            logger.info(
+                                "Fitted with nutpie (%d draws × %d chains).", draws, chains
+                            )
+                            return self._finalize_fit()
+                        except (ValueError, TypeError, NotImplementedError, RuntimeError) as exc:
+                            warnings.warn(
+                                f"nutpie failed ({exc!r}); falling back to PyMC NUTS.",
+                                RuntimeWarning,
+                                stacklevel=2,
+                            )
 
                 # PyMC native NUTS (explicit sampler="nuts" or auto-fallback).
                 self.trace_ = pm.sample(
@@ -173,7 +244,8 @@ class BayesianModel(abc.ABC):
                     target_accept=target_accept,
                     random_seed=seed,
                     return_inferencedata=True,
-                    progressbar=True,
+                    progressbar=kwargs.pop("progressbar", True),
+                    idata_kwargs=idata_kwargs,
                     **kwargs,
                 )
                 logger.info("Fitted with PyMC NUTS (%d draws × %d chains).", draws, chains)
@@ -181,13 +253,8 @@ class BayesianModel(abc.ABC):
             elif sampler == "nutpie":
                 import nutpie
 
-                compiled = nutpie.compile_pymc_model(self.model_)
-                self.trace_ = nutpie.sample(
-                    compiled,
-                    draws=draws,
-                    tune=tune,
-                    chains=chains,
-                    seed=seed,
+                self.trace_ = self._sample_nutpie(
+                    nutpie, draws, tune, chains, cores, target_accept, seed, kwargs
                 )
                 logger.info("Fitted with nutpie (%d draws × %d chains).", draws, chains)
 
@@ -200,7 +267,8 @@ class BayesianModel(abc.ABC):
                     chains=chains,
                     target_accept=target_accept,
                     random_seed=seed,
-                    progress_bar=True,
+                    progressbar=kwargs.pop("progressbar", True),
+                    idata_kwargs=idata_kwargs,
                     **kwargs,
                 )
                 logger.info("Fitted with NumPyro (%d draws × %d chains).", draws, chains)
@@ -217,6 +285,7 @@ class BayesianModel(abc.ABC):
                     # BlackJAX's progress bar needs the optional `fastprogress`
                     # package; default off so it works on a base install.
                     progressbar=kwargs.pop("progressbar", False),
+                    idata_kwargs=idata_kwargs,
                     **kwargs,
                 )
                 logger.info("Fitted with BlackJAX (%d draws × %d chains).", draws, chains)
@@ -224,6 +293,37 @@ class BayesianModel(abc.ABC):
             else:
                 raise ValueError(f"Unknown sampler: {sampler!r}")
 
+        return self._finalize_fit()
+
+    def _sample_nutpie(self, nutpie, draws, tune, chains, cores, target_accept, seed, kwargs):
+        """Sample with nutpie, honouring target_accept / cores / extra kwargs."""
+        compiled = nutpie.compile_pymc_model(self.model_)
+        return nutpie.sample(
+            compiled,
+            draws=draws,
+            tune=tune,
+            chains=chains,
+            cores=cores,
+            seed=seed,
+            target_accept=target_accept,
+            **kwargs,
+        )
+
+    def _finalize_fit(self) -> BayesianModel:
+        """Store pointwise log-likelihood (for LOO/WAIC) and check diagnostics."""
+        pm = _require_pymc()
+        if "log_likelihood" not in getattr(self.trace_, "groups", lambda: [])():
+            try:
+                with self.model_:
+                    pm.compute_log_likelihood(self.trace_, progressbar=False)
+            except (ValueError, TypeError, NotImplementedError, AttributeError) as exc:
+                warnings.warn(
+                    f"Could not compute pointwise log-likelihood ({exc!r}); "
+                    "score() (LOO/WAIC) will be unavailable.",
+                    RuntimeWarning,
+                    stacklevel=3,
+                )
+        self.diagnostics_ = check_sampling(self.trace_)
         self._is_fitted = True
         return self
 
@@ -233,6 +333,7 @@ class BayesianModel(abc.ABC):
         *,
         n_samples: int = 500,
         seed: int | None = None,
+        **data_kwargs: Any,
     ) -> np.ndarray:
         """Generate posterior predictive samples.
 
@@ -241,8 +342,12 @@ class BayesianModel(abc.ABC):
         X_new : ndarray, shape (m, d)
             New feature values.
         n_samples : int
-            Number of posterior predictive draws.
+            Number of posterior predictive draws (the posterior is thinned
+            to about this many draws).
         seed : int
+        **data_kwargs
+            Model-specific prediction data (e.g. ``site_labels`` for
+            :class:`HierarchicalLinearModel`).
 
         Returns
         -------
@@ -251,18 +356,38 @@ class BayesianModel(abc.ABC):
         """
         self._check_fitted()
         pm = _require_pymc()
+        X_new = np.asarray(X_new, dtype=np.float64)
+        m = X_new.shape[0]
+
+        # Resize every data container to the new rows: the observed node takes
+        # its shape from ``y_obs``, so it must be resized together with X.
+        new_data = {"X": X_new, "y_obs": np.zeros(m)}
+        new_data.update(self._extra_predict_data(m, **data_kwargs))
+
+        # Thin the posterior so that about ``n_samples`` draws are used.
+        post = self.trace_.posterior
+        total = int(post.sizes["chain"] * post.sizes["draw"])
+        step = max(1, int(np.ceil(total / max(int(n_samples), 1))))
+        thinned = self.trace_.isel(draw=slice(None, None, step))
 
         with self.model_:
-            pm.set_data({"X": X_new})
+            pm.set_data(new_data)
             ppc = pm.sample_posterior_predictive(
-                self.trace_,
+                thinned,
                 random_seed=seed,
                 predictions=True,
+                progressbar=False,
             )
 
-        # Extract prediction array.
         pred_vars = list(ppc.predictions.data_vars)
-        return ppc.predictions[pred_vars[0]].values.reshape(-1, X_new.shape[0])
+        out = ppc.predictions[pred_vars[0]].values.reshape(-1, m)
+        return out[: int(n_samples)]
+
+    def _extra_predict_data(self, m: int, **data_kwargs: Any) -> dict[str, Any]:
+        """Extra data containers to update at prediction time (subclass hook)."""
+        if data_kwargs:
+            raise TypeError(f"Unexpected prediction arguments: {sorted(data_kwargs)}")
+        return {}
 
     def score(
         self,
@@ -594,6 +719,21 @@ class HierarchicalLinearModel(BayesianModel):
         )
         return super().fit(X, y, **kwargs)
 
+    def _extra_predict_data(self, m: int, **data_kwargs: Any) -> dict[str, Any]:
+        """New-site indices for prediction (``site_labels`` required)."""
+        site_labels = data_kwargs.pop("site_labels", None)
+        if data_kwargs:
+            raise TypeError(f"Unexpected prediction arguments: {sorted(data_kwargs)}")
+        if site_labels is None:
+            raise ValueError("HierarchicalLinearModel.predict needs `site_labels`.")
+        site_labels = np.asarray(site_labels)
+        if site_labels.shape[0] != m:
+            raise ValueError("site_labels must have one entry per row of X_new.")
+        unknown = set(np.unique(site_labels).tolist()) - set(self._unique_sites.tolist())
+        if unknown:
+            raise ValueError(f"Unknown site(s) at prediction time: {sorted(unknown)}")
+        return {"site_idx": np.searchsorted(self._unique_sites, site_labels)}
+
     def _build_model(self, X: np.ndarray, y: np.ndarray, **kw: Any) -> Any:
         """Build the hierarchical linear PyMC model with site random effects."""
         pm = _require_pymc()
@@ -724,12 +864,19 @@ class GaussianProcessNormative(BayesianModel):
 
         return model
 
-    def predict(self, X_new: np.ndarray, **kwargs) -> tuple[np.ndarray, np.ndarray]:
+    def predict(
+        self, X_new: np.ndarray, *, pred_noise: bool = True, **kwargs
+    ) -> tuple[np.ndarray, np.ndarray]:
         """Posterior predictive mean and std at new points.
 
         Parameters
         ----------
         X_new : ndarray, shape (m, d)
+        pred_noise : bool
+            If ``True`` (default) the predictive distribution of a new
+            *observation* (latent GP + observation noise) is returned; this
+            is what an individual's deviation must be compared with. If
+            ``False``, only the latent mean function's uncertainty.
 
         Returns
         -------
@@ -744,7 +891,8 @@ class GaussianProcessNormative(BayesianModel):
         pred_name = f"f_pred_{uuid.uuid4().hex[:8]}"
 
         with self.model_:
-            self._gp.conditional(pred_name, X_new)
+            self._gp.conditional(pred_name, np.asarray(X_new, dtype=np.float64),
+                                 pred_noise=pred_noise)
             ppc = pm.sample_posterior_predictive(
                 self.trace_,
                 var_names=[pred_name],
@@ -772,8 +920,8 @@ class GaussianProcessNormative(BayesianModel):
         float
             Z-score (positive = above normative).
         """
-        X_new = np.array([[age]])
-        mean, std = self.predict(X_new)
+        X_new = np.array([[age]], dtype=np.float64)
+        mean, std = self.predict(X_new, pred_noise=True)
         return float((observed_value - mean[0]) / (std[0] + 1e-30))
 
 
@@ -786,15 +934,23 @@ class BayesianSpatialModel(BayesianModel):
     """Vertex-wise Bayesian model with spatial GMRF prior.
 
     Places a Gaussian Markov Random Field prior on the vertex-level
-    effects, so neighbouring vertices share information.  This is
+    group effects, so neighbouring vertices share information.  This is
     Bayesian spatial smoothing — more principled than Gaussian
     kernel pre-smoothing.
+
+    Model::
+
+        y[s, v] = alpha + b[v] + (beta_group + delta[v]) * g[s] + eps
+        delta ~ GMRF with precision (spatial_strength * L + I) / sigma_spatial^2
+
+    where ``L`` is the graph Laplacian of the mesh, ``b`` a per-vertex
+    baseline and ``beta_group + delta[v]`` the group effect at vertex ``v``.
 
     Parameters
     ----------
     spatial_strength : float
-        Precision of the GMRF prior (higher = more spatial
-        smoothing).
+        Weight of the Laplacian in the GMRF precision (higher = more spatial
+        smoothing of the group-effect map).
 
     Examples
     --------
@@ -809,7 +965,8 @@ class BayesianSpatialModel(BayesianModel):
         Parameters
         ----------
         spatial_strength : float
-            Precision of the spatial prior (higher = more smoothing).
+            Weight of the graph Laplacian in the prior precision (higher =
+            more smoothing).
         """
         super().__init__()
         self.spatial_strength = spatial_strength
@@ -827,12 +984,12 @@ class BayesianSpatialModel(BayesianModel):
             Mesh or kNN adjacency.
         """
         self._adjacency = adjacency
-        self._group_labels = np.asarray(group_labels)
+        self._group_labels = np.asarray(group_labels, dtype=np.float64).ravel()
         self._vertex_data = np.asarray(vertex_data, dtype=np.float64)
 
         # Build as X (group) → y (mean vertex descriptor)
-        X = group_labels.reshape(-1, 1).astype(np.float64)
-        y = vertex_data.mean(axis=1)  # collapse vertices for base .fit()
+        X = self._group_labels.reshape(-1, 1)
+        y = self._vertex_data.mean(axis=1)  # collapse vertices for base .fit()
         return super().fit(X, y, **kwargs)
 
     def _build_model(self, X: np.ndarray, y: np.ndarray, **kw: Any) -> Any:
@@ -840,64 +997,56 @@ class BayesianSpatialModel(BayesianModel):
         pm = _require_pymc()
         import scipy.sparse as sp
 
-        N = self._vertex_data.shape[1]
-        S = len(self._group_labels)
+        Y = self._vertex_data
+        N = Y.shape[1]
+        g = self._group_labels
 
-        # Build GMRF precision from adjacency (graph Laplacian + diagonal).
-        adj = sp.csr_matrix(self._adjacency)
+        # Graph Laplacian of the (symmetrised, non-negative) adjacency.
+        adj = sp.csr_matrix(self._adjacency, dtype=np.float64)
+        adj = abs(adj - sp.diags(adj.diagonal()))
+        adj = (adj + adj.T) * 0.5
         degree = np.asarray(adj.sum(axis=1)).ravel()
-        Q = sp.diags(degree) - adj + sp.eye(N) * self.spatial_strength
+        L = (sp.diags(degree) - adj).toarray()
+        Q0 = self.spatial_strength * L + np.eye(N)  # proper (PD) precision
+        sd = float(Y.std()) or 1.0
 
         with pm.Model() as model:
-            # Global intercept and group effect.
-            alpha = pm.Normal("alpha", mu=0, sigma=10)
-            beta_group = pm.Normal("beta_group", mu=0, sigma=5)
+            alpha = pm.Normal("alpha", mu=float(Y.mean()), sigma=10 * sd)
+            baseline = pm.Normal("vertex_baseline", mu=0, sigma=5 * sd, shape=N)
+            beta_group = pm.Normal("beta_group", mu=0, sigma=5 * sd)
 
-            # Vertex-level group effect with spatial prior.
-            # Simplified: model group difference per vertex as
-            # spatially smooth via CAR-like prior.
-            sigma_spatial = pm.HalfNormal("sigma_spatial", sigma=1)
-            tau_spatial = 1 / (sigma_spatial**2)
-
-            # Vertex-level effects (simplified as Normal with spatial std).
-            vertex_effect = pm.Normal(
-                "vertex_effect",
-                mu=0,
-                sigma=sigma_spatial,
-                shape=N,
+            # Group-by-vertex deviation with a proper GMRF prior:
+            # log p(delta) = -0.5/sigma^2 delta^T Q0 delta - N log sigma + const.
+            sigma_spatial = pm.HalfNormal("sigma_spatial", sigma=sd)
+            delta = pm.Flat("vertex_effect", shape=N)
+            quad = pm.math.dot(delta, pm.math.dot(Q0, delta))
+            pm.Potential(
+                "spatial_prior",
+                -0.5 * quad / sigma_spatial**2 - N * pm.math.log(sigma_spatial),
             )
+            group_effect = pm.Deterministic("group_effect_map", beta_group + delta)
 
-            # Spatial penalty as potential (soft GMRF).
-            Q_dense = Q.toarray()
-            spatial_penalty = (
-                -0.5 * tau_spatial * pm.math.dot(vertex_effect, pm.math.dot(Q_dense, vertex_effect))
-            )
-            pm.Potential("spatial_prior", spatial_penalty)
-
-            # Likelihood: per-subject, per-vertex.
-            sigma_obs = pm.HalfNormal("sigma_obs", sigma=self._vertex_data.std())
-            group_float = self._group_labels.astype(np.float64)
-
-            for s in range(S):
-                mu_s = alpha + beta_group * group_float[s] + vertex_effect
-                pm.Normal(
-                    f"y_{s}",
-                    mu=mu_s,
-                    sigma=sigma_obs,
-                    observed=self._vertex_data[s],
-                )
+            sigma_obs = pm.HalfNormal("sigma_obs", sigma=sd)
+            mu = alpha + baseline[None, :] + g[:, None] * group_effect[None, :]
+            pm.Normal("y", mu=mu, sigma=sigma_obs, observed=Y)
 
         return model
 
+    def predict(self, X_new=None, **kwargs):
+        """Not applicable; use :meth:`vertex_effect_map`."""
+        raise NotImplementedError(
+            "BayesianSpatialModel does not support predict(); use vertex_effect_map()."
+        )
+
     def vertex_effect_map(self) -> np.ndarray:
-        """Posterior mean of vertex-level group effect.
+        """Posterior mean of the vertex-level group effect (group 1 - group 0).
 
         Returns
         -------
         ndarray, shape (N,)
         """
         self._check_fitted()
-        return self.trace_.posterior["vertex_effect"].values.mean(axis=(0, 1))
+        return self.trace_.posterior["group_effect_map"].values.mean(axis=(0, 1))
 
 
 # ======================================================================
@@ -957,7 +1106,6 @@ class BayesianConnectome(BayesianModel):
         # Extract upper triangle for modeling.
         triu_idx = np.triu_indices(self._R, k=1)
         self._triu_idx = triu_idx
-        len(triu_idx[0])
 
         # Stack into X (group indicator), y (edge values).
         a_edges = np.array([c[triu_idx] for c in a])  # (n_a, n_edges)
@@ -970,12 +1118,16 @@ class BayesianConnectome(BayesianModel):
         return super().fit(X, y, **kwargs)
 
     def _build_model(self, X: np.ndarray, y: np.ndarray, **kw: Any) -> Any:
-        """Build the hierarchical connectome comparison PyMC model."""
+        """Build the hierarchical connectome comparison PyMC model.
+
+        The likelihood is at the **subject** level: every subject's edge
+        vector is an observation, so the posterior of ``edge_diff`` tightens
+        with sample size (it does not when only group means are observed).
+        """
         pm = _require_pymc()
         n_edges = self._a_edges.shape[1]
-        a_mean = self._a_edges.mean(axis=0)
-        b_mean = self._b_edges.mean(axis=0)
         all_edges = np.concatenate([self._a_edges, self._b_edges])
+        sd = float(all_edges.std()) or 1.0
 
         with pm.Model() as model:
             # Hierarchical prior on edge-level differences.
@@ -993,25 +1145,26 @@ class BayesianConnectome(BayesianModel):
             # Group means.
             grand_mean = pm.Normal(
                 "grand_mean",
-                mu=all_edges.mean(),
-                sigma=all_edges.std(),
+                mu=float(all_edges.mean()),
+                sigma=2 * sd,
                 shape=n_edges,
             )
 
-            sigma_obs = pm.HalfNormal("sigma_obs", sigma=all_edges.std())
+            # Between-subject SD per edge.
+            sigma_obs = pm.HalfNormal("sigma_obs", sigma=sd, shape=n_edges)
 
-            # Likelihoods.
+            # Likelihoods: one row per subject.
             pm.Normal(
                 "obs_a",
                 mu=grand_mean + edge_diff / 2,
                 sigma=sigma_obs,
-                observed=a_mean,
+                observed=self._a_edges,
             )
             pm.Normal(
                 "obs_b",
                 mu=grand_mean - edge_diff / 2,
                 sigma=sigma_obs,
-                observed=b_mean,
+                observed=self._b_edges,
             )
 
         return model
