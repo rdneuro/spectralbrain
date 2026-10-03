@@ -71,6 +71,10 @@ def _require_arviz():
         ) from exc
 
 
+class SamplingWarning(RuntimeWarning):
+    """Warning emitted when MCMC diagnostics (divergences, R-hat) look unhealthy."""
+
+
 def check_sampling(
     trace: Any,
     *,
@@ -79,7 +83,7 @@ def check_sampling(
 ) -> dict[str, Any]:
     """Inspect an InferenceData for divergences and poor convergence.
 
-    Emits a ``RuntimeWarning`` when NUTS reported divergent transitions or
+    Emits a :class:`SamplingWarning` (a ``RuntimeWarning`` subclass) when NUTS reported divergent transitions or
     when any monitored parameter has R-hat above ``rhat_threshold``.
 
     Returns
@@ -98,7 +102,7 @@ def check_sampling(
                     warnings.warn(
                         f"{n_div} divergent transition(s) after tuning; the posterior "
                         "may be biased (increase target_accept or reparameterise).",
-                        RuntimeWarning,
+                        SamplingWarning,
                         stacklevel=3,
                     )
                 break
@@ -116,7 +120,7 @@ def check_sampling(
                     warnings.warn(
                         f"max R-hat = {max_rhat:.3f} > {rhat_threshold}: chains have not "
                         "converged (or labels switched); do not trust the posterior.",
-                        RuntimeWarning,
+                        SamplingWarning,
                         stacklevel=3,
                     )
         except ImportError:
@@ -1209,4 +1213,6 @@ __all__: list[str] = [
     "GaussianProcessNormative",
     "HierarchicalLinearModel",
     "HorseshoeRegression",
+    "SamplingWarning",
+    "check_sampling",
 ]
