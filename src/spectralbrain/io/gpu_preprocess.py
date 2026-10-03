@@ -45,8 +45,10 @@ integration where possible and subprocess fallback where required.
 from __future__ import annotations
 
 import gc
+import inspect
 import os
 import re
+import shlex
 import subprocess
 import time
 import urllib.request
@@ -230,6 +232,67 @@ def ensure_template(
     return local
 
 
+def _q(path: PathLike) -> str:
+    """Shell-quote a path for the ``shell=True`` command strings."""
+    return shlex.quote(str(path))
+
+
+def _route_kwargs(func, kwargs: dict, label: str) -> dict:
+    """Keep only the keyword arguments *func* accepts (log the rest).
+
+    The ``auto``/dispatch wrappers receive one set of options for several
+    backends with different signatures (e.g. ``device`` is an HD-BET option,
+    ``mask_path`` a SynthStrip one); forwarding everything would raise
+    ``TypeError`` in the backend that does not take it.
+    """
+    params = inspect.signature(func).parameters
+    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
+        return dict(kwargs)
+    kept = {k: v for k, v in kwargs.items() if k in params}
+    dropped = sorted(set(kwargs) - set(kept))
+    if dropped:
+        logger.debug("%s: ignoring options not used by this backend: %s", label, dropped)
+    return kept
+
+
+def _snapshot(out_dir: Path) -> dict[Path, float]:
+    """Map of existing files → mtime (to detect outputs of a later run)."""
+    return {f: f.stat().st_mtime for f in out_dir.rglob("*") if f.is_file()}
+
+
+def _pick_new_output(
+    out_dir: Path,
+    before: dict[Path, float],
+    patterns: tuple[str, ...],
+    label: str,
+) -> Path:
+    """Return the single NIfTI written/updated by the last run in *out_dir*.
+
+    Candidates are files created or modified since *before*, tried against
+    *patterns* in order (most specific first). Zero or several matches raise
+    instead of silently returning an arbitrary (possibly stale) file.
+    """
+    fresh = sorted(
+        f for f in out_dir.rglob("*.nii*") if f.is_file() and before.get(f) != f.stat().st_mtime
+    )
+    if not fresh:
+        raise FileNotFoundError(f"{label} produced no new NIfTI output in {out_dir}")
+    for pat in patterns:
+        hits = [f for f in fresh if f.match(pat)]
+        if len(hits) == 1:
+            return hits[0]
+        if len(hits) > 1:
+            raise RuntimeError(
+                f"{label}: ambiguous outputs for pattern {pat!r} in {out_dir}: "
+                f"{[h.name for h in hits]}"
+            )
+    if len(fresh) == 1:
+        return fresh[0]
+    raise RuntimeError(
+        f"{label}: cannot tell which output is the parcellation: {[f.name for f in fresh]}"
+    )
+
+
 # ======================================================================
 # §3  Subprocess runner with VRAM isolation
 # ======================================================================
@@ -304,6 +367,7 @@ def enhance_bmex(
     *,
     age_group: str = "adult",
     mode: str = "enhance",
+    overwrite: bool = False,
 ) -> Path:
     """Enhance a T1w image using BME-X (Sun et al., 2025).
 
@@ -338,7 +402,7 @@ def enhance_bmex(
     out = Path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
 
-    if out.exists():
+    if out.exists() and not overwrite:
         logger.info("BME-X output exists, skipping: %s", out.name)
         return out
 
@@ -360,11 +424,11 @@ def enhance_bmex(
         logger.info("BME-X Python not found, trying Docker CLI")
         cmd = (
             f"docker run --gpus all --rm "
-            f"-v {inp.parent}:/input -v {out.parent}:/output "
+            f"-v {_q(f'{inp.parent}:/input')} -v {_q(f'{out.parent}:/output')} "
             f"yuesun814/bme-x:v1.0.5 "
-            f"--input /input/{inp.name} "
-            f"--output /output/{out.name} "
-            f"--age_group {age_group} --mode {mode}"
+            f"--input {_q('/input/' + inp.name)} "
+            f"--output {_q('/output/' + out.name)} "
+            f"--age_group {_q(age_group)} --mode {_q(mode)}"
         )
         _run_cmd(cmd, "BME-X (Docker)")
 
@@ -377,6 +441,8 @@ def enhance_bmex(
 def enhance_deepn4(
     input_path: PathLike,
     output_path: PathLike,
+    *,
+    overwrite: bool = False,
 ) -> Path:
     """GPU bias field correction via DeepN4 (DIPY).
 
@@ -404,7 +470,7 @@ def enhance_deepn4(
     out = Path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
 
-    if out.exists():
+    if out.exists() and not overwrite:
         logger.info("DeepN4 output exists, skipping: %s", out.name)
         return out
 
@@ -428,8 +494,13 @@ def enhance_deepn4(
     model._DeepN4__predict = _patched_predict
     logger.debug("Patched DeepN4.__predict() for CUDA → cpu().numpy()")
 
-    corrected = model.predict(data, affine)
-    nib.save(nib.Nifti1Image(corrected, affine, img.header), str(out))
+    corrected = np.asarray(model.predict(data, affine), dtype=np.float32)
+    # Store as float32: reusing the input header verbatim would keep e.g. a
+    # uint8/int16 on-disk dtype and quantise the corrected intensities.
+    hdr = img.header.copy()
+    hdr.set_data_dtype(np.float32)
+    hdr.set_slope_inter(None, None)
+    nib.save(nib.Nifti1Image(corrected, affine, hdr), str(out))
 
     # Free all GPU memory
     del data, corrected, img  # model freed on return
@@ -468,17 +539,35 @@ def enhance(
     Path
         Path to the enhanced image.
     """
+    return _enhance_impl(input_path, output_path, method=method, **kwargs)[0]
+
+
+def _enhance_impl(
+    input_path: PathLike,
+    output_path: PathLike,
+    *,
+    method: str = "auto",
+    **kwargs,
+) -> tuple[Path, str]:
+    """:func:`enhance` that also reports the backend actually used."""
     if method == "bmex":
-        return enhance_bmex(input_path, output_path, **kwargs)
-    elif method == "deepn4":
-        return enhance_deepn4(input_path, output_path)
+        return enhance_bmex(input_path, output_path, **_route_kwargs(enhance_bmex, kwargs, "BME-X")), "bmex"
+    if method == "deepn4":
+        return (
+            enhance_deepn4(input_path, output_path, **_route_kwargs(enhance_deepn4, kwargs, "DeepN4")),
+            "deepn4",
+        )
+    if method != "auto":
+        raise ValueError(f"Unknown enhance method {method!r}")
 
     # Auto: try BME-X first
     try:
-        return enhance_bmex(input_path, output_path, **kwargs)
+        out = enhance_bmex(input_path, output_path, **_route_kwargs(enhance_bmex, kwargs, "BME-X"))
+        return out, "bmex"
     except (ImportError, FileNotFoundError, RuntimeError) as exc:
         logger.warning("BME-X unavailable (%s), falling back to DeepN4", exc)
-        return enhance_deepn4(input_path, output_path)
+        out = enhance_deepn4(input_path, output_path, **_route_kwargs(enhance_deepn4, kwargs, "DeepN4"))
+        return out, "deepn4"
 
 
 # ======================================================================
@@ -492,6 +581,7 @@ def skull_strip_hdbet(
     *,
     device: str = "cuda:0",
     save_mask: bool = True,
+    overwrite: bool = False,
 ) -> tuple[Path, Path | None]:
     """Brain extraction via HD-BET (Isensee et al., 2019).
 
@@ -515,7 +605,7 @@ def skull_strip_hdbet(
     out = Path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
 
-    if out.exists():
+    if out.exists() and not overwrite:
         logger.info("HD-BET output exists, skipping: %s", out.name)
         mask = out.parent / out.name.replace(".nii.gz", "_mask.nii.gz")
         return out, mask if mask.exists() else None
@@ -524,7 +614,7 @@ def skull_strip_hdbet(
     purge_vram()
 
     mask_flag = "--save_bet_mask" if save_mask else ""
-    cmd = f"hd-bet -i {inp} -o {out} -device '{device}' {mask_flag}"
+    cmd = f"hd-bet -i {_q(inp)} -o {_q(out)} -device {_q(device)} {mask_flag}"
     _run_cmd(cmd, "HD-BET")
 
     if not out.exists():
@@ -541,6 +631,8 @@ def skull_strip_synthstrip(
     input_path: PathLike,
     output_path: PathLike,
     mask_path: PathLike | None = None,
+    *,
+    overwrite: bool = False,
 ) -> tuple[Path, Path | None]:
     """Brain extraction via SynthStrip (Hoopes et al., 2022).
 
@@ -565,13 +657,13 @@ def skull_strip_synthstrip(
     out = Path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
 
-    if out.exists():
+    if out.exists() and not overwrite:
         logger.info("SynthStrip output exists, skipping: %s", out.name)
-        return out, Path(mask_path) if mask_path else None
+        return out, Path(mask_path) if mask_path and Path(mask_path).exists() else None
 
     t0 = time.time()
-    mask_flag = f"--mask {mask_path}" if mask_path else ""
-    cmd = f"mri_synthstrip -i {inp} -o {out} {mask_flag} --gpu"
+    mask_flag = f"--mask {_q(mask_path)}" if mask_path else ""
+    cmd = f"mri_synthstrip -i {_q(inp)} -o {_q(out)} {mask_flag} --gpu"
     _run_cmd(cmd, "SynthStrip")
 
     purge_vram()
@@ -605,17 +697,42 @@ def skull_strip(
     (Path, Path or None)
         Brain image and mask paths.
     """
+    brain, mask, _method = _skull_strip_impl(input_path, output_path, method=method, **kwargs)
+    return brain, mask
+
+
+def _skull_strip_impl(
+    input_path: PathLike,
+    output_path: PathLike,
+    *,
+    method: str = "auto",
+    **kwargs,
+) -> tuple[Path, Path | None, str]:
+    """:func:`skull_strip` that routes per-backend kwargs and reports the method."""
+
+    def _hdbet() -> tuple[Path, Path | None]:
+        return skull_strip_hdbet(
+            input_path, output_path, **_route_kwargs(skull_strip_hdbet, kwargs, "HD-BET")
+        )
+
+    def _synth() -> tuple[Path, Path | None]:
+        return skull_strip_synthstrip(
+            input_path, output_path, **_route_kwargs(skull_strip_synthstrip, kwargs, "SynthStrip")
+        )
+
     if method == "hdbet":
-        return skull_strip_hdbet(input_path, output_path, **kwargs)
-    elif method == "synthstrip":
-        return skull_strip_synthstrip(input_path, output_path, **kwargs)
+        return (*_hdbet(), "hdbet")
+    if method == "synthstrip":
+        return (*_synth(), "synthstrip")
+    if method != "auto":
+        raise ValueError(f"Unknown skull-strip method {method!r}")
 
     # Auto: try HD-BET first
     try:
-        return skull_strip_hdbet(input_path, output_path, **kwargs)
+        return (*_hdbet(), "hdbet")
     except (FileNotFoundError, RuntimeError) as exc:
         logger.warning("HD-BET failed (%s), trying SynthStrip", exc)
-        return skull_strip_synthstrip(input_path, output_path, **kwargs)
+        return (*_synth(), "synthstrip")
 
 
 # ======================================================================
@@ -628,6 +745,8 @@ def register_synthmorph_affine(
     fixed_path: PathLike,
     output_path: PathLike,
     transform_path: PathLike | None = None,
+    *,
+    overwrite: bool = False,
 ) -> tuple[Path, Path | None]:
     """Affine registration via SynthMorph (Hoffmann et al., 2024).
 
@@ -656,16 +775,16 @@ def register_synthmorph_affine(
     out = Path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
 
-    if out.exists():
+    if out.exists() and not overwrite:
         logger.info("SynthMorph affine output exists, skipping: %s", out.name)
-        xfm = Path(transform_path) if transform_path else None
+        xfm = Path(transform_path) if transform_path and Path(transform_path).exists() else None
         return out, xfm
 
     t0 = time.time()
     purge_vram()
 
-    xfm_flag = f"--trans {transform_path}" if transform_path else ""
-    cmd = f"mri_synthmorph -m affine -i {mov} -t {fix} -o {out} {xfm_flag} --gpu"
+    xfm_flag = f"--trans {_q(transform_path)}" if transform_path else ""
+    cmd = f"mri_synthmorph -m affine -i {_q(mov)} -t {_q(fix)} -o {_q(out)} {xfm_flag} --gpu"
     _run_cmd(cmd, "SynthMorph affine", timeout=120)
 
     purge_vram()
@@ -682,6 +801,7 @@ def register_unigradicon(
     transform_path: PathLike,
     *,
     io_iterations: int | None = None,
+    overwrite: bool = False,
 ) -> tuple[Path, Path]:
     """Deformable registration via uniGradICON (Tian et al., 2024).
 
@@ -713,7 +833,7 @@ def register_unigradicon(
     xfm = Path(transform_path)
     warp.parent.mkdir(parents=True, exist_ok=True)
 
-    if warp.exists():
+    if warp.exists() and not overwrite:
         logger.info("uniGradICON output exists, skipping: %s", warp.name)
         return warp, xfm
 
@@ -723,10 +843,10 @@ def register_unigradicon(
     io_arg = "None" if io_iterations is None else str(io_iterations)
     cmd = (
         f"unigradicon-register "
-        f"--fixed={fix} --fixed_modality=mri "
-        f"--moving={mov} --moving_modality=mri "
-        f"--transform_out={xfm} "
-        f"--warped_moving_out={warp} "
+        f"--fixed={_q(fix)} --fixed_modality=mri "
+        f"--moving={_q(mov)} --moving_modality=mri "
+        f"--transform_out={_q(xfm)} "
+        f"--warped_moving_out={_q(warp)} "
         f"--io_iterations {io_arg}"
     )
     _run_cmd(cmd, "uniGradICON")
@@ -748,6 +868,7 @@ def register(
     *,
     affine_method: Literal["synthmorph", "none"] = "synthmorph",
     io_iterations: int | None = None,
+    overwrite: bool = False,
 ) -> dict[str, Path]:
     """Full registration pipeline: optional affine + deformable.
 
@@ -792,6 +913,7 @@ def register(
                 fixed_path,
                 affine_out,
                 affine_xfm,
+                overwrite=overwrite,
             )
             paths["affine"] = aff
             paths["affine_xfm"] = axfm
@@ -812,6 +934,7 @@ def register(
         warped,
         deform_xfm,
         io_iterations=io_iterations,
+        overwrite=overwrite,
     )
     paths["warped"] = warp
     paths["deformable_xfm"] = dxfm
@@ -832,6 +955,7 @@ def segment_synthseg(
     robust: bool = False,
     vol_path: PathLike | None = None,
     qc_path: PathLike | None = None,
+    overwrite: bool = False,
 ) -> Path:
     """Tissue segmentation + optional DKT parcellation via SynthSeg+.
 
@@ -863,7 +987,7 @@ def segment_synthseg(
     out = Path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
 
-    if out.exists():
+    if out.exists() and not overwrite:
         logger.info("SynthSeg output exists, skipping: %s", out.name)
         return out
 
@@ -871,15 +995,15 @@ def segment_synthseg(
     purge_vram()
 
     # Build command
-    parts = [f"mri_synthseg --i {inp} --o {out}"]
+    parts = [f"mri_synthseg --i {_q(inp)} --o {_q(out)}"]
     if parc:
         parts.append("--parc")
     if robust:
         parts.append("--robust")
     if vol_path:
-        parts.append(f"--vol {vol_path}")
+        parts.append(f"--vol {_q(vol_path)}")
     if qc_path:
-        parts.append(f"--qc {qc_path}")
+        parts.append(f"--qc {_q(qc_path)}")
     # GPU flag
     parts.append("--threads 1")  # SynthSeg handles GPU internally
 
@@ -931,9 +1055,9 @@ def segment_fastsurfer(
 
     cmd = (
         f"run_fastsurfer.sh "
-        f"--t1 {inp} --sd {out} --sid {subject_id} "
+        f"--t1 {_q(inp)} --sd {_q(out)} --sid {_q(subject_id)} "
         f"--seg_only --no_cereb --no_biasfield "
-        f"--device {device} --parallel --threads 4"
+        f"--device {_q(device)} --parallel --threads 4"
     )
     _run_cmd(cmd, "FastSurfer", timeout=300)
 
@@ -961,24 +1085,92 @@ def segment(
     method : {'synthseg', 'fastsurfer', 'auto'}
         ``'auto'`` tries SynthSeg first.
     **kwargs
-        Passed to the chosen method.
+        Passed to the chosen method; options a backend does not take are
+        ignored (e.g. ``parc``/``vol_path`` for FastSurfer, ``device`` /
+        ``subject_id`` for SynthSeg).
 
     Returns
     -------
     Path
-        Segmentation output path.
+        Segmentation output path. When *output_path* is a NIfTI/MGZ file
+        path, FastSurfer's ``aparc.DKTatlas+aseg`` volume is written there,
+        so both backends return the same kind of file. (Passing a directory
+        with ``method="fastsurfer"`` keeps the legacy behaviour and returns
+        the FastSurfer subject directory.)
     """
+    return _segment_impl(input_path, output_path, method=method, **kwargs)[0]
+
+
+def _is_volume_path(p: Path) -> bool:
+    return any(p.name.endswith(ext) for ext in (*NIFTI_EXTS, ".mgz", ".mgh"))
+
+
+def _segment_with_fastsurfer(input_path: PathLike, output_path: PathLike, **kwargs) -> Path:
+    """Run FastSurfer and, for a file *output_path*, export its aseg+DKT there."""
+    out = Path(output_path)
+    inp = Path(input_path)
+    stem = inp.name
+    for ext in NIFTI_EXTS:
+        if stem.endswith(ext):
+            stem = stem[: -len(ext)]
+            break
+    fs_kwargs = _route_kwargs(segment_fastsurfer, kwargs, "FastSurfer")
+    subject_id = fs_kwargs.pop("subject_id", None) or stem
+    if not _is_volume_path(out):
+        return segment_fastsurfer(inp, out, subject_id, **fs_kwargs)
+
+    if out.exists() and not kwargs.get("overwrite", False):
+        logger.info("FastSurfer segmentation exists, skipping: %s", out.name)
+        return out
+    subj_dir = segment_fastsurfer(inp, out.parent / "fastsurfer", subject_id, **fs_kwargs)
+    candidates = [
+        subj_dir / "mri" / name
+        for name in (
+            "aparc.DKTatlas+aseg.deep.mgz",
+            "aparc.DKTatlas+aseg.mgz",
+            "aseg.auto_noCCseg.mgz",
+        )
+    ]
+    seg_src = next((c for c in candidates if c.exists()), None)
+    if seg_src is None:
+        raise FileNotFoundError(f"FastSurfer segmentation not found in {subj_dir / 'mri'}")
+    import nibabel as nib
+
+    img = nib.load(str(seg_src))
+    data = np.rint(np.asarray(img.dataobj)).astype(np.int32)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    if out.name.endswith((".mgz", ".mgh")):
+        nib.save(nib.MGHImage(data, img.affine), str(out))
+    else:
+        nib.save(nib.Nifti1Image(data, img.affine), str(out))
+    logger.info("FastSurfer %s → %s", seg_src.name, out)
+    return out
+
+
+def _segment_impl(
+    input_path: PathLike,
+    output_path: PathLike,
+    *,
+    method: str = "auto",
+    **kwargs,
+) -> tuple[Path, str]:
+    """:func:`segment` that routes kwargs per backend and reports the method."""
     if method == "fastsurfer":
-        return segment_fastsurfer(input_path, output_path, **kwargs)
+        return _segment_with_fastsurfer(input_path, output_path, **kwargs), "fastsurfer"
+    if method not in ("synthseg", "auto"):
+        raise ValueError(f"Unknown segment method {method!r}")
 
     # SynthSeg is the default (contrast-agnostic, no FreeSurfer needed)
     try:
-        return segment_synthseg(input_path, output_path, **kwargs)
+        out = segment_synthseg(
+            input_path, output_path, **_route_kwargs(segment_synthseg, kwargs, "SynthSeg")
+        )
+        return out, "synthseg"
     except (FileNotFoundError, RuntimeError) as exc:
         if method == "synthseg":
             raise
         logger.warning("SynthSeg failed (%s), trying FastSurfer", exc)
-        return segment_fastsurfer(input_path, output_path, **kwargs)
+        return _segment_with_fastsurfer(input_path, output_path, **kwargs), "fastsurfer"
 
 
 # ======================================================================
@@ -1016,17 +1208,15 @@ def parcellate_openmap(
     purge_vram()
 
     # OpenMAP-T1 expects: python run_openmap.py --input ... --output ...
-    cmd = f"python -m openmap_t1 --input {inp} --output {out_dir}"
+    before = _snapshot(out_dir)
+    cmd = f"python -m openmap_t1 --input {_q(inp)} --output {_q(out_dir)}"
     _run_cmd(cmd, "OpenMAP-T1", timeout=300)
 
-    # Find the parcellation output
-    parcel_files = list(out_dir.glob("*parcellation*.nii.gz"))
-    if not parcel_files:
-        parcel_files = list(out_dir.glob("*.nii.gz"))
-    if not parcel_files:
-        raise FileNotFoundError(f"OpenMAP-T1 produced no output in {out_dir}")
-
-    result = parcel_files[0]
+    # Find the parcellation output written by *this* run (no stale files,
+    # no arbitrary pick among several candidates).
+    result = _pick_new_output(
+        out_dir, before, ("*parcellation*.nii*", "*280*.nii*", "*.nii*"), "OpenMAP-T1"
+    )
     purge_vram()
     elapsed = time.time() - t0
     logger.info("OpenMAP-T1 → %s (%.1fs)", result.name, elapsed)
@@ -1061,16 +1251,11 @@ def parcellate_brainparc(
     t0 = time.time()
     purge_vram()
 
-    cmd = f"python -m brainparc --input {inp} --output {out_dir}"
+    before = _snapshot(out_dir)
+    cmd = f"python -m brainparc --input {_q(inp)} --output {_q(out_dir)}"
     _run_cmd(cmd, "BrainParc", timeout=300)
 
-    parcel_files = list(out_dir.glob("*parc*.nii.gz"))
-    if not parcel_files:
-        parcel_files = list(out_dir.glob("*.nii.gz"))
-    if not parcel_files:
-        raise FileNotFoundError(f"BrainParc produced no output in {out_dir}")
-
-    result = parcel_files[0]
+    result = _pick_new_output(out_dir, before, ("*parc*.nii*", "*.nii*"), "BrainParc")
     purge_vram()
     elapsed = time.time() - t0
     logger.info("BrainParc → %s (%.1fs)", result.name, elapsed)
@@ -1157,6 +1342,7 @@ def preprocess_gpu(
     affine_pre: bool = True,
     device: str = "cuda:0",
     skip_existing: bool = True,
+    segment_space: Literal["native", "template"] = "native",
 ) -> PreprocessResult:
     """End-to-end GPU-native preprocessing pipeline.
 
@@ -1193,7 +1379,14 @@ def preprocess_gpu(
     device : str
         CUDA device for HD-BET / FastSurfer.
     skip_existing : bool
-        Skip steps whose outputs already exist.
+        Skip steps whose outputs already exist. ``False`` recomputes every
+        step and overwrites its outputs.
+    segment_space : {"native", "template"}
+        Image that is segmented. ``"native"`` (default) segments the
+        subject-space brain (after enhancement/skull-stripping), so label
+        maps keep the individual anatomy that shape descriptors measure.
+        ``"template"`` segments the registration output (the MNI-warped image,
+        whose shape has been normalised by the deformable warp).
 
     Returns
     -------
@@ -1221,9 +1414,7 @@ def preprocess_gpu(
     out_dir = Path(output_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    stem = inp.name
-    for ext in NIFTI_EXTS:
-        stem = stem.replace(ext, "")
+    stem = _strip_nifti_ext(inp.name)
 
     # Parse steps
     if steps is None:
@@ -1240,6 +1431,10 @@ def preprocess_gpu(
     if parcellate_method is not None:
         active_steps.add(Step.PARCELLATE)
 
+    if segment_space not in ("native", "template"):
+        raise ValueError(f"segment_space must be 'native' or 'template', got {segment_space!r}")
+    overwrite = not skip_existing
+
     result = PreprocessResult(input_path=inp)
     current = inp  # tracks the "current" image through the chain
 
@@ -1247,28 +1442,33 @@ def preprocess_gpu(
     if Step.ENHANCE in active_steps:
         t0 = time.time()
         enhanced = out_dir / f"{stem}_enhanced.nii.gz"
-        current = enhance(current, enhanced, method=enhance_method)
+        current, used = _enhance_impl(
+            current, enhanced, method=enhance_method, overwrite=overwrite
+        )
         result.enhanced_path = current
         result.timings["enhance"] = time.time() - t0
-        result.methods["enhance"] = enhance_method
+        result.methods["enhance"] = used
         logger.info("VRAM after enhance: %s", vram_info())
 
     # ── Step 2: Skull strip ──
     if Step.SKULL_STRIP in active_steps:
         t0 = time.time()
         brain = out_dir / f"{stem}_brain.nii.gz"
-        brain_path, mask_path = skull_strip(
+        brain_path, mask_path, used = _skull_strip_impl(
             current,
             brain,
             method=strip_method,
             device=device,
+            overwrite=overwrite,
         )
         current = brain_path
         result.brain_path = brain_path
         result.brain_mask_path = mask_path
         result.timings["skull_strip"] = time.time() - t0
-        result.methods["skull_strip"] = strip_method
+        result.methods["skull_strip"] = used
         logger.info("VRAM after skull_strip: %s", vram_info())
+
+    native = current  # last subject-space image (segmentation input by default)
 
     # ── Step 3: Register ──
     if Step.REGISTER in active_steps:
@@ -1284,6 +1484,7 @@ def preprocess_gpu(
             stem,
             affine_method="synthmorph" if affine_pre else "none",
             io_iterations=io_iterations,
+            overwrite=overwrite,
         )
         result.registered_paths = reg_paths
         if reg_paths.get("warped"):
@@ -1299,17 +1500,21 @@ def preprocess_gpu(
         seg = out_dir / f"{stem}_synthseg.nii.gz"
         vol_csv = out_dir / f"{stem}_volumes.csv"
         qc_csv = out_dir / f"{stem}_qc.csv"
-        seg_path = segment(
-            current,
+        seg_input = native if segment_space == "native" else current
+        seg_path, used = _segment_impl(
+            seg_input,
             seg,
             method=segment_method,
             parc=True,
             vol_path=vol_csv,
             qc_path=qc_csv,
+            device=device,
+            subject_id=stem,
+            overwrite=overwrite,
         )
         result.segmentation_path = seg_path
         result.timings["segment"] = time.time() - t0
-        result.methods["segment"] = segment_method
+        result.methods["segment"] = f"{used} ({segment_space})"
         logger.info("VRAM after segment: %s", vram_info())
 
     # ── Step 5: Parcellate ──
@@ -1333,6 +1538,35 @@ def preprocess_gpu(
         result.total_time,
     )
     return result
+
+
+def _strip_nifti_ext(name: str) -> str:
+    for ext in NIFTI_EXTS:
+        if name.endswith(ext):
+            return name[: -len(ext)]
+    return name
+
+
+def _unique_subject_keys(paths: list[Path]) -> list[str]:
+    """Filename stems, disambiguated with parent dirs when they collide."""
+    resolved = [p.resolve() for p in paths]
+    if len(set(resolved)) != len(resolved):
+        raise ValueError("The same input file is listed more than once.")
+    depth = 0
+    while True:
+        keys = []
+        for p in resolved:
+            parts = [*(q.name for q in reversed(p.parents[: depth] if depth else [])),
+                     _strip_nifti_ext(p.name)]
+            keys.append("_".join(x for x in parts if x))
+        if len(set(keys)) == len(keys) or depth >= max(len(p.parents) for p in resolved):
+            break
+        depth += 1
+    if len(set(keys)) != len(keys):  # pragma: no cover - only for identical paths
+        keys = [f"{k}_{i}" for i, k in enumerate(keys)]
+    if depth:
+        logger.warning("Duplicate input stems; using directory-qualified keys: %s", keys)
+    return keys
 
 
 # ======================================================================
@@ -1369,18 +1603,19 @@ def preprocess_gpu_batch(
     Returns
     -------
     dict of {subject_stem: PreprocessResult}
-        Results keyed by filename stem.
+        Results keyed by filename stem. When several inputs share a stem
+        (e.g. ``sub-01/T1w.nii.gz`` and ``sub-02/T1w.nii.gz``) the key — and
+        the per-subject output directory — is prefixed with the parent
+        directory names until unique, so subjects never share (and silently
+        reuse) each other's outputs.
     """
     out_base = Path(output_dir).resolve()
     results: dict[str, PreprocessResult] = {}
     n = len(input_paths)
+    keys = _unique_subject_keys([Path(p) for p in input_paths])
+    failed: dict[str, str] = {}
 
-    for i, inp in enumerate(input_paths, 1):
-        inp = Path(inp)
-        stem = inp.name
-        for ext in NIFTI_EXTS:
-            stem = stem.replace(ext, "")
-
+    for i, (inp, stem) in enumerate(zip((Path(p) for p in input_paths), keys), 1):
         logger.info(
             "Processing %d/%d: %s",
             i,
@@ -1405,10 +1640,15 @@ def preprocess_gpu_batch(
             )
             results[stem] = result
             logger.info("✓ %s: %.1fs total", stem, result.total_time)
+        except (TypeError, AttributeError, NameError, NotImplementedError, AssertionError):
+            raise  # programming errors would otherwise fail every subject silently
         except Exception as exc:
             logger.error("✗ %s: %s", stem, exc)
+            failed[stem] = f"{type(exc).__name__}: {exc}"
             continue
 
+    if failed:
+        logger.warning("%d subject(s) failed: %s", len(failed), ", ".join(failed))
     successful = len(results)
     logger.info(
         "Batch complete: %d/%d subjects succeeded.",

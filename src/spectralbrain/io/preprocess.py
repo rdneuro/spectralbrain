@@ -234,11 +234,13 @@ def raw_to_pointcloud(
     wdir = Path(output_dir) if output_dir else inp.parent
     wdir.mkdir(parents=True, exist_ok=True)
 
+    stem = inp.name.split(".")[0]  # "sub-01_T1w.nii.gz" → "sub-01_T1w"
+
     # Step 1: skull-strip
-    brain = skull_strip(inp, wdir / f"{inp.stem}_brain.nii.gz", gpu=gpu)
+    brain = skull_strip(inp, wdir / f"{stem}_brain.nii.gz", gpu=gpu)
 
     # Step 2: segment
-    seg = segment(brain, wdir / f"{inp.stem}_synthseg.nii.gz", gpu=gpu)
+    seg = segment(brain, wdir / f"{stem}_synthseg.nii.gz", gpu=gpu)
 
     # Step 3: extract point cloud
     data, affine = load_nifti(seg)

@@ -187,7 +187,15 @@ def load_tractseg_bundle(
 
     path = Path(mask_path)
     vol, affine = load_nifti(path)
-    binary = (np.asarray(vol) > level).astype(np.int16)
+    vol = np.asarray(vol)
+    if vol.ndim == 4 and vol.shape[-1] == 1:
+        vol = vol[..., 0]
+    if vol.ndim != 3:
+        raise ValueError(
+            f"{path.name}: expected a 3-D bundle mask, got shape {vol.shape} "
+            "(multi-bundle 4-D outputs must be split per bundle first)."
+        )
+    binary = (vol > level).astype(np.uint8)
     if binary.sum() == 0:
         raise ValueError(f"Empty mask (no voxels above {level}) in {path.name}")
 
@@ -230,8 +238,9 @@ def load_tractseg(
     bundles: list[str] | None = None,
     output: str = "pointcloud",
     subdir: str | None = _DEFAULT_SUBDIR,
+    return_failed: bool = False,
     **kwargs: Any,
-) -> dict[str, Any]:
+) -> dict[str, Any] | tuple[dict[str, Any], dict[str, str]]:
     """Load all (or selected) bundles from one subject's TractSeg output.
 
     Parameters
@@ -244,6 +253,9 @@ def load_tractseg(
         Geometric representation per bundle.
     subdir : str, optional
         Mask subdirectory (default ``"bundle_segmentations"``).
+    return_failed : bool
+        If True, also return ``{bundle_name: error message}`` for the bundles
+        that were skipped.
     **kwargs
         Forwarded to :func:`load_tractseg_bundle` (``level``, ``jitter``,
         ``step_size``, …).
@@ -251,16 +263,29 @@ def load_tractseg(
     Returns
     -------
     dict of {bundle_name: BrainPointCloud or BrainMesh}
-        Bundles that fail to load (e.g. empty masks) are logged and skipped.
+        Bundles that fail to load (e.g. empty masks, unreadable files) are
+        logged and skipped. Programming errors (``TypeError`` etc., e.g. a
+        misspelt keyword argument) are re-raised rather than skipped.
+        With ``return_failed=True`` a ``(bundles, failed)`` tuple is returned.
     """
+    from spectralbrain.io.group import PROGRAMMING_ERRORS
+
     files = discover_tractseg_bundles(tractseg_dir, bundles=bundles, subdir=subdir)
     out: dict[str, Any] = {}
+    failed: dict[str, str] = {}
     for name, path in files.items():
         try:
             out[name] = load_tractseg_bundle(path, output=output, **kwargs)
+        except PROGRAMMING_ERRORS:
+            raise
         except Exception as exc:
             logger.error("✗ %s: %s", name, exc)
+            failed[name] = str(exc)
+    if failed:
+        logger.warning("Skipped %d TractSeg bundle(s): %s", len(failed), ", ".join(failed))
     logger.info("Loaded %d/%d TractSeg bundles as %s.", len(out), len(files), output)
+    if return_failed:
+        return out, failed
     return out
 
 

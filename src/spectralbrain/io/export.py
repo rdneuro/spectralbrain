@@ -176,6 +176,8 @@ def save_mesh(
     path: PathLike,
     vertices: Vertices,
     faces: Faces,
+    *,
+    allow_vertex_reorder: bool | None = None,
 ) -> Path:
     """Save a mesh to .ply, .obj, .stl, .vtk, or .vtp.
 
@@ -189,14 +191,40 @@ def save_mesh(
         Output file — format inferred from extension.
     vertices : ndarray, shape (N, 3)
     faces : ndarray, shape (F, 3)
+    allow_vertex_reorder : bool, optional
+        STL stores an unindexed triangle soup, so reading it back merges and
+        **reorders** vertices — any per-vertex data (descriptors, labels,
+        eigenvectors) no longer lines up with the reloaded mesh. ``None``
+        (default) writes STL but logs a loud warning; ``False`` refuses to
+        write STL; ``True`` writes it silently. Use ``.vtp``/``.vtk``/``.obj``
+        for a vertex-order-preserving, full-precision round trip (``.ply`` is
+        order-preserving but VTK stores its coordinates as float32).
 
     Returns
     -------
     Path
+
+    Raises
+    ------
+    ValueError
+        If writing STL with ``allow_vertex_reorder=False``.
     """
     import pyvista as pv
 
     out = Path(path)
+    if out.suffix.lower() == ".stl":
+        if allow_vertex_reorder is False:
+            raise ValueError(
+                "STL does not preserve vertex order/indexing; per-vertex data would be "
+                "misaligned on reload. Use .vtp/.vtk/.obj, or pass allow_vertex_reorder=True."
+            )
+        if allow_vertex_reorder is None:
+            logger.warning(
+                "Writing %s as STL: vertex order is NOT preserved on reload, so per-vertex "
+                "data will not align. Use .vtp/.vtk/.obj for indexed meshes.",
+                out.name,
+            )
+    out.parent.mkdir(parents=True, exist_ok=True)
     v = np.asarray(vertices, dtype=np.float64)
     f = np.asarray(faces, dtype=np.int64)
     # PyVista packs faces as [3, i, j, k, 3, i, j, k, ...].
@@ -231,6 +259,7 @@ def save_gifti_func(
     """
     nib = _require_nibabel()
     out = Path(path)
+    out.parent.mkdir(parents=True, exist_ok=True)
     scalars = np.asarray(scalars, dtype=np.float32)
 
     darrays = []
@@ -289,6 +318,7 @@ def save_connectome(
     matrix: ConnectomeMatrix,
     *,
     labels: list[str] | None = None,
+    float_format: str = "%.10g",
 ) -> Path:
     """Save a connectome matrix to .tsv (BIDS-compatible).
 
@@ -298,7 +328,12 @@ def save_connectome(
         Output ``.tsv``.
     matrix : ndarray, shape (R, R)
     labels : list of str, optional
-        Region names for the header row/column.
+        Region names for the header row/column. Defaults to ``0 … R-1``.
+        A header row is always written, so the file reads back with
+        ``pandas.read_csv(path, sep="\t", index_col=0)`` without losing a row.
+    float_format : str
+        printf-style format for the values. The default (``%.10g``) keeps
+        small weights (e.g. ``1e-8``) instead of rounding them to zero.
 
     Returns
     -------
@@ -307,17 +342,26 @@ def save_connectome(
     out = Path(path)
     out.parent.mkdir(parents=True, exist_ok=True)
     matrix = np.asarray(matrix)
+    if matrix.ndim != 2:
+        raise ValueError(f"matrix must be 2-D, got shape {matrix.shape}")
 
-    header = ""
-    if labels is not None:
-        header = "\t".join(["", *labels]) + "\n"
+    if labels is None:
+        row_labels = [str(i) for i in range(matrix.shape[0])]
+        col_labels = [str(j) for j in range(matrix.shape[1])]
+    else:
+        labels = [str(lab) for lab in labels]
+        if len(labels) != matrix.shape[0] or len(labels) != matrix.shape[1]:
+            raise ValueError(
+                f"{len(labels)} labels for a matrix of shape {matrix.shape}; "
+                "need one label per row/column."
+            )
+        row_labels = col_labels = labels
 
     with open(out, "w") as fh:
-        fh.write(header)
+        fh.write("\t".join(["", *col_labels]) + "\n")
         for i in range(matrix.shape[0]):
-            row_label = labels[i] if labels else str(i)
-            row_vals = "\t".join(f"{v:.6f}" for v in matrix[i])
-            fh.write(f"{row_label}\t{row_vals}\n")
+            row_vals = "\t".join(float_format % v for v in matrix[i])
+            fh.write(f"{row_labels[i]}\t{row_vals}\n")
 
     logger.info("Saved connectome → %s", out)
     return out
