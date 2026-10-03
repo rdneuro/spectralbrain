@@ -551,10 +551,14 @@ def _enhance_impl(
 ) -> tuple[Path, str]:
     """:func:`enhance` that also reports the backend actually used."""
     if method == "bmex":
-        return enhance_bmex(input_path, output_path, **_route_kwargs(enhance_bmex, kwargs, "BME-X")), "bmex"
+        return enhance_bmex(
+            input_path, output_path, **_route_kwargs(enhance_bmex, kwargs, "BME-X")
+        ), "bmex"
     if method == "deepn4":
         return (
-            enhance_deepn4(input_path, output_path, **_route_kwargs(enhance_deepn4, kwargs, "DeepN4")),
+            enhance_deepn4(
+                input_path, output_path, **_route_kwargs(enhance_deepn4, kwargs, "DeepN4")
+            ),
             "deepn4",
         )
     if method != "auto":
@@ -566,7 +570,9 @@ def _enhance_impl(
         return out, "bmex"
     except (ImportError, FileNotFoundError, RuntimeError) as exc:
         logger.warning("BME-X unavailable (%s), falling back to DeepN4", exc)
-        out = enhance_deepn4(input_path, output_path, **_route_kwargs(enhance_deepn4, kwargs, "DeepN4"))
+        out = enhance_deepn4(
+            input_path, output_path, **_route_kwargs(enhance_deepn4, kwargs, "DeepN4")
+        )
         return out, "deepn4"
 
 
@@ -1442,9 +1448,7 @@ def preprocess_gpu(
     if Step.ENHANCE in active_steps:
         t0 = time.time()
         enhanced = out_dir / f"{stem}_enhanced.nii.gz"
-        current, used = _enhance_impl(
-            current, enhanced, method=enhance_method, overwrite=overwrite
-        )
+        current, used = _enhance_impl(current, enhanced, method=enhance_method, overwrite=overwrite)
         result.enhanced_path = current
         result.timings["enhance"] = time.time() - t0
         result.methods["enhance"] = used
@@ -1556,8 +1560,10 @@ def _unique_subject_keys(paths: list[Path]) -> list[str]:
     while True:
         keys = []
         for p in resolved:
-            parts = [*(q.name for q in reversed(p.parents[: depth] if depth else [])),
-                     _strip_nifti_ext(p.name)]
+            parts = [
+                *(q.name for q in reversed(p.parents[:depth] if depth else [])),
+                _strip_nifti_ext(p.name),
+            ]
             keys.append("_".join(x for x in parts if x))
         if len(set(keys)) == len(keys) or depth >= max(len(p.parents) for p in resolved):
             break

@@ -18,8 +18,7 @@ logger = logging.getLogger("spectralbrain.statistics._clustercore")
 # Score returned for degenerate / invalid partitions (minimised away).
 DEGENERATE_SCORE = -1.0e6
 
-VALID_OBJECTIVES = ("silhouette", "intra_inter", "calinski_harabasz",
-                    "stability", "evidence")
+VALID_OBJECTIVES = ("silhouette", "intra_inter", "calinski_harabasz", "stability", "evidence")
 
 
 def _n_clusters(labels: np.ndarray) -> int:
@@ -27,12 +26,15 @@ def _n_clusters(labels: np.ndarray) -> int:
     return int(np.unique(valid).size)
 
 
-def score_partition(features: np.ndarray, labels: np.ndarray,
-                    objective: str = "silhouette",
-                    spatial_distance: np.ndarray | None = None,
-                    co_association: np.ndarray | None = None,
-                    min_clusters: int = 2,
-                    max_cluster_fraction: float = 0.95) -> float:
+def score_partition(
+    features: np.ndarray,
+    labels: np.ndarray,
+    objective: str = "silhouette",
+    spatial_distance: np.ndarray | None = None,
+    co_association: np.ndarray | None = None,
+    min_clusters: int = 2,
+    max_cluster_fraction: float = 0.95,
+) -> float:
     """Score a partition for hyperparameter optimisation (higher is better).
 
     Parameters
@@ -81,10 +83,12 @@ def score_partition(features: np.ndarray, labels: np.ndarray,
         if co_association is None:
             raise ValueError("objective='stability' requires co_association.")
         from .consensus import stability_per_vertex
+
         return float(np.nanmean(stability_per_vertex(co_association, labels)))
 
     if objective == "silhouette":
         from .cluster_stats import spatial_silhouette
+
         mask = labels >= 0  # noise is not a cluster
         sd = None
         if spatial_distance is not None:
@@ -94,12 +98,14 @@ def score_partition(features: np.ndarray, labels: np.ndarray,
 
     if objective == "intra_inter":
         from .cluster_stats import intra_inter_homogeneity
+
         mask = labels >= 0
         r = intra_inter_homogeneity(X[mask], labels[mask])["ratio"]
         return float(r) if np.isfinite(r) else DEGENERATE_SCORE
 
     if objective == "calinski_harabasz":
         from sklearn.metrics import calinski_harabasz_score
+
         mask = labels >= 0
         if _n_clusters(labels[mask]) < 2:
             return DEGENERATE_SCORE
@@ -110,6 +116,7 @@ def score_partition(features: np.ndarray, labels: np.ndarray,
         # partition under a weak prior (model evidence proxy). Higher = better
         # fit; the NIW Occam penalty keeps K finite.
         from .ddcrp import NIWPrior, niw_log_marginal
+
         prior = NIWPrior.from_data(X)
         total = 0.0
         for c in np.unique(valid):

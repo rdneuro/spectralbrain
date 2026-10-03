@@ -415,9 +415,7 @@ def compute_icc(
             f"test and retest must have the same shape; got {test.shape} and {retest.shape}."
         )
     if test.ndim == 2:
-        vals = np.array(
-            [_icc_1d(test[:, j], retest[:, j], icc_type) for j in range(test.shape[1])]
-        )
+        vals = np.array([_icc_1d(test[:, j], retest[:, j], icc_type) for j in range(test.shape[1])])
         return vals if reduce == "none" else float(np.nanmean(vals))
     return _icc_1d(test.ravel(), retest.ravel(), icc_type)
 
@@ -738,9 +736,7 @@ def _evaluate_descriptor(
     error = None
     try:
         auc_scores = cross_val_score(clf, X, y, cv=n_splits_actual, scoring="roc_auc")
-        acc_scores = cross_val_score(
-            clf, X, y, cv=n_splits_actual, scoring="balanced_accuracy"
-        )
+        acc_scores = cross_val_score(clf, X, y, cv=n_splits_actual, scoring="balanced_accuracy")
     except ValueError as exc:
         warnings.warn(
             f"Descriptor evaluation: cross-validation failed ({exc}); scores set to chance.",

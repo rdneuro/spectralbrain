@@ -60,13 +60,17 @@ def _degenerate_groups(evals: np.ndarray, tol: float) -> list:
     return groups
 
 
-def eigenstrapping_surrogates(data: np.ndarray, eigenvalues: np.ndarray,
-                              eigenvectors: np.ndarray, mass: np.ndarray,
-                              n_surrogates: int = 1000,
-                              eigenvalue_tol: float = 1e-3,
-                              random_state: int = 0,
-                              grouping: str = "harmonic",
-                              residual: str = "permute") -> np.ndarray:
+def eigenstrapping_surrogates(
+    data: np.ndarray,
+    eigenvalues: np.ndarray,
+    eigenvectors: np.ndarray,
+    mass: np.ndarray,
+    n_surrogates: int = 1000,
+    eigenvalue_tol: float = 1e-3,
+    random_state: int = 0,
+    grouping: str = "harmonic",
+    residual: str = "permute",
+) -> np.ndarray:
     """Generate SA-preserving surrogates by rotating LBO geometric eigenmodes.
 
     The map is expanded in the (M-orthonormal) LBO eigenbasis; eigenmodes are
@@ -124,13 +128,12 @@ def eigenstrapping_surrogates(data: np.ndarray, eigenvalues: np.ndarray,
         raise ValueError(f"data length {data.shape[0]} != #vertices {V}.")
 
     # Coefficients via the M-inner product: c_k = <phi_k, data>_M.
-    coeffs = evecs.T @ (m * data)               # (K,)
+    coeffs = evecs.T @ (m * data)  # (K,)
     resid = data - evecs @ coeffs
 
     if grouping == "harmonic":
         if eigenvalue_tol != 1e-3:
-            warnings.warn("eigenvalue_tol is only used with grouping='degenerate'.",
-                          stacklevel=2)
+            warnings.warn("eigenvalue_tol is only used with grouping='degenerate'.", stacklevel=2)
         groups = _harmonic_groups(K)
     elif grouping == "degenerate":
         groups = _degenerate_groups(evals, eigenvalue_tol)
@@ -138,7 +141,10 @@ def eigenstrapping_surrogates(data: np.ndarray, eigenvalues: np.ndarray,
             warnings.warn(
                 "No near-degenerate eigenvalue groups found: degenerate-grouping "
                 "eigenstrapping would return copies of the map. Use "
-                "grouping='harmonic'.", RuntimeWarning, stacklevel=2)
+                "grouping='harmonic'.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
     else:
         raise ValueError("grouping must be 'harmonic' or 'degenerate'.")
     if residual not in ("permute", "add", "none"):
@@ -155,7 +161,7 @@ def eigenstrapping_surrogates(data: np.ndarray, eigenvalues: np.ndarray,
             # Haar-random orthogonal matrix via QR of a Gaussian.
             A = rng.standard_normal((g.size, g.size))
             Q, R = np.linalg.qr(A)
-            Q *= np.sign(np.diag(R))            # fix QR sign ambiguity
+            Q *= np.sign(np.diag(R))  # fix QR sign ambiguity
             rot_coeffs[g] = Q @ coeffs[g]
         surr = evecs @ rot_coeffs
         if residual == "permute":
@@ -166,8 +172,9 @@ def eigenstrapping_surrogates(data: np.ndarray, eigenvalues: np.ndarray,
     return surrogates
 
 
-def brainsmash_surrogates(data: np.ndarray, distance: np.ndarray,
-                          n_surrogates: int = 1000, **kwargs) -> np.ndarray:
+def brainsmash_surrogates(
+    data: np.ndarray, distance: np.ndarray, n_surrogates: int = 1000, **kwargs
+) -> np.ndarray:
     """Variogram-matched surrogates via the optional ``brainsmash`` package.
 
     Parameters
@@ -199,8 +206,9 @@ def brainsmash_surrogates(data: np.ndarray, distance: np.ndarray,
     return np.asarray(gen(n=n_surrogates))
 
 
-def paired_label_permutation(values_ipsi: np.ndarray, values_contra: np.ndarray,
-                             n_perm: int = 5000, random_state: int = 0):
+def paired_label_permutation(
+    values_ipsi: np.ndarray, values_contra: np.ndarray, n_perm: int = 5000, random_state: int = 0
+):
     """Paired permutation by random within-subject ipsi/contra swaps.
 
     Parameters

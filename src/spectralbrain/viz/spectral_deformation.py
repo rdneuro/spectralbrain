@@ -102,10 +102,10 @@ def cotangent_stiffness(V: ArrayF, F: ArrayI) -> sp.csc_matrix:
     J = np.concatenate([i3, i2, i1, i3, i2, i1])
     vals = 0.5 * np.concatenate([cot1, cot1, cot2, cot2, cot3, cot3])
 
-    W = sp.csr_matrix((-vals, (I, J)), shape=(n, n))     # off-diagonais (negativas)
-    diag = -np.asarray(W.sum(axis=1)).ravel()            # diagonal = −Σ off-diag (>0)
+    W = sp.csr_matrix((-vals, (I, J)), shape=(n, n))  # off-diagonais (negativas)
+    diag = -np.asarray(W.sum(axis=1)).ravel()  # diagonal = −Σ off-diag (>0)
     W = (W + sp.diags(diag)).tocsc()
-    W = 0.5 * (W + W.T)                                   # simetriza erros numéricos
+    W = 0.5 * (W + W.T)  # simetriza erros numéricos
     return W.tocsc()
 
 
@@ -144,7 +144,7 @@ def _weighted_eigs(
     order = np.argsort(vals)
     vals, vecs = vals[order], vecs[:, order]
     # descarta o primeiro (constante, λ≈0)
-    return vals[1:k_nonzero + 1], vecs[:, 1:k_nonzero + 1]
+    return vals[1 : k_nonzero + 1], vecs[:, 1 : k_nonzero + 1]
 
 
 # %% ──────────────────────────── passo de QP (OSQP) ───────────────────────────
@@ -169,22 +169,30 @@ def _qp_step(
     try:
         import osqp
     except Exception as exc:  # pragma: no cover
-        raise ImportError(
-            "OSQP não encontrado. Instale com `pip install osqp`."
-        ) from exc
+        raise ImportError("OSQP não encontrado. Instale com `pip install osqp`.") from exc
 
     n = W.shape[0]
     P = (2.0 * W + ridge * sp.identity(n, format="csc")).tocsc()
     q = 2.0 * (W.dot(v_omega))
 
-    A_align = sp.csc_matrix(A)                      # (k1 × n)
+    A_align = sp.csc_matrix(A)  # (k1 × n)
     C = sp.vstack([A_align, sp.identity(n, format="csc")], format="csc")
     lo = np.concatenate([b - align_tol, h_low - v_omega])
     hi = np.concatenate([b + align_tol, h_high - v_omega])
 
     prob = osqp.OSQP()
-    prob.setup(P=P, q=q, A=C, l=lo, u=hi, verbose=False,
-               polish=True, eps_abs=1e-6, eps_rel=1e-6, max_iter=8000)
+    prob.setup(
+        P=P,
+        q=q,
+        A=C,
+        l=lo,
+        u=hi,
+        verbose=False,
+        polish=True,
+        eps_abs=1e-6,
+        eps_rel=1e-6,
+        max_iter=8000,
+    )
     res = prob.solve()
     status = res.info.status_val
     if status not in (1, 2):  # 1=solved, 2=solved_inaccurate
@@ -202,8 +210,10 @@ def _qp_step(
 
 # %% ─────────────────────── algoritmo principal de deformação ─────────────────
 def spectral_deformation(
-    V_N: ArrayF, F_N: ArrayI,           # malha N (fonte; a escala vive aqui)
-    V_M: ArrayF, F_M: ArrayI,           # malha M (alvo)
+    V_N: ArrayF,
+    F_N: ArrayI,  # malha N (fonte; a escala vive aqui)
+    V_M: ArrayF,
+    F_M: ArrayI,  # malha M (alvo)
     k1: int = 100,
     n_steps: int = 10,
     bounds: tuple[float, float] = (0.1, 10.0),
@@ -276,7 +286,7 @@ def spectral_deformation(
             align_err.append(float(rel))
 
         # sistema linear A d = b  (Eq. 18/19): A_i = m_N ∘ v_i ∘ v_i
-        A = (m_N[None, :] * (vecs_q.T ** 2))          # (k1 × n_N)
+        A = m_N[None, :] * (vecs_q.T**2)  # (k1 × n_N)
         b = (lam_q - lam_M) / np.maximum(lam_q, 1e-12)
 
         d = _qp_step(W_N, v_omega, A, b, h_low, h_high, align_tol)
@@ -304,8 +314,10 @@ def spectral_deformation(
 
 # %% ─────────────────── wrapper clínico: lateralização MTLE-HS ────────────────
 def lateralization_map(
-    V_ipsi: ArrayF, F_ipsi: ArrayI,
-    V_contra: ArrayF, F_contra: ArrayI,
+    V_ipsi: ArrayF,
+    F_ipsi: ArrayI,
+    V_contra: ArrayF,
+    F_contra: ArrayI,
     k1: int = 100,
     n_steps: int = 10,
     bounds: tuple[float, float] = (0.1, 10.0),
@@ -322,8 +334,14 @@ def lateralization_map(
     registre as malhas; passe-as como saem do HippUnfold/segmentação.
     """
     res = spectral_deformation(
-        V_ipsi, F_ipsi, V_contra, F_contra,
-        k1=k1, n_steps=n_steps, bounds=bounds, align_tol=align_tol,
+        V_ipsi,
+        F_ipsi,
+        V_contra,
+        F_contra,
+        k1=k1,
+        n_steps=n_steps,
+        bounds=bounds,
+        align_tol=align_tol,
     )
     res["convention"] = "N=ipsilateral, M=contralateral; log(ω)>0 => atrofia relativa do ipsi"
     return res
@@ -331,7 +349,8 @@ def lateralization_map(
 
 # %% ─────────────────────────── render (vedo, offscreen) ──────────────────────
 def render_scale_on_mesh(
-    V: ArrayF, F: ArrayI,
+    V: ArrayF,
+    F: ArrayI,
     scalar: ArrayF,
     out_path: PathLike = "spectral_deformation.png",
     cmap: str = "RdBu_r",

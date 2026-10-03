@@ -252,8 +252,10 @@ def _combat_core(
     site_design = np.zeros((n_samples, n_sites), dtype=np.float64)
     site_design[np.arange(n_samples), site_idx] = 1.0
 
-    design = site_design if covariate_design is None else np.column_stack(
-        [site_design, covariate_design]
+    design = (
+        site_design
+        if covariate_design is None
+        else np.column_stack([site_design, covariate_design])
     )
     beta_hat = np.linalg.pinv(design.T @ design) @ (design.T @ data)
     counts = np.array([site_counts[str(s)] for s in unique_sites], dtype=np.float64)
@@ -964,9 +966,7 @@ class NormativeModel:
                 predicted = self._intercept + self._age_coef * age
                 if self._sex_coef is not None:
                     if sex is None:
-                        raise ValueError(
-                            "This normative model was fitted with sex; pass `sex`."
-                        )
+                        raise ValueError("This normative model was fitted with sex; pass `sex`.")
                     predicted = predicted + self._sex_coef * sex
                 elif sex is not None:
                     warnings.warn(
@@ -992,8 +992,7 @@ class NormativeModel:
                     sel &= same
                 else:
                     warnings.warn(
-                        "Too few same-sex reference subjects; centiles are not "
-                        "sex-stratified.",
+                        "Too few same-sex reference subjects; centiles are not sex-stratified.",
                         RuntimeWarning,
                         stacklevel=2,
                     )
@@ -1170,9 +1169,7 @@ def centile_curves(
     for pct in percentiles:
         curve = np.zeros(n_age_bins)
         for b in range(n_age_bins):
-            upper = (
-                ages <= bin_edges[b + 1] if b == n_age_bins - 1 else ages < bin_edges[b + 1]
-            )
+            upper = ages <= bin_edges[b + 1] if b == n_age_bins - 1 else ages < bin_edges[b + 1]
             mask = (ages >= bin_edges[b]) & upper
             curve[b] = np.percentile(desc[mask], pct) if mask.sum() > 0 else np.nan
         if smooth:
@@ -1290,9 +1287,7 @@ def _paired_se(
 ) -> tuple[float, float, int]:
     """Mean paired difference, its SE and df (Nadeau-Bengio corrected if asked)."""
     if new.shape != ref.shape:
-        raise ValueError(
-            f"Paired test needs equal-length inputs; got {new.shape} and {ref.shape}."
-        )
+        raise ValueError(f"Paired test needs equal-length inputs; got {new.shape} and {ref.shape}.")
     n = len(new)
     diff = new - ref
     mean_diff = float(diff.mean())

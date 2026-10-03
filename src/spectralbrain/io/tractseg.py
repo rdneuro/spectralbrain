@@ -224,8 +224,13 @@ def load_tractseg_bundle(
         # (which would amputate branches). raw=True reproduces the legacy plain
         # marching-cubes mesh exactly.
         verts, faces, info = volume_to_mesh(
-            binary.astype(np.float32), affine, raw=raw, closed=False,
-            level=0.5, step_size=step_size, return_info=True,
+            binary.astype(np.float32),
+            affine,
+            raw=raw,
+            closed=False,
+            level=0.5,
+            step_size=step_size,
+            return_info=True,
         )
         return BrainMesh(verts, faces, metadata={**meta, **info})
 

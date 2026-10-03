@@ -156,8 +156,9 @@ HIPP_DESCRIPTOR_STYLES: dict[str, dict[str, Any]] = {
 _DEFAULT_NAN_COLOR = (0.85, 0.85, 0.85)
 
 
-def _warn_ignored(nan_color: Any = _DEFAULT_NAN_COLOR, style: str = "default",
-                  display_type: str = "static") -> None:
+def _warn_ignored(
+    nan_color: Any = _DEFAULT_NAN_COLOR, style: str = "default", display_type: str = "static"
+) -> None:
     """Warn about styling arguments hippunfold_plot cannot honour."""
     ignored = []
     try:
@@ -195,8 +196,9 @@ def _load_map(surf_map: Any) -> np.ndarray | None:
         return None
 
 
-def _shared_range(maps: list[Any], vmin: float | None, vmax: float | None
-                  ) -> tuple[float | None, float | None]:
+def _shared_range(
+    maps: list[Any], vmin: float | None, vmax: float | None
+) -> tuple[float | None, float | None]:
     """Fill ``None`` limits from the pooled finite values of ``maps``."""
     if vmin is not None and vmax is not None:
         return vmin, vmax

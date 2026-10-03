@@ -855,9 +855,18 @@ def _random_sphere_points(n, radius, rng):
     return radius * np.column_stack([r_xy * np.cos(phi), r_xy * np.sin(phi), z])
 
 
-def null_eigenstrapping(data, eigenvalues, eigenvectors, mass, *,
-                        n_surrogates=1000, eigenvalue_tol=1e-3, seed=0,
-                        grouping="harmonic", residual="permute"):
+def null_eigenstrapping(
+    data,
+    eigenvalues,
+    eigenvectors,
+    mass,
+    *,
+    n_surrogates=1000,
+    eigenvalue_tol=1e-3,
+    seed=0,
+    grouping="harmonic",
+    residual="permute",
+):
     """Null 7: spatial-autocorrelation-preserving surrogates by rotating LBO
     geometric eigenmodes (Koussis, Pang et al. 2025).
 
@@ -893,10 +902,18 @@ def null_eigenstrapping(data, eigenvalues, eigenvectors, mass, *,
         ``n_surrogates`` surrogate maps, each shape (V,).
     """
     from spectralbrain.statistics._clustercore.nulls import eigenstrapping_surrogates
+
     surr = eigenstrapping_surrogates(
-        data, eigenvalues, eigenvectors, mass, n_surrogates=n_surrogates,
-        eigenvalue_tol=eigenvalue_tol, random_state=seed, grouping=grouping,
-        residual=residual)
+        data,
+        eigenvalues,
+        eigenvectors,
+        mass,
+        n_surrogates=n_surrogates,
+        eigenvalue_tol=eigenvalue_tol,
+        random_state=seed,
+        grouping=grouping,
+        residual=residual,
+    )
     return [np.asarray(row) for row in surr]
 
 
@@ -919,8 +936,8 @@ def null_brainsmash(data, distance, *, n_surrogates=1000, seed=0, **kwargs):
     list of ndarray
     """
     from spectralbrain.statistics._clustercore.nulls import brainsmash_surrogates
-    surr = brainsmash_surrogates(data, distance, n_surrogates=n_surrogates,
-                                 seed=seed, **kwargs)
+
+    surr = brainsmash_surrogates(data, distance, n_surrogates=n_surrogates, seed=seed, **kwargs)
     return [np.asarray(row) for row in surr]
 
 

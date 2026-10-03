@@ -80,7 +80,12 @@ DESCRIPTOR_STYLES: dict[str, dict[str, Any]] = {
     "gps": {"cmap": "coolwarm", "vminmax": [None, None], "label": "GPS", "signed": True},
     "shapedna": {"cmap": "plasma", "vminmax": [None, None], "label": "ShapeDNA"},
     "bates_sp": {"cmap": "inferno", "vminmax": [None, None], "label": "Bates SP"},
-    "gaussian_k": {"cmap": "RdBu_r", "vminmax": [None, None], "label": "Gaussian K", "signed": True},
+    "gaussian_k": {
+        "cmap": "RdBu_r",
+        "vminmax": [None, None],
+        "label": "Gaussian K",
+        "signed": True,
+    },
     "mean_k": {"cmap": "RdBu_r", "vminmax": [None, None], "label": "Mean H", "signed": True},
     "shape_idx": {"cmap": "RdBu_r", "vminmax": [-1, 1], "label": "Shape Index", "signed": True},
     "casorati": {"cmap": "magma", "vminmax": [None, None], "label": "Casorati"},
@@ -88,7 +93,12 @@ DESCRIPTOR_STYLES: dict[str, dict[str, Any]] = {
     "willmore": {"cmap": "inferno", "vminmax": [None, None], "label": "Willmore H²"},
     "z_score": {"cmap": "RdBu_r", "vminmax": [-3, 3], "label": "Z-score", "signed": True},
     "effect_d": {"cmap": "RdBu_r", "vminmax": [-1.5, 1.5], "label": "Cohen's d", "signed": True},
-    "clusters": {"cmap": "tab10", "vminmax": [None, None], "label": "Clusters", "categorical": True},
+    "clusters": {
+        "cmap": "tab10",
+        "vminmax": [None, None],
+        "label": "Clusters",
+        "categorical": True,
+    },
     "normative": {"cmap": "coolwarm", "vminmax": [-3, 3], "label": "Normative Z", "signed": True},
 }
 
@@ -166,8 +176,22 @@ class BrainPlotSpec:
 # ======================================================================
 
 _DIVERGING_CMAPS = {
-    "rdbu", "rdbu_r", "coolwarm", "bwr", "seismic", "rdylbu", "rdylbu_r", "piyg",
-    "prgn", "brbg", "puor", "rdgy", "spectral", "spectral_r", "sb_diverging", "vik",
+    "rdbu",
+    "rdbu_r",
+    "coolwarm",
+    "bwr",
+    "seismic",
+    "rdylbu",
+    "rdylbu_r",
+    "piyg",
+    "prgn",
+    "brbg",
+    "puor",
+    "rdgy",
+    "spectral",
+    "spectral_r",
+    "sb_diverging",
+    "vik",
 }
 
 
@@ -187,8 +211,7 @@ def _vertexwise_name(mesh: Any, scalars: str | None) -> str:
     if len(keys) == 1:
         return keys[0]
     raise ValueError(
-        "Cannot tell which per-vertex array to use; pass scalars=<name> "
-        f"(available: {keys})."
+        f"Cannot tell which per-vertex array to use; pass scalars=<name> (available: {keys})."
     )
 
 
@@ -261,9 +284,7 @@ def _resolve_spec(spec: BrainPlotSpec) -> BrainPlotSpec:
         base = plt.get_cmap(spec.cmap if isinstance(spec.cmap, str) else "tab10")
         n_base = getattr(base, "N", 256)
         k = max(len(uniq), 1)
-        colors = [
-            base(i % n_base) if n_base < 256 else base(i / max(k - 1, 1)) for i in range(k)
-        ]
+        colors = [base(i % n_base) if n_base < 256 else base(i / max(k - 1, 1)) for i in range(k)]
         return replace(
             spec,
             data=_map_values(spec.data, _to_rank, scal),
@@ -287,9 +308,7 @@ def _shared_vminmax(specs: list[BrainPlotSpec]) -> list[BrainPlotSpec]:
     vals = np.concatenate(pooled) if pooled else np.array([])
     if vals.size == 0:
         return specs
-    signed = any(
-        (sp.signed if sp.signed is not None else _is_diverging(sp.cmap)) for sp in specs
-    )
+    signed = any((sp.signed if sp.signed is not None else _is_diverging(sp.cmap)) for sp in specs)
     if signed:
         m = float(np.max(np.abs(vals))) or 1.0
         lo, hi = -m, m

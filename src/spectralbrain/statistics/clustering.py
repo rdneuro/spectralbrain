@@ -1288,7 +1288,6 @@ def _dpmm_pymc(X, adjacency, K, mrf_beta, seed):
         comp_dists = [pm.Normal.dist(mu=mu[k], sigma=sigma[k], shape=d) for k in range(K)]
         pm.Mixture("obs", w=w, comp_dists=comp_dists, observed=X)
 
-
     with model:
         approx = pm.fit(20000, method="advi", random_seed=seed)
         trace = approx.sample(1000)
@@ -1303,7 +1302,9 @@ def _dpmm_pymc(X, adjacency, K, mrf_beta, seed):
     for k in range(K):
         z = (X - mu_post[k]) / (sig_post[k] + 1e-12)
         log_resp[:, k] = (
-            np.log(w_post[k] + 1e-12) - 0.5 * np.sum(z**2, axis=1) - np.sum(np.log(sig_post[k] + 1e-12))
+            np.log(w_post[k] + 1e-12)
+            - 0.5 * np.sum(z**2, axis=1)
+            - np.sum(np.log(sig_post[k] + 1e-12))
         )
     labels = log_resp.argmax(axis=1).astype(np.int64)
     probs = np.exp(log_resp - log_resp.max(axis=1, keepdims=True))
@@ -1389,9 +1390,7 @@ def cluster_persistence(
     if n_clusters is not None:
         tomato.n_clusters_ = int(n_clusters)
     elif persistence_threshold is not None:
-        tomato.n_clusters_ = max(
-            1, int(np.sum(persistence > persistence_threshold)) + n_essential
-        )
+        tomato.n_clusters_ = max(1, int(np.sum(persistence > persistence_threshold)) + n_essential)
 
     labels = np.asarray(tomato.labels_).astype(np.int64)
     n_clust = len(set(labels.tolist())) - (1 if -1 in labels else 0)
@@ -2505,8 +2504,9 @@ def auto_cluster(
                 )
         except (ValueError, ArithmeticError, np.linalg.LinAlgError, RuntimeError) as e:
             # Keep the battery going, but never drop a method silently.
-            warnings.warn(f"auto_cluster: method '{method}' failed: {e!r}",
-                          RuntimeWarning, stacklevel=2)
+            warnings.warn(
+                f"auto_cluster: method '{method}' failed: {e!r}", RuntimeWarning, stacklevel=2
+            )
             logger.error("Method '%s' failed: %s", method, e)
             continue
 
@@ -3013,8 +3013,11 @@ def cluster_tensor_decomposition(
             tl.set_backend("pytorch")
             T_tl = tl.tensor(T_data, dtype=torch.float32, device=torch.device("cuda"))
         except (ImportError, RuntimeError) as exc:
-            warnings.warn(f"GPU tensorly failed ({exc!r}); falling back to numpy.",
-                          RuntimeWarning, stacklevel=2)
+            warnings.warn(
+                f"GPU tensorly failed ({exc!r}); falling back to numpy.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
             tl.set_backend("numpy")
             T_tl = tl.tensor(T_data)
     else:
@@ -3784,8 +3787,11 @@ def cluster_wavelet_coefficients(
     try:
         lam_max = float(eigsh(L, k=1, which="LA", return_eigenvectors=False)[0])
     except ArpackNoConvergence as exc:  # -> Gershgorin bound
-        warnings.warn(f"lambda_max via ARPACK failed ({exc!r}); using a Gershgorin bound.",
-                      RuntimeWarning, stacklevel=2)
+        warnings.warn(
+            f"lambda_max via ARPACK failed ({exc!r}); using a Gershgorin bound.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
         lam_max = float(2.0 * np.max(np.abs(L.diagonal())))
     if lam_max <= 0:
         lam_max = 1.0

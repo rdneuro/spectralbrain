@@ -395,9 +395,7 @@ def _validate_operator_pair(
     if M is not None:
         M = sp.csc_matrix(M).astype(np.float64)
         if M.shape != A.shape:
-            raise ValueError(
-                f"Mass matrix shape {M.shape} != operator shape {A.shape}."
-            )
+            raise ValueError(f"Mass matrix shape {M.shape} != operator shape {A.shape}.")
         if not np.all(np.isfinite(M.data)):
             raise ValueError("Mass matrix M contains non-finite entries.")
     return A, M
@@ -480,9 +478,7 @@ def operator_eigensystem(
         A = sp.csc_matrix(A)
 
     be = resolve_backend(backend)
-    evals, evecs = solve_eigsh(
-        be, A, M, k_eff, sigma=sigma, which=which, clamp_nonneg=clamp_nonneg
-    )
+    evals, evecs = solve_eigsh(be, A, M, k_eff, sigma=sigma, which=which, clamp_nonneg=clamp_nonneg)
 
     meta = {
         "operator": operator,
@@ -572,9 +568,7 @@ def _validate_mesh(vertices: Vertices, faces: Faces) -> tuple[np.ndarray, np.nda
     if f.ndim != 2 or f.shape[1] != 3:
         raise ValueError(f"faces must be (F, 3) triangles, got {f.shape}.")
     if f.size and f.max() >= v.shape[0]:
-        raise ValueError(
-            f"face index {int(f.max())} out of range for {v.shape[0]} vertices."
-        )
+        raise ValueError(f"face index {int(f.max())} out of range for {v.shape[0]} vertices.")
     if f.size and f.min() < 0:
         raise ValueError("faces contain negative indices.")
     return v, f
@@ -816,9 +810,7 @@ def principal_curvatures(
 
     for c in range(3):
         vidx = f[:, c]
-        nku, nkuv, nkv = _project_curvature(
-            uf, vf, fku, fkuv, fkv, pdir1[vidx], pdir2[vidx]
-        )
+        nku, nkuv, nkv = _project_curvature(uf, vf, fku, fkuv, fkv, pdir1[vidx], pdir2[vidx])
         w = fa / (3.0 * point_area[vidx])  # corner weight (Rusinkiewicz)
         np.add.at(acc_ku, vidx, w * nku)
         np.add.at(acc_kuv, vidx, w * nkuv)

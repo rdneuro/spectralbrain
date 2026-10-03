@@ -293,9 +293,7 @@ def dirac_decompose(
 
     be = resolve_backend(backend)
     k_solve = int(min(k, 4 * n - 2))
-    evals4, evecs4 = solve_eigsh(
-        be, D4, M4, k_solve, sigma=sigma, clamp_nonneg=False
-    )
+    evals4, evecs4 = solve_eigsh(be, D4, M4, k_solve, sigma=sigma, clamp_nonneg=False)
 
     # per-vertex quaternion magnitude |ψ_a|² = Σ_{c=0..3} ψ[4a+c]²
     comps = evecs4.reshape(n, 4, -1)  # (N, 4, k)
@@ -389,22 +387,16 @@ def compute_dks(
 
 def _boundary_vertices(faces: np.ndarray, n_vertices: int) -> np.ndarray:
     """Indices of boundary vertices (on edges incident to exactly one face)."""
-    edges = np.vstack(
-        [faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]]
-    )
+    edges = np.vstack([faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]])
     edges = np.sort(edges, axis=1)
     uniq, counts = np.unique(edges, axis=0, return_counts=True)
     boundary_edges = uniq[counts == 1]
     return np.unique(boundary_edges.ravel())
 
 
-def _boundary_mass(
-    vertices: np.ndarray, faces: np.ndarray, boundary: np.ndarray
-) -> np.ndarray:
+def _boundary_mass(vertices: np.ndarray, faces: np.ndarray, boundary: np.ndarray) -> np.ndarray:
     """1-D lumped boundary mass (half incident boundary-edge length)."""
-    edges = np.vstack(
-        [faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]]
-    )
+    edges = np.vstack([faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]])
     edges = np.sort(edges, axis=1)
     uniq, counts = np.unique(edges, axis=0, return_counts=True)
     bedges = uniq[counts == 1]  # (E_b, 2)

@@ -26,8 +26,9 @@ from .ddcrp import DDCRP, DDCRPResult, NIWPrior
 logger = logging.getLogger("spectralbrain.statistics._clustercore")
 
 
-def fpca_compress(curves: np.ndarray, n_components: int = 5,
-                  center: bool = True) -> tuple[np.ndarray, dict]:
+def fpca_compress(
+    curves: np.ndarray, n_components: int = 5, center: bool = True
+) -> tuple[np.ndarray, dict]:
     """Compress a stack of curves to functional-PCA scores.
 
     Uses scikit-fda's FPCA when available (proper basis expansion + smoothing),
@@ -67,6 +68,7 @@ def fpca_compress(curves: np.ndarray, n_components: int = 5,
         evr = getattr(fpca, "explained_variance_ratio_", None)
         return np.asarray(scores), {"explained_variance_ratio": evr, "backend": "skfda"}
     from sklearn.decomposition import PCA
+
     if center:
         X = curves - curves.mean(axis=0, keepdims=True)
         pca = PCA(n_components=n_components, random_state=0)
@@ -129,17 +131,25 @@ def cluster_ddcrp_functional(
     for b, curves in enumerate(curves_blocks):
         scores, diag = fpca_compress(curves, n_components=n_fpca)
         # MFA-style balancing: divide block by its first singular value.
-        sv = np.linalg.svd(scores - scores.mean(0, keepdims=True),
-                           compute_uv=False)
+        sv = np.linalg.svd(scores - scores.mean(0, keepdims=True), compute_uv=False)
         scale = float(max(sv[0], 1e-12)) if sv.size else 1.0
         score_blocks.append(scores / scale)
         info[f"block_{b}"] = {**diag, "sv1": scale}
 
-    X = np.hstack(score_blocks)                       # (V, sum n_fpca)
-    sampler = DDCRP(decay_kind=decay_kind, decay_scale=decay_scale, alpha=alpha,
-                    prior=prior, n_draws=n_draws, burn_in=burn_in, thin=thin,
-                    chains=chains, random_state=random_state)
-    result = sampler.fit(X, adjacency_list, distances=distances,
-                         vertices=vertices, progress=progress)
+    X = np.hstack(score_blocks)  # (V, sum n_fpca)
+    sampler = DDCRP(
+        decay_kind=decay_kind,
+        decay_scale=decay_scale,
+        alpha=alpha,
+        prior=prior,
+        n_draws=n_draws,
+        burn_in=burn_in,
+        thin=thin,
+        chains=chains,
+        random_state=random_state,
+    )
+    result = sampler.fit(
+        X, adjacency_list, distances=distances, vertices=vertices, progress=progress
+    )
     info["fused_dim"] = X.shape[1]
     return result, info

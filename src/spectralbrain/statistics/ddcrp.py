@@ -45,13 +45,15 @@ def _resolve_adjacency_list(n_vertices: int, faces, adjacency):
         adjacency_list_from_faces,
         adjacency_list_from_sparse,
     )
+
     if faces is not None:
         return adjacency_list_from_faces(np.asarray(faces), n_vertices)
     if adjacency is not None:
         return adjacency_list_from_sparse(adjacency)
     raise ValueError(
         "ddCRP requires mesh contiguity: pass `faces` (preferred) or a sparse "
-        "`adjacency` matrix so candidate links are restricted to mesh neighbours.")
+        "`adjacency` matrix so candidate links are restricted to mesh neighbours."
+    )
 
 
 def _default_decay_scale(decay_scale, vertices, adjacency_list):
@@ -60,6 +62,7 @@ def _default_decay_scale(decay_scale, vertices, adjacency_list):
         return float(decay_scale)
     if vertices is not None:
         from spectralbrain.statistics._clustercore import edge_distances
+
         d = edge_distances(np.asarray(vertices, float), adjacency_list)
         nonempty = [x for x in d if np.size(x)]
         if nonempty:
@@ -77,7 +80,9 @@ def _to_cluster_result(r, method: str, extra_meta: dict) -> ClusterResult:
     }
     meta.update(extra_meta)
     return ClusterResult(
-        labels=labels, n_clusters=n_clusters, method=method,
+        labels=labels,
+        n_clusters=n_clusters,
+        method=method,
         probabilities=None,
         quality={"rhat_n_clusters": float(r.rhat_n_clusters)},
         metadata=meta,
@@ -150,17 +155,37 @@ def cluster_ddcrp(
     H = np.asarray(H, dtype=np.float64)
     if n_components is not None and H.shape[1] > n_components:
         from sklearn.decomposition import PCA
-        H = PCA(n_components=int(n_components), whiten=True,
-                random_state=random_state).fit_transform(H)
+
+        H = PCA(
+            n_components=int(n_components), whiten=True, random_state=random_state
+        ).fit_transform(H)
     adj = _resolve_adjacency_list(H.shape[0], faces, adjacency)
     scale = _default_decay_scale(decay_scale, vertices, adj)
-    r = _ddcrp(H, adj, decay_kind=decay_kind, decay_scale=scale, alpha=alpha,
-               prior=prior, n_draws=n_draws, burn_in=burn_in, thin=thin,
-               chains=chains, random_state=random_state, vertices=vertices,
-               progress=progress)
-    return _to_cluster_result(r, "ddcrp",
-                              {"decay_kind": decay_kind, "decay_scale": scale,
-                               "alpha": alpha, "n_components": n_components})
+    r = _ddcrp(
+        H,
+        adj,
+        decay_kind=decay_kind,
+        decay_scale=scale,
+        alpha=alpha,
+        prior=prior,
+        n_draws=n_draws,
+        burn_in=burn_in,
+        thin=thin,
+        chains=chains,
+        random_state=random_state,
+        vertices=vertices,
+        progress=progress,
+    )
+    return _to_cluster_result(
+        r,
+        "ddcrp",
+        {
+            "decay_kind": decay_kind,
+            "decay_scale": scale,
+            "alpha": alpha,
+            "n_components": n_components,
+        },
+    )
 
 
 # ----------------------------------------------------------------------
@@ -212,13 +237,29 @@ def cluster_ddcrp_functional(
     n_vertices = blocks[0].shape[0]
     adj = _resolve_adjacency_list(n_vertices, faces, adjacency)
     scale = _default_decay_scale(decay_scale, vertices, adj)
-    r, info = _ddcrp_func(blocks, adj, n_fpca=n_fpca, decay_kind=decay_kind,
-                          decay_scale=scale, alpha=alpha, prior=prior,
-                          n_draws=n_draws, burn_in=burn_in, thin=thin,
-                          chains=chains, random_state=random_state,
-                          vertices=vertices, progress=progress)
-    meta = {"decay_kind": decay_kind, "decay_scale": scale, "alpha": alpha,
-            "n_fpca": n_fpca, "fpca_info": info}
+    r, info = _ddcrp_func(
+        blocks,
+        adj,
+        n_fpca=n_fpca,
+        decay_kind=decay_kind,
+        decay_scale=scale,
+        alpha=alpha,
+        prior=prior,
+        n_draws=n_draws,
+        burn_in=burn_in,
+        thin=thin,
+        chains=chains,
+        random_state=random_state,
+        vertices=vertices,
+        progress=progress,
+    )
+    meta = {
+        "decay_kind": decay_kind,
+        "decay_scale": scale,
+        "alpha": alpha,
+        "n_fpca": n_fpca,
+        "fpca_info": info,
+    }
     return _to_cluster_result(r, "ddcrp_functional", meta)
 
 
@@ -266,16 +307,18 @@ def cluster_consensus(
         threshold = 0.5
     elif n_clusters is not None and threshold is not None:
         raise ValueError("Pass either `n_clusters` or `threshold`, not both.")
-    labels = np.asarray(consensus_partition(co, n_clusters=n_clusters,
-                                            threshold=threshold), dtype=np.int64)
+    labels = np.asarray(
+        consensus_partition(co, n_clusters=n_clusters, threshold=threshold), dtype=np.int64
+    )
     stab = stability_per_vertex(co, labels)
     n = int(np.unique(labels[labels >= 0]).size)
     return ClusterResult(
-        labels=labels, n_clusters=n, method="consensus",
+        labels=labels,
+        n_clusters=n,
+        method="consensus",
         probabilities=None,
         quality={"mean_stability": float(np.nanmean(stab))},
-        metadata={"co_association": co, "stability": stab,
-                  "n_partitions": len(parts)},
+        metadata={"co_association": co, "stability": stab, "n_partitions": len(parts)},
     )
 
 
@@ -348,19 +391,35 @@ def autotune_ddcrp(
 
     H = np.asarray(H, dtype=np.float64)
     adj = _resolve_adjacency_list(H.shape[0], faces, adjacency)
-    tr = _autotune(H, adj, backend=backend, n_trials=n_trials, objective=objective,
-                   spatial_distance=spatial_distance, vertices=vertices,
-                   eval_draws=eval_draws, eval_burn_in=eval_burn_in,
-                   eval_chains=eval_chains, random_state=random_state,
-                   progress=progress, refit=refit, refit_kwargs=refit_kwargs)
+    tr = _autotune(
+        H,
+        adj,
+        backend=backend,
+        n_trials=n_trials,
+        objective=objective,
+        spatial_distance=spatial_distance,
+        vertices=vertices,
+        eval_draws=eval_draws,
+        eval_burn_in=eval_burn_in,
+        eval_chains=eval_chains,
+        random_state=random_state,
+        progress=progress,
+        refit=refit,
+        refit_kwargs=refit_kwargs,
+    )
 
     cluster_result = None
     if getattr(tr, "refit_result", None) is not None:
         cluster_result = _to_cluster_result(
-            tr.refit_result, "ddcrp_autotuned",
-            {"best_params": tr.best_params, "objective": objective})
+            tr.refit_result,
+            "ddcrp_autotuned",
+            {"best_params": tr.best_params, "objective": objective},
+        )
     return DDCRPTuningResult(
-        best_params=tr.best_params, best_score=float(tr.best_score),
-        history=tr.history, backend=tr.backend, cluster_result=cluster_result,
+        best_params=tr.best_params,
+        best_score=float(tr.best_score),
+        history=tr.history,
+        backend=tr.backend,
+        cluster_result=cluster_result,
         metadata={"objective": objective, "n_trials": n_trials},
     )

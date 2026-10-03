@@ -495,8 +495,11 @@ def _load_gifti_label(path: Path) -> dict[str, Any]:
     names: list[str] = []
     if table:
         if min(table) < 0:
-            logger.warning("%s: negative GIfTI label keys are not representable in "
-                           "the key-indexed `names` list; see `label_table`.", path.name)
+            logger.warning(
+                "%s: negative GIfTI label keys are not representable in "
+                "the key-indexed `names` list; see `label_table`.",
+                path.name,
+            )
         n = max(max(table), int(labels.max()) if labels.size else 0) + 1
         names = [table.get(k, f"label_{k}") for k in range(n)]
     return {"labels": labels, "names": names, "label_table": table}

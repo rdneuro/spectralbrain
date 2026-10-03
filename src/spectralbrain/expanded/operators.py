@@ -183,9 +183,7 @@ def region_potential(
     """
     mask = np.asarray(region_mask, dtype=bool)
     if mask.shape != (n_vertices,):
-        raise ValueError(
-            f"region_mask shape {mask.shape} != (n_vertices={n_vertices},)."
-        )
+        raise ValueError(f"region_mask shape {mask.shape} != (n_vertices={n_vertices},).")
     v = np.full(n_vertices, barrier, dtype=np.float64)
     v[mask] = inside_value
     return v
@@ -267,9 +265,7 @@ def hamiltonian_decompose(
     W, A = mesh.compute_laplacian(method=laplacian_method)
 
     if isinstance(potential, str):
-        v = build_potential(
-            vertices, faces, kind=potential, scale=potential_scale
-        )
+        v = build_potential(vertices, faces, kind=potential, scale=potential_scale)
         pot_tag = potential
     else:
         v = np.asarray(potential, dtype=np.float64)
@@ -501,9 +497,7 @@ def compute_compressed_modes(
     W.shape[0]
 
     # Start from the LBO basis (V = 0).
-    decomp = operator_eigensystem(
-        W, A, k=k, backend=backend, surface_area=sa, operator="lbo"
-    )
+    decomp = operator_eigensystem(W, A, k=k, backend=backend, surface_area=sa, operator="lbo")
 
     # Spectral scale of the LBO: the potential must be commensurate with the
     # eigenvalues (units 1/length²), otherwise it is either negligible or a

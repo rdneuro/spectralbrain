@@ -61,10 +61,12 @@ def _label_rgba(labels: np.ndarray, *, noise_color: str, categorical: bool):
     return (rgba * 255).astype(np.uint8)
 
 
-def _render_cell_vedo(vertices, faces, labels, view, *, noise_color, bg, size,
-                      scale, categorical) -> str:
+def _render_cell_vedo(
+    vertices, faces, labels, view, *, noise_color, bg, size, scale, categorical
+) -> str:
     """Render one (labeling, view) cell with vedo offscreen; return PNG path."""
     from spectralbrain.viz.clusters import _build_vedo_mesh, _get_vedo, _view_camera
+
     vedo = _get_vedo()
     rgba_u8 = _label_rgba(labels, noise_color=noise_color, categorical=categorical)
     mesh = _build_vedo_mesh(vertices, faces, vedo)
@@ -81,10 +83,12 @@ def _render_cell_vedo(vertices, faces, labels, view, *, noise_color, bg, size,
     return png
 
 
-def _render_cell_pyvista(vertices, faces, labels, view, *, noise_color, bg, size,
-                         scale, categorical) -> str:
+def _render_cell_pyvista(
+    vertices, faces, labels, view, *, noise_color, bg, size, scale, categorical
+) -> str:
     """PyVista fallback single-cell renderer; return PNG path."""
     from spectralbrain.viz.tracts3d import _require_pyvista, _set_pv_camera
+
     pv = _require_pyvista()
     V = np.asarray(vertices, float)
     F = np.asarray(faces, np.int64)
@@ -180,16 +184,24 @@ def plot_parcellation_cluster_grid(
         if labels.shape[0] != vertices.shape[0]:
             raise ValueError(
                 f"labeling '{rname}' has {labels.shape[0]} entries but the mesh "
-                f"has {vertices.shape[0]} vertices.")
+                f"has {vertices.shape[0]} vertices."
+            )
         cat = rname not in continuous
         for view in views:
-            png = render(vertices, faces, labels, view, noise_color=noise_color,
-                         bg=bg, size=cell_size, scale=scale, categorical=cat)
+            png = render(
+                vertices,
+                faces,
+                labels,
+                view,
+                noise_color=noise_color,
+                bg=bg,
+                size=cell_size,
+                scale=scale,
+                categorical=cat,
+            )
             cell_paths[(rname, view)] = png
 
-    fig, axes = plt.subplots(n_rows, n_cols,
-                             figsize=(3.0 * n_cols, 3.0 * n_rows),
-                             squeeze=False)
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(3.0 * n_cols, 3.0 * n_rows), squeeze=False)
     letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
     k = 0
     for i, rname in enumerate(row_names):
@@ -205,20 +217,31 @@ def plot_parcellation_cluster_grid(
             if j == 0:
                 labf = np.asarray(labelings[rname], dtype=float)
                 n_k = int(np.unique(labf[np.isfinite(labf) & (labf >= 0)]).size)
-                ax.set_ylabel(f"{rname}\n(k={n_k})", fontsize=11, rotation=90,
-                              labelpad=10)
+                ax.set_ylabel(f"{rname}\n(k={n_k})", fontsize=11, rotation=90, labelpad=10)
             if panel_letters:
-                ax.text(0.03, 0.97, letters[k % len(letters)],
-                        transform=ax.transAxes, fontsize=12, fontweight="bold",
-                        va="top", ha="left")
+                ax.text(
+                    0.03,
+                    0.97,
+                    letters[k % len(letters)],
+                    transform=ax.transAxes,
+                    fontsize=12,
+                    fontweight="bold",
+                    va="top",
+                    ha="left",
+                )
             k += 1
 
     if title:
         fig.suptitle(title, fontsize=14, fontweight="bold")
     fig.tight_layout()
 
-    meta = {"cell_paths": cell_paths, "shape": (n_rows, n_cols),
-            "rows": row_names, "views": views, "engine": engine}
+    meta = {
+        "cell_paths": cell_paths,
+        "shape": (n_rows, n_cols),
+        "rows": row_names,
+        "views": views,
+        "engine": engine,
+    }
     if save is not None:
         save = Path(save)
         save.parent.mkdir(parents=True, exist_ok=True)

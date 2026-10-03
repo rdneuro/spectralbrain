@@ -66,9 +66,7 @@ def _to_sparse_adjacency(adjacency: Any) -> sp.csr_matrix:
     return sp.csr_matrix(adjacency, dtype=np.float64)
 
 
-def _graph_laplacian(
-    A: sp.csr_matrix, *, normalized: bool
-) -> sp.csr_matrix:
+def _graph_laplacian(A: sp.csr_matrix, *, normalized: bool) -> sp.csr_matrix:
     """Combinatorial ``L = D − A`` or symmetric-normalised Laplacian.
 
     For the normalised Laplacian, isolated (degree-0) nodes get a zero row
@@ -87,9 +85,7 @@ def _graph_laplacian(
     return sp.csr_matrix(0.5 * (L + L.T))
 
 
-def _laplacian_spectrum(
-    A: sp.csr_matrix, *, normalized: bool, k: int | None
-) -> np.ndarray:
+def _laplacian_spectrum(A: sp.csr_matrix, *, normalized: bool, k: int | None) -> np.ndarray:
     """All (dense) or k smallest Laplacian eigenvalues."""
     L = _graph_laplacian(A, normalized=normalized)
     n = L.shape[0]

@@ -129,15 +129,13 @@ def build_incidence(
     ed: list[float] = []
     for fi in range(n_f):
         a, b, c = (int(f[fi, 0]), int(f[fi, 1]), int(f[fi, 2]))
-        for (x, y) in ((a, b), (b, c), (c, a)):
+        for x, y in ((a, b), (b, c), (c, a)):
             key = (x, y) if x < y else (y, x)
             sign = 1.0 if x < y else -1.0
             er.append(lookup[key])
             ec.append(fi)
             ed.append(sign)
-    B2 = sp.coo_matrix(
-        (np.asarray(ed), (np.asarray(er), np.asarray(ec))), shape=(n_e, n_f)
-    ).tocsc()
+    B2 = sp.coo_matrix((np.asarray(ed), (np.asarray(er), np.asarray(ec))), shape=(n_e, n_f)).tocsc()
     return B1, B2, edges
 
 
@@ -362,7 +360,7 @@ def _emd_linprog(
     # row marginals (m constraints) + column marginals (k constraints)
     a_eq = np.zeros((m + k, m * k))
     for i in range(m):
-        a_eq[i, i * k:(i + 1) * k] = 1.0
+        a_eq[i, i * k : (i + 1) * k] = 1.0
     for j in range(k):
         a_eq[m + j, j::k] = 1.0
     b_eq = np.concatenate([p, q])
@@ -623,9 +621,7 @@ def magnetic_laplacian(
     # Hermitian off-diagonal: Aₛ ∘ exp(iΘ)
     As_coo = As.tocoo()
     phase = np.exp(1j * np.asarray(theta[As_coo.row, As_coo.col]).ravel())
-    H_off = sp.coo_matrix(
-        (As_coo.data * phase, (As_coo.row, As_coo.col)), shape=A.shape
-    ).tocsr()
+    H_off = sp.coo_matrix((As_coo.data * phase, (As_coo.row, As_coo.col)), shape=A.shape).tocsr()
     deg = np.asarray(As.sum(axis=1)).ravel()
     L = sp.diags(deg).astype(np.complex128) - H_off
     if normalized:
@@ -719,13 +715,10 @@ def connection_laplacian(
             t1j, t2j = t1[j], t2[j]
         else:
             axis = axis / s
+
             # Rodrigues rotation of j's frame onto i's tangent plane
             def rot(x: np.ndarray) -> np.ndarray:
-                return (
-                    x * c
-                    + np.cross(axis, x) * s
-                    + axis * np.dot(axis, x) * (1 - c)
-                )
+                return x * c + np.cross(axis, x) * s + axis * np.dot(axis, x) * (1 - c)
 
             t1j, t2j = rot(t1[j]), rot(t2[j])
         o = np.array(

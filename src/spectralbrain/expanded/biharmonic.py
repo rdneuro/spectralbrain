@@ -78,9 +78,7 @@ def _decomp_from_input(
     if isinstance(obj, SpectralDecomposition):
         return obj
     if faces is None:
-        raise ValueError(
-            "Pass either a SpectralDecomposition, or (vertices, faces)."
-        )
+        raise ValueError("Pass either a SpectralDecomposition, or (vertices, faces).")
     from spectralbrain.core.meshes import BrainMesh
     from spectralbrain.expanded._base import resolve_backend
 

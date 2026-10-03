@@ -19,10 +19,9 @@ def adjacency_list_from_faces(faces: np.ndarray, n_vertices: int) -> list[np.nda
     e = np.vstack([faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]])
     e = np.vstack([e, e[:, ::-1]])
     data = np.ones(e.shape[0], dtype=np.int8)
-    A = sp.coo_matrix((data, (e[:, 0], e[:, 1])),
-                      shape=(n_vertices, n_vertices)).tocsr()
+    A = sp.coo_matrix((data, (e[:, 0], e[:, 1])), shape=(n_vertices, n_vertices)).tocsr()
     A.data[:] = 1
-    return [A.indices[A.indptr[v]:A.indptr[v + 1]].copy() for v in range(n_vertices)]
+    return [A.indices[A.indptr[v] : A.indptr[v + 1]].copy() for v in range(n_vertices)]
 
 
 def edge_distances(vertices: np.ndarray, adjacency_list) -> list[np.ndarray]:
@@ -52,4 +51,4 @@ def adjacency_list_from_sparse(adjacency) -> list[np.ndarray]:
     """Per-vertex neighbour arrays from a scipy sparse adjacency matrix."""
     A = sp.csr_matrix(adjacency)
     n = A.shape[0]
-    return [A.indices[A.indptr[v]:A.indptr[v + 1]].copy() for v in range(n)]
+    return [A.indices[A.indptr[v] : A.indptr[v + 1]].copy() for v in range(n)]

@@ -12,17 +12,23 @@ from collections.abc import Callable, Iterator
 
 
 @contextlib.contextmanager
-def progress_bar(description: str, total: int | None = None,
-                 disable: bool = False) -> Iterator[Callable[[int], None]]:
+def progress_bar(
+    description: str, total: int | None = None, disable: bool = False
+) -> Iterator[Callable[[int], None]]:
     """Context manager yielding an ``advance(step=1)`` callable."""
     if disable:
         yield lambda step=1: None
         return
     try:
         from rich.progress import BarColumn, Progress, TextColumn, TimeRemainingColumn
-        with Progress(TextColumn("[progress.description]{task.description}"),
-                      BarColumn(), TextColumn("{task.completed}/{task.total}"),
-                      TimeRemainingColumn(), transient=True) as prog:
+
+        with Progress(
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TextColumn("{task.completed}/{task.total}"),
+            TimeRemainingColumn(),
+            transient=True,
+        ) as prog:
             task = prog.add_task(description, total=total)
 
             def advance(step: int = 1) -> None:

@@ -607,12 +607,12 @@ def combinatorial_dirac(
     total = nv + ne + nf
     D = sp.lil_matrix((total, total), dtype=np.float64)
     # vertex–edge block
-    D[0:nv, nv:nv + ne] = B1
-    D[nv:nv + ne, 0:nv] = B1.T
+    D[0:nv, nv : nv + ne] = B1
+    D[nv : nv + ne, 0:nv] = B1.T
     # edge–triangle block
     if nf > 0:
-        D[nv:nv + ne, nv + ne:total] = B2
-        D[nv + ne:total, nv:nv + ne] = B2.T
+        D[nv : nv + ne, nv + ne : total] = B2
+        D[nv + ne : total, nv : nv + ne] = B2.T
     D = D.tocsc()
     return sp.csc_matrix(0.5 * (D + D.T))
 

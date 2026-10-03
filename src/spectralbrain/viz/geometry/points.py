@@ -448,10 +448,7 @@ def plot_clusters(
         else:  # continuous map: sample evenly
             lab_to_rgb[int(k)] = base(j / max(n_clusters - 1, 1))
     rgba = np.array(
-        [
-            mcolors.to_rgba(noise_color) if lab < 0 else lab_to_rgb[int(lab)]
-            for lab in labels
-        ],
+        [mcolors.to_rgba(noise_color) if lab < 0 else lab_to_rgb[int(lab)] for lab in labels],
         dtype=np.float64,
     )
     pts = vedo.Points(coords, r=point_size)

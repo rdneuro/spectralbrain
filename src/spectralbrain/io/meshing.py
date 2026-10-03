@@ -115,8 +115,7 @@ def _require_pymeshfix() -> Any:
 # ======================================================================
 # §1  Volume → scalar field
 # ======================================================================
-def _binarize(volume: np.ndarray, label: int | Sequence[int] | None,
-              level: float) -> np.ndarray:
+def _binarize(volume: np.ndarray, label: int | Sequence[int] | None, level: float) -> np.ndarray:
     """Return a boolean mask from a label volume or an intensity threshold."""
     volume = np.asarray(volume)
     if label is None:
@@ -277,8 +276,10 @@ def _marching_cubes_field(
     verts_world = (A @ np.hstack([verts_vox, ones]).T).T[:, :3]
     if np.linalg.det(A[:3, :3]) < 0:  # mirroring affine reverses the winding
         faces = faces[:, ::-1]
-    return (np.ascontiguousarray(verts_world, dtype=np.float64),
-            np.ascontiguousarray(faces, dtype=np.int64))
+    return (
+        np.ascontiguousarray(verts_world, dtype=np.float64),
+        np.ascontiguousarray(faces, dtype=np.int64),
+    )
 
 
 # ======================================================================
@@ -286,8 +287,9 @@ def _marching_cubes_field(
 # ======================================================================
 def _to_trimesh(verts: np.ndarray, faces: np.ndarray) -> _trimesh_t.Trimesh:
     trimesh = _require_trimesh()
-    return trimesh.Trimesh(vertices=np.asarray(verts, float),
-                           faces=np.asarray(faces, np.int64), process=False)
+    return trimesh.Trimesh(
+        vertices=np.asarray(verts, float), faces=np.asarray(faces, np.int64), process=False
+    )
 
 
 def _largest_component(mesh: _trimesh_t.Trimesh) -> _trimesh_t.Trimesh:
@@ -328,8 +330,9 @@ def _make_watertight(mesh: _trimesh_t.Trimesh, info: dict[str, Any]) -> _trimesh
     return _to_trimesh(mf.v, mf.f)
 
 
-def _taubin(mesh: _trimesh_t.Trimesh, iterations: int,
-            lamb: float, nu: float) -> _trimesh_t.Trimesh:
+def _taubin(
+    mesh: _trimesh_t.Trimesh, iterations: int, lamb: float, nu: float
+) -> _trimesh_t.Trimesh:
     """Volume-preserving Taubin smoothing (trimesh)."""
     trimesh = _require_trimesh()
     return trimesh.smoothing.filter_taubin(mesh, lamb=lamb, nu=nu, iterations=iterations)
@@ -340,13 +343,14 @@ def _target_n_points(area_mm2: float, edge_mm: float) -> int:
 
     ``n_faces ≈ Area / ((√3/4)·edge²)`` and ``n_verts ≈ n_faces / 2``.
     """
-    tri_area = (np.sqrt(3.0) / 4.0) * edge_mm ** 2
+    tri_area = (np.sqrt(3.0) / 4.0) * edge_mm**2
     n_faces = area_mm2 / max(tri_area, 1e-9)
     return int(max(200, round(n_faces / 2.0)))
 
 
-def _isotropic_remesh(mesh: _trimesh_t.Trimesh, n_points: int,
-                      info: dict[str, Any]) -> _trimesh_t.Trimesh:
+def _isotropic_remesh(
+    mesh: _trimesh_t.Trimesh, n_points: int, info: dict[str, Any]
+) -> _trimesh_t.Trimesh:
     """Isotropic remeshing via ACVD (pyacvd)."""
     pv, pyacvd = _require_pyacvd()
     pd = pv.wrap(mesh)  # trimesh -> pyvista PolyData
@@ -435,8 +439,12 @@ def refine_mesh(
     if faces.ndim != 2 or faces.shape[1] != 3:
         raise ValueError(f"faces must be (F, 3), got {faces.shape}")
 
-    info: dict[str, Any] = {"closed": closed, "keep_largest": keep_largest,
-                            "watertight": watertight, "remesh": None}
+    info: dict[str, Any] = {
+        "closed": closed,
+        "keep_largest": keep_largest,
+        "watertight": watertight,
+        "remesh": None,
+    }
 
     mesh = _to_trimesh(verts, faces)
     if keep_largest:
@@ -460,8 +468,13 @@ def refine_mesh(
     out_f = np.asarray(mesh.faces, np.int64)
     info["n_vertices"] = len(out_v)
     info["n_faces"] = len(out_f)
-    logger.info("refine_mesh: %d verts, %d faces (closed=%s, remesh=%s)",
-                len(out_v), len(out_f), closed, info["remesh"])
+    logger.info(
+        "refine_mesh: %d verts, %d faces (closed=%s, remesh=%s)",
+        len(out_v),
+        len(out_f),
+        closed,
+        info["remesh"],
+    )
     if return_info:
         return out_v, out_f, info
     return out_v, out_f
@@ -543,12 +556,19 @@ def volume_to_mesh(
 
     # ---- raw / legacy path: faithful plain marching cubes -----------------
     if raw:
-        field = _binarize(volume, label, level).astype(np.float64) if label is not None \
+        field = (
+            _binarize(volume, label, level).astype(np.float64)
+            if label is not None
             else volume.astype(np.float64)
+        )
         lvl = 0.5 if label is not None else level
         verts, faces = _raw_marching_cubes(field, affine, level=lvl, step_size=step_size)
-        info = {"method": "raw", "level": lvl, "step_size": step_size,
-                "backend": "spectralbrain.core.marching_cubes"}
+        info = {
+            "method": "raw",
+            "level": lvl,
+            "step_size": step_size,
+            "backend": "spectralbrain.core.marching_cubes",
+        }
         if return_info:
             return verts, faces, info
         return verts, faces
@@ -560,14 +580,16 @@ def volume_to_mesh(
 
     mode: FieldMode = "gaussian" if not closed else field_mode
     field, iso, pad_used = _mask_to_field(
-        mask, mode=mode, presmooth_vox=presmooth_vox, sigma_vox=sigma_vox, pad=pad,
+        mask,
+        mode=mode,
+        presmooth_vox=presmooth_vox,
+        sigma_vox=sigma_vox,
+        pad=pad,
         voxel_size=_voxel_sizes(affine),
     )
-    verts, faces = _marching_cubes_field(field, iso, affine, pad_used,
-                                         inside_low=(mode == "sdf"))
+    verts, faces = _marching_cubes_field(field, iso, affine, pad_used, inside_low=(mode == "sdf"))
 
-    v, f, info = refine_mesh(verts, faces, closed=closed, return_info=True,
-                             **refine_kwargs)
+    v, f, info = refine_mesh(verts, faces, closed=closed, return_info=True, **refine_kwargs)
     info.update({"method": "improved", "field_mode": mode})
     if return_info:
         return v, f, info

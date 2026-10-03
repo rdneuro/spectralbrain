@@ -37,8 +37,9 @@ import numpy as np
 logger = logging.getLogger("spectralbrain.statistics._clustercore")
 
 
-def compare_partitions(labels_a: np.ndarray, labels_b: np.ndarray,
-                       mask: np.ndarray | None = None) -> dict[str, float]:
+def compare_partitions(
+    labels_a: np.ndarray, labels_b: np.ndarray, mask: np.ndarray | None = None
+) -> dict[str, float]:
     """ARI, AMI, NMI and variation of information between two labellings.
 
     Parameters
@@ -82,8 +83,9 @@ def compare_partitions(labels_a: np.ndarray, labels_b: np.ndarray,
     }
 
 
-def parcel_overlap(cluster_labels: np.ndarray, atlas_labels: np.ndarray,
-                   background: int | None = None) -> dict[str, object]:
+def parcel_overlap(
+    cluster_labels: np.ndarray, atlas_labels: np.ndarray, background: int | None = None
+) -> dict[str, object]:
     """Dice/Jaccard overlap between data-driven clusters and atlas ROIs.
 
     Parameters
@@ -125,18 +127,34 @@ def parcel_overlap(cluster_labels: np.ndarray, atlas_labels: np.ndarray,
             jacc[ci, ai] = inter / union if union else 0.0
 
     best_idx = dice.argmax(axis=1) if atlas_ids.size else np.array([], int)
-    best = {int(cluster_ids[i]): {"atlas_id": int(atlas_ids[best_idx[i]]),
-                                  "dice": float(dice[i, best_idx[i]])}
-            for i in range(cluster_ids.size)} if atlas_ids.size else {}
+    best = (
+        {
+            int(cluster_ids[i]): {
+                "atlas_id": int(atlas_ids[best_idx[i]]),
+                "dice": float(dice[i, best_idx[i]]),
+            }
+            for i in range(cluster_ids.size)
+        }
+        if atlas_ids.size
+        else {}
+    )
     mean_best = float(np.mean([v["dice"] for v in best.values()])) if best else float("nan")
-    return {"dice": dice, "jaccard": jacc, "cluster_ids": cluster_ids,
-            "atlas_ids": atlas_ids, "best_atlas_for_cluster": best,
-            "mean_best_dice": mean_best}
+    return {
+        "dice": dice,
+        "jaccard": jacc,
+        "cluster_ids": cluster_ids,
+        "atlas_ids": atlas_ids,
+        "best_atlas_for_cluster": best,
+        "mean_best_dice": mean_best,
+    }
 
 
-def spectral_homogeneity(features: np.ndarray, labels: np.ndarray,
-                         method: str = "correlation",
-                         size_weighted: bool = True) -> float:
+def spectral_homogeneity(
+    features: np.ndarray,
+    labels: np.ndarray,
+    method: str = "correlation",
+    size_weighted: bool = True,
+) -> float:
     """Within-parcel descriptor homogeneity (Schaefer/Gordon/Craddock style).
 
     Parameters
@@ -178,7 +196,7 @@ def spectral_homogeneity(features: np.ndarray, labels: np.ndarray,
         elif method == "first_eigenvalue":
             Xc = Xp - Xp.mean(axis=0, keepdims=True)
             s = np.linalg.svd(Xc, compute_uv=False)
-            h = float(s[0] ** 2 / np.clip((s ** 2).sum(), 1e-12, None))
+            h = float(s[0] ** 2 / np.clip((s**2).sum(), 1e-12, None))
         else:
             raise ValueError("method must be 'correlation' or 'first_eigenvalue'.")
         if np.isfinite(h):
@@ -191,8 +209,9 @@ def spectral_homogeneity(features: np.ndarray, labels: np.ndarray,
     return float(np.mean(vals))
 
 
-def random_parcellation(adjacency_list: Sequence[np.ndarray], n_parcels: int,
-                        seed: int = 0) -> np.ndarray:
+def random_parcellation(
+    adjacency_list: Sequence[np.ndarray], n_parcels: int, seed: int = 0
+) -> np.ndarray:
     """Contiguous random parcellation via multi-source BFS (graph Voronoi).
 
     Picks ``n_parcels`` random seed vertices and grows regions simultaneously,
@@ -235,10 +254,15 @@ def random_parcellation(adjacency_list: Sequence[np.ndarray], n_parcels: int,
     return labels
 
 
-def homogeneity_vs_null(features: np.ndarray, labels: np.ndarray,
-                        adjacency_list: Sequence[np.ndarray], n_null: int = 100,
-                        method: str = "correlation", seed: int = 0,
-                        progress: bool = False) -> dict[str, float]:
+def homogeneity_vs_null(
+    features: np.ndarray,
+    labels: np.ndarray,
+    adjacency_list: Sequence[np.ndarray],
+    n_null: int = 100,
+    method: str = "correlation",
+    seed: int = 0,
+    progress: bool = False,
+) -> dict[str, float]:
     """Observed within-parcel homogeneity vs a size-matched random-parcellation null.
 
     Returns
@@ -261,24 +285,39 @@ def homogeneity_vs_null(features: np.ndarray, labels: np.ndarray,
     finite = np.isfinite(null)
     if not finite.all():
         import warnings
-        warnings.warn(f"homogeneity_vs_null: {int((~finite).sum())} null draw(s) were "
-                      "non-finite and are excluded.", RuntimeWarning, stacklevel=2)
+
+        warnings.warn(
+            f"homogeneity_vs_null: {int((~finite).sum())} null draw(s) were "
+            "non-finite and are excluded.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
     null_f = null[finite]
     null_mean = float(np.mean(null_f)) if null_f.size else float("nan")
     null_std = float(np.std(null_f)) if null_f.size else float("nan")
     z = (observed - null_mean) / null_std if null_std > 0 else float("nan")
     p = float((np.sum(null_f >= observed) + 1) / (null_f.size + 1))
-    return {"observed": float(observed), "null_mean": null_mean,
-            "null_std": null_std, "z": float(z), "p": p, "n_parcels": n_parcels}
+    return {
+        "observed": float(observed),
+        "null_mean": null_mean,
+        "null_std": null_std,
+        "z": float(z),
+        "p": p,
+        "n_parcels": n_parcels,
+    }
 
 
-def cluster_atlas_concordance(cluster_labels: np.ndarray, atlas_labels: np.ndarray,
-                              adjacency_list: Sequence[np.ndarray] | None = None,
-                              distance: np.ndarray | None = None,
-                              coords: np.ndarray | None = None,
-                              background: int | None = None,
-                              n_null: int = 100, seed: int = 0,
-                              progress: bool = False) -> dict[str, object]:
+def cluster_atlas_concordance(
+    cluster_labels: np.ndarray,
+    atlas_labels: np.ndarray,
+    adjacency_list: Sequence[np.ndarray] | None = None,
+    distance: np.ndarray | None = None,
+    coords: np.ndarray | None = None,
+    background: int | None = None,
+    n_null: int = 100,
+    seed: int = 0,
+    progress: bool = False,
+) -> dict[str, object]:
     """Full cluster-vs-atlas concordance report with a size-matched null.
 
     Computes ARI/AMI/NMI/VI and mean best-Dice between the data-driven clusters
@@ -323,17 +362,21 @@ def cluster_atlas_concordance(cluster_labels: np.ndarray, atlas_labels: np.ndarr
     overlap = parcel_overlap(cl, at, background=background)
     report: dict[str, object] = {
         "metrics": metrics,
-        "overlap": {"mean_best_dice": overlap["mean_best_dice"],
-                    "n_clusters": int(overlap["cluster_ids"].size),
-                    "n_atlas_rois": int(overlap["atlas_ids"].size)},
+        "overlap": {
+            "mean_best_dice": overlap["mean_best_dice"],
+            "n_clusters": int(overlap["cluster_ids"].size),
+            "n_atlas_rois": int(overlap["atlas_ids"].size),
+        },
     }
 
     if distance is not None or coords is not None:
         from .partition import spatial_rand_index
+
         d = distance[np.ix_(mask, mask)] if distance is not None else None
         c = coords[mask] if coords is not None else None
-        report["spARI"] = spatial_rand_index(cl[mask], at[mask], distance=d,
-                                             coords=c, adjusted=True)
+        report["spARI"] = spatial_rand_index(
+            cl[mask], at[mask], distance=d, coords=c, adjusted=True
+        )
 
     if adjacency_list is not None:
         obs = float(adjusted_rand_score(cl[mask], at[mask]))
@@ -347,15 +390,18 @@ def cluster_atlas_concordance(cluster_labels: np.ndarray, atlas_labels: np.ndarr
                 adv()
         nm, ns = float(np.mean(null)), float(np.std(null))
         report["ari_null"] = {
-            "observed": obs, "null_mean": nm, "null_std": ns,
+            "observed": obs,
+            "null_mean": nm,
+            "null_std": ns,
             "z": (obs - nm) / ns if ns > 0 else float("nan"),
             "p": float((np.sum(null >= obs) + 1) / (n_null + 1)),
         }
     return report
 
 
-def aggregate_across_subjects(values: Sequence[float], n_boot: int = 5000,
-                              ci: float = 0.95, seed: int = 0) -> dict[str, float]:
+def aggregate_across_subjects(
+    values: Sequence[float], n_boot: int = 5000, ci: float = 0.95, seed: int = 0
+) -> dict[str, float]:
     """Median + bootstrap CI of a per-subject metric (clinical-cohort summary).
 
     For a small clinical cohort, prefer per-subject cluster-vs-atlas comparison
@@ -369,12 +415,21 @@ def aggregate_across_subjects(values: Sequence[float], n_boot: int = 5000,
     v = np.asarray(values, float)
     v = v[np.isfinite(v)]
     if v.size == 0:
-        return {"median": float("nan"), "ci_low": float("nan"),
-                "ci_high": float("nan"), "mean": float("nan"), "n": 0}
+        return {
+            "median": float("nan"),
+            "ci_low": float("nan"),
+            "ci_high": float("nan"),
+            "mean": float("nan"),
+            "n": 0,
+        }
     rng = np.random.default_rng(seed)
-    boot = np.array([np.median(rng.choice(v, size=v.size, replace=True))
-                     for _ in range(n_boot)])
+    boot = np.array([np.median(rng.choice(v, size=v.size, replace=True)) for _ in range(n_boot)])
     lo = float(np.percentile(boot, 100 * (1 - ci) / 2))
     hi = float(np.percentile(boot, 100 * (1 - (1 - ci) / 2)))
-    return {"median": float(np.median(v)), "ci_low": lo, "ci_high": hi,
-            "mean": float(np.mean(v)), "n": int(v.size)}
+    return {
+        "median": float(np.median(v)),
+        "ci_low": lo,
+        "ci_high": hi,
+        "mean": float(np.mean(v)),
+        "n": int(v.size),
+    }

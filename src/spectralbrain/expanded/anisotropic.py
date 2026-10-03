@@ -213,9 +213,7 @@ def finsler_laplacian(
     for c in range(3):
         np.add.at(point_area, f[:, c], fa / 3.0)
     M = sp.diags(np.clip(point_area, _EPS, None), format="csc")
-    logger.info(
-        "Finsler Laplacian: g=%.2f direction=%s nnz=%d", g, direction, L.nnz
-    )
+    logger.info("Finsler Laplacian: g=%.2f direction=%s nnz=%d", g, direction, L.nnz)
     return L, M
 
 
@@ -332,9 +330,7 @@ def anisotropic_bank_descriptor(
                 elif descriptor == "wks":
                     blocks.append(compute_wks(decomp, n_energies=n_components))
                 else:
-                    raise ValueError(
-                        f"descriptor must be 'hks' or 'wks', got {descriptor!r}."
-                    )
+                    raise ValueError(f"descriptor must be 'hks' or 'wks', got {descriptor!r}.")
                 tick(1)
 
     return np.hstack(blocks)  # (N, |ratios|·|dirs|·n_components)

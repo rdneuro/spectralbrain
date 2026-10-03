@@ -858,9 +858,9 @@ def _vol2surf_with_method(
     if _has_freesurfer_cmd("mri_vol2surf"):
         with tempfile.TemporaryDirectory(prefix="sb_vol2surf_") as tmp:
             tmp_out = str(Path(tmp) / "labels.mgz")
-            reg_args = ["--reg", str(atlas_reg)] if atlas_reg is not None else [
-                "--regheader", subject_id
-            ]
+            reg_args = (
+                ["--reg", str(atlas_reg)] if atlas_reg is not None else ["--regheader", subject_id]
+            )
             cmd = [
                 "mri_vol2surf",
                 "--mov",

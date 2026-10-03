@@ -10,6 +10,7 @@ Strehl & Ghosh (2002), Cluster ensembles, JMLR 3:583-617.
 Fred & Jain (2005), Combining multiple clusterings using evidence accumulation,
 IEEE TPAMI 27(6):835-850.
 """
+
 from __future__ import annotations
 
 import logging
@@ -47,9 +48,12 @@ def co_association_matrix(partitions: Sequence[np.ndarray]) -> np.ndarray:
     return co
 
 
-def consensus_partition(co_association: np.ndarray, n_clusters: int | None = None,
-                        connectivity=None, threshold: float | None = None,
-                        ) -> np.ndarray:
+def consensus_partition(
+    co_association: np.ndarray,
+    n_clusters: int | None = None,
+    connectivity=None,
+    threshold: float | None = None,
+) -> np.ndarray:
     """Derive a consensus partition from a co-association matrix.
 
     Parameters
@@ -72,6 +76,7 @@ def consensus_partition(co_association: np.ndarray, n_clusters: int | None = Non
     if threshold is not None:
         import scipy.sparse as sp
         from scipy.sparse.csgraph import connected_components
+
         A = (co >= threshold).astype(np.int8)
         np.fill_diagonal(A, 0)
         _, labels = connected_components(sp.csr_matrix(A), directed=False)
@@ -79,9 +84,11 @@ def consensus_partition(co_association: np.ndarray, n_clusters: int | None = Non
     if n_clusters is None:
         raise ValueError("Provide either n_clusters or threshold.")
     from sklearn.cluster import AgglomerativeClustering
+
     dist = 1.0 - co
-    ac = AgglomerativeClustering(n_clusters=n_clusters, metric="precomputed",
-                                 linkage="average", connectivity=connectivity)
+    ac = AgglomerativeClustering(
+        n_clusters=n_clusters, metric="precomputed", linkage="average", connectivity=connectivity
+    )
     return ac.fit_predict(dist)
 
 

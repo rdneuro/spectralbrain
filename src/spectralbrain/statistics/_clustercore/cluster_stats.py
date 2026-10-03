@@ -28,6 +28,7 @@ def intra_inter_homogeneity(features: np.ndarray, labels: np.ndarray) -> dict[st
         ``ratio`` (intra / inter; higher is better-separated).
     """
     from sklearn.metrics import pairwise_distances
+
     X = np.asarray(features, float)
     labels = np.asarray(labels)
     D = pairwise_distances(X)
@@ -41,9 +42,12 @@ def intra_inter_homogeneity(features: np.ndarray, labels: np.ndarray) -> dict[st
     return {"intra": intra, "inter": inter, "ratio": ratio}
 
 
-def spatial_silhouette(features: np.ndarray, labels: np.ndarray,
-                       spatial_distance: np.ndarray | None = None,
-                       alpha: float = 0.5) -> float:
+def spatial_silhouette(
+    features: np.ndarray,
+    labels: np.ndarray,
+    spatial_distance: np.ndarray | None = None,
+    alpha: float = 0.5,
+) -> float:
     """Silhouette score on a feature/spatial blended distance.
 
     Parameters
@@ -61,6 +65,7 @@ def spatial_silhouette(features: np.ndarray, labels: np.ndarray,
         Mean silhouette in [-1, 1].
     """
     from sklearn.metrics import pairwise_distances, silhouette_score
+
     X = np.asarray(features, float)
     labels = np.asarray(labels)
     if len(np.unique(labels)) < 2:
@@ -93,6 +98,7 @@ def energy_distance(sample_a: np.ndarray, sample_b: np.ndarray) -> float:
         Non-negative energy distance (0 iff distributions coincide).
     """
     from sklearn.metrics import pairwise_distances
+
     A = np.atleast_2d(np.asarray(sample_a, float))
     B = np.atleast_2d(np.asarray(sample_b, float))
     d_ab = pairwise_distances(A, B).mean()
@@ -124,6 +130,7 @@ def rsa_compare(rdm_a: np.ndarray, rdm_b: np.ndarray, method: str = "spearman") 
 
 def _corr_vec(va: np.ndarray, vb: np.ndarray, method: str) -> float:
     from scipy.stats import kendalltau, pearsonr, spearmanr
+
     if method == "spearman":
         return float(spearmanr(va, vb).correlation)
     if method == "pearson":
@@ -133,8 +140,13 @@ def _corr_vec(va: np.ndarray, vb: np.ndarray, method: str) -> float:
     raise ValueError(f"Unknown method {method!r}.")
 
 
-def mantel_test(rdm_a: np.ndarray, rdm_b: np.ndarray, n_perm: int = 10000,
-                method: str = "spearman", random_state: int = 0):
+def mantel_test(
+    rdm_a: np.ndarray,
+    rdm_b: np.ndarray,
+    n_perm: int = 10000,
+    method: str = "spearman",
+    random_state: int = 0,
+):
     """Mantel test: permutation significance of an RDM-RDM correlation.
 
     Returns

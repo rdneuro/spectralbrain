@@ -224,9 +224,7 @@ class BayesianModel(abc.ABC):
                             self.trace_ = self._sample_nutpie(
                                 nutpie, draws, tune, chains, cores, target_accept, seed, kwargs
                             )
-                            logger.info(
-                                "Fitted with nutpie (%d draws × %d chains).", draws, chains
-                            )
+                            logger.info("Fitted with nutpie (%d draws × %d chains).", draws, chains)
                             return self._finalize_fit()
                         except (ValueError, TypeError, NotImplementedError, RuntimeError) as exc:
                             warnings.warn(
@@ -891,8 +889,9 @@ class GaussianProcessNormative(BayesianModel):
         pred_name = f"f_pred_{uuid.uuid4().hex[:8]}"
 
         with self.model_:
-            self._gp.conditional(pred_name, np.asarray(X_new, dtype=np.float64),
-                                 pred_noise=pred_noise)
+            self._gp.conditional(
+                pred_name, np.asarray(X_new, dtype=np.float64), pred_noise=pred_noise
+            )
             ppc = pm.sample_posterior_predictive(
                 self.trace_,
                 var_names=[pred_name],

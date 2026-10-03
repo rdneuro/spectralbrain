@@ -32,6 +32,7 @@ funções — o módulo importa limpo mesmo sem elas instaladas.
 
 Autor: Rodrigo Debona (Velho Mago) — com Claudinho.
 """
+
 from __future__ import annotations
 
 import os
@@ -219,10 +220,16 @@ def render_eigenmodes(
 
         out_png = os.path.join(str(out_dir), f"mode_{k:03d}.png")
         yab.plot_vertexwise(
-            lh_mesh, rh_mesh, scalars="mode",
-            cmap=cmap, vminmax=[-vmax, vmax],
-            views=views, style=style,
-            figsize=figsize, zoom=zoom, export_path=out_png,
+            lh_mesh,
+            rh_mesh,
+            scalars="mode",
+            cmap=cmap,
+            vminmax=[-vmax, vmax],
+            views=views,
+            style=style,
+            figsize=figsize,
+            zoom=zoom,
+            export_path=out_png,
         )
         png_paths.append(out_png)
         print(f"  modo {k:>3d}  |  vmax={vmax:.3e}  ->  {out_png}")
@@ -230,7 +237,9 @@ def render_eigenmodes(
 
 
 def select_mode_indices(
-    evals: np.ndarray, n_show: int = 12, skip_constant: bool = True,
+    evals: np.ndarray,
+    n_show: int = 12,
+    skip_constant: bool = True,
 ) -> np.ndarray:
     """Escolhe quais colunas de autovetores renderizar (pula o modo constante)."""
     evals = np.asarray(evals, dtype=float)
@@ -262,8 +271,15 @@ def assemble_eigenmode_panel(
 
     fig = plt.figure(figsize=(ncols * 3.0, nrows * 1.25 + 0.6))
     gs = gridspec.GridSpec(
-        nrows, ncols, figure=fig, wspace=0.04, hspace=0.18,
-        left=0.01, right=0.90, top=0.94 if panel_title else 0.98, bottom=0.02,
+        nrows,
+        ncols,
+        figure=fig,
+        wspace=0.04,
+        hspace=0.18,
+        left=0.01,
+        right=0.90,
+        top=0.94 if panel_title else 0.98,
+        bottom=0.02,
     )
 
     for i, (png, k) in enumerate(zip(png_paths, mode_indices)):
@@ -337,19 +353,33 @@ def plot_eigenmode_panel(
     views = list(views_per_mode) if views_per_mode is not None else list(_ONE_VIEW)
 
     png_paths = render_eigenmodes(
-        evecs_lh, evecs_rh, lh_surf_path, rh_surf_path,
-        mode_indices=idx, out_dir=out_dir, views=views, cmap=cmap,
-        medial_mask_lh=medial_mask_lh, medial_mask_rh=medial_mask_rh,
+        evecs_lh,
+        evecs_rh,
+        lh_surf_path,
+        rh_surf_path,
+        mode_indices=idx,
+        out_dir=out_dir,
+        views=views,
+        cmap=cmap,
+        medial_mask_lh=medial_mask_lh,
+        medial_mask_rh=medial_mask_rh,
     )
     return assemble_eigenmode_panel(
-        png_paths, idx, evals, out_path=out_path, ncols=ncols,
-        cmap=cmap, annotate=annotate, panel_title=panel_title,
+        png_paths,
+        idx,
+        evals,
+        out_path=out_path,
+        ncols=ncols,
+        cmap=cmap,
+        annotate=annotate,
+        panel_title=panel_title,
     )
 
 
 # ─────────────────────────────── exemplo de uso ───────────────────────────────
 if __name__ == "__main__":
     import yabplot as yab
+
     try:
         LH, RH = yab.data.get_surface_paths("midthickness", "bmesh")
     except Exception:
@@ -357,8 +387,11 @@ if __name__ == "__main__":
         RH = "conte69.R.midthickness.surf.gii"
 
     plot_eigenmode_panel(
-        lh_surf_path=LH, rh_surf_path=RH,
-        n_modes=50, n_show=12, ncols=3,
+        lh_surf_path=LH,
+        rh_surf_path=RH,
+        n_modes=50,
+        n_show=12,
+        ncols=3,
         views_per_mode=["left_lateral"],
         out_path="eigenmode_panel_LBO.pdf",
         annotate="wavelength",

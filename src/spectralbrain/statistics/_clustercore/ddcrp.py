@@ -61,8 +61,9 @@ class NIWPrior:
     psi0: np.ndarray
 
     @classmethod
-    def from_data(cls, X: np.ndarray, kappa0: float = 0.1,
-                  nu0_offset: float = 2.0, psi_scale: float = 1.0) -> NIWPrior:
+    def from_data(
+        cls, X: np.ndarray, kappa0: float = 0.1, nu0_offset: float = 2.0, psi_scale: float = 1.0
+    ) -> NIWPrior:
         """Weakly-informative prior centred on the data's global statistics."""
         X = np.asarray(X, float)
         d = X.shape[1]
@@ -93,8 +94,7 @@ def _logdet_spd(matrix: np.ndarray) -> float:
     return 2.0 * np.log(np.diag(L)).sum()
 
 
-def niw_log_marginal(n: int, sum_x: np.ndarray, sum_xx: np.ndarray,
-                     prior: NIWPrior) -> float:
+def niw_log_marginal(n: int, sum_x: np.ndarray, sum_xx: np.ndarray, prior: NIWPrior) -> float:
     """Collapsed NIW log marginal likelihood of a cluster from sufficient stats.
 
     Parameters
@@ -116,14 +116,13 @@ def niw_log_marginal(n: int, sum_x: np.ndarray, sum_xx: np.ndarray,
     if n == 0:
         return 0.0
     xbar = sum_x / n
-    scatter = sum_xx - n * np.outer(xbar, xbar)           # S = sum (x-xbar)(x-xbar)^T
+    scatter = sum_xx - n * np.outer(xbar, xbar)  # S = sum (x-xbar)(x-xbar)^T
 
     kappa_n = prior.kappa0 + n
     nu_n = prior.nu0 + n
     diff = xbar - prior.mu0
-    psi_n = (prior.psi0 + scatter
-             + (prior.kappa0 * n / kappa_n) * np.outer(diff, diff))
-    psi_n = 0.5 * (psi_n + psi_n.T)                        # symmetrise
+    psi_n = prior.psi0 + scatter + (prior.kappa0 * n / kappa_n) * np.outer(diff, diff)
+    psi_n = 0.5 * (psi_n + psi_n.T)  # symmetrise
 
     log_ml = (
         -(n * d / 2.0) * np.log(np.pi)
@@ -174,9 +173,13 @@ def _make_marginal(prior: NIWPrior) -> Callable[[int, np.ndarray, np.ndarray], f
         if g is None:
             g = _mvgln(nu_n / 2.0)
             gln_cache[n] = g
-        return float(-(n * d / 2.0) * log_pi + g + const
-                     - (nu_n / 2.0) * _logdet_spd(psi_n)
-                     + (d / 2.0) * (log_k0 - np.log(kappa_n)))
+        return float(
+            -(n * d / 2.0) * log_pi
+            + g
+            + const
+            - (nu_n / 2.0) * _logdet_spd(psi_n)
+            + (d / 2.0) * (log_k0 - np.log(kappa_n))
+        )
 
     return ml
 
@@ -204,13 +207,16 @@ def make_decay(kind: str = "window", scale: float = 1.0) -> Callable[[np.ndarray
     """
     scale = float(scale)
     if kind == "window":
+
         def logf(d):
             out = np.where(np.asarray(d) <= scale, 0.0, -np.inf)
             return out
     elif kind == "exponential":
+
         def logf(d):
             return -np.asarray(d, float) / max(scale, 1e-12)
     elif kind == "logistic":
+
         def logf(d):
             d = np.asarray(d, float)
             return -np.log1p(np.exp((d - scale) / (0.1 * scale + 1e-12)))
@@ -250,6 +256,7 @@ def _components_from_links(links: np.ndarray) -> np.ndarray:
     """Connected components (tables) of the undirected link graph."""
     import scipy.sparse as sp
     from scipy.sparse.csgraph import connected_components
+
     n = links.shape[0]
     rows = np.arange(n)
     A = sp.coo_matrix((np.ones(n), (rows, links)), shape=(n, n))
@@ -281,10 +288,18 @@ class DDCRP:
     random_state : int
     """
 
-    def __init__(self, decay_kind: str = "window", decay_scale: float = 1.0,
-                 alpha: float = 1.0, prior: NIWPrior | None = None,
-                 n_draws: int = 200, burn_in: int = 100, thin: int = 2,
-                 chains: int = 4, random_state: int = 0) -> None:
+    def __init__(
+        self,
+        decay_kind: str = "window",
+        decay_scale: float = 1.0,
+        alpha: float = 1.0,
+        prior: NIWPrior | None = None,
+        n_draws: int = 200,
+        burn_in: int = 100,
+        thin: int = 2,
+        chains: int = 4,
+        random_state: int = 0,
+    ) -> None:
         self.logf = make_decay(decay_kind, decay_scale)
         self.alpha = float(alpha)
         self.log_alpha = np.log(max(self.alpha, 1e-300))
@@ -312,10 +327,14 @@ class DDCRP:
                     stack.append(w)
         return seen
 
-    def fit(self, X: np.ndarray, adjacency_list: Sequence[np.ndarray],
-            distances: Sequence[np.ndarray] | None = None,
-            vertices: np.ndarray | None = None,
-            progress: bool = True) -> DDCRPResult:
+    def fit(
+        self,
+        X: np.ndarray,
+        adjacency_list: Sequence[np.ndarray],
+        distances: Sequence[np.ndarray] | None = None,
+        vertices: np.ndarray | None = None,
+        progress: bool = True,
+    ) -> DDCRPResult:
         """Run the sampler.
 
         Parameters
@@ -362,15 +381,16 @@ class DDCRP:
         prior = self.prior or NIWPrior.from_data(X)
         if distances is None and vertices is not None:
             from ._meshgeom import edge_distances
+
             distances = edge_distances(vertices, adjacency_list)
         if distances is None:
             distances = [np.ones(len(neigh)) for neigh in adjacency_list]
 
         # Precompute per-neighbourhood log-priors (self log-prior = log_alpha).
         log_prior_neigh = [self.logf(np.asarray(dd, float)) for dd in distances]
-        ml = _make_marginal(prior)             # fast marginal with cached constants
+        ml = _make_marginal(prior)  # fast marginal with cached constants
         # Per-node outer products x x^T (reused when summing small subtrees).
-        XX = np.einsum("ij,ik->ijk", X, X)     # (V, d, d)
+        XX = np.einsum("ij,ik->ijk", X, X)  # (V, d, d)
 
         rng_master = np.random.default_rng(self.random_state)
         all_labels_draws: list[np.ndarray] = []
@@ -380,14 +400,13 @@ class DDCRP:
         with progress_bar("ddCRP Gibbs", total=total_sweeps, disable=not progress) as advance:
             for _chain in range(self.chains):
                 rng = np.random.default_rng(rng_master.integers(0, 2**31 - 1))
-                links = np.arange(n)                       # all self-linked
+                links = np.arange(n)  # all self-linked
                 in_links: list[set] = [set() for _ in range(n)]
 
                 # Component bookkeeping: every node starts as its own singleton.
                 cid_of = np.arange(n)
                 members_of: dict[int, set] = {c: {c} for c in range(n)}
-                stats_of: dict[int, tuple] = {
-                    c: (1, X[c], XX[c]) for c in range(n)}
+                stats_of: dict[int, tuple] = {c: (1, X[c], XX[c]) for c in range(n)}
                 ml_of: dict[int, float] = {}
                 next_cid = n
                 chain_counts: list[int] = []
@@ -404,7 +423,7 @@ class DDCRP:
                     order = rng.permutation(n)
                     for i in order:
                         old = links[i]
-                        sub = self._subtree(i, in_links)       # i + descendants
+                        sub = self._subtree(i, in_links)  # i + descendants
                         if old != i:
                             in_links[old].discard(i)
                         links[i] = i
@@ -443,7 +462,7 @@ class DDCRP:
                             if not np.isfinite(lp):
                                 continue
                             if j == i or cid_of[j] == comp_i:
-                                scores[k] = lp                 # no merge
+                                scores[k] = lp  # no merge
                             else:
                                 cj = cid_of[j]
                                 sj = stats_of[cj]
@@ -463,7 +482,7 @@ class DDCRP:
                             in_links[j_new].add(i)
 
                         if j_new == i or cid_of[j_new] == comp_i:
-                            pass                                # i's cluster unchanged
+                            pass  # i's cluster unchanged
                         else:
                             cj = cid_of[j_new]
                             mi, mj = members_of[comp_i], members_of[cj]
@@ -493,6 +512,7 @@ class DDCRP:
                     chain_counts.append(len(np.unique(labels)))
                     if _DDCRP_DEBUG:
                         from collections import defaultdict
+
                         agg = defaultdict(lambda: [0, np.zeros(d), np.zeros((d, d))])
                         for node in range(n):
                             c = int(cid_of[node])
@@ -507,7 +527,7 @@ class DDCRP:
                     if sweep >= self.burn_in and ((sweep - self.burn_in) % self.thin == 0):
                         all_labels_draws.append(labels.copy())
                     advance()
-                n_clusters_per_chain.append(chain_counts[self.burn_in:])
+                n_clusters_per_chain.append(chain_counts[self.burn_in :])
 
         # Co-association across all retained draws.
         co = np.zeros((n, n), dtype=np.float64)
@@ -518,11 +538,18 @@ class DDCRP:
         rhat = _rhat([np.asarray(c, float) for c in n_clusters_per_chain])
         last_labels = all_labels_draws[-1] if all_labels_draws else _components_from_links(links)
         last_labels = _relabel_consecutive(last_labels)
-        n_trace = np.concatenate([np.asarray(c) for c in n_clusters_per_chain]) \
-            if n_clusters_per_chain else np.array([])
-        return DDCRPResult(labels=last_labels, co_association=co,
-                           n_clusters_trace=n_trace, rhat_n_clusters=rhat,
-                           chains=self.chains)
+        n_trace = (
+            np.concatenate([np.asarray(c) for c in n_clusters_per_chain])
+            if n_clusters_per_chain
+            else np.array([])
+        )
+        return DDCRPResult(
+            labels=last_labels,
+            co_association=co,
+            n_clusters_trace=n_trace,
+            rhat_n_clusters=rhat,
+            chains=self.chains,
+        )
 
 
 def _relabel_consecutive(labels: np.ndarray) -> np.ndarray:
@@ -536,7 +563,7 @@ def _rhat(chains: list[np.ndarray]) -> float:
     if len(chains) < 2:
         return float("nan")
     n = min(len(c) for c in chains)
-    arr = np.stack([c[:n] for c in chains])          # (m, n)
+    arr = np.stack([c[:n] for c in chains])  # (m, n)
     chain_means = arr.mean(axis=1)
     chain_vars = arr.var(axis=1, ddof=1)
     W = chain_vars.mean()
@@ -547,17 +574,36 @@ def _rhat(chains: list[np.ndarray]) -> float:
     return float(np.sqrt(var_hat / W))
 
 
-def cluster_ddcrp(X, adjacency_list, decay_kind="window", decay_scale=1.0,
-                  alpha=1.0, prior=None, n_draws=200, burn_in=100, thin=2,
-                  chains=4, random_state=0, distances=None, vertices=None,
-                  progress=True) -> DDCRPResult:
+def cluster_ddcrp(
+    X,
+    adjacency_list,
+    decay_kind="window",
+    decay_scale=1.0,
+    alpha=1.0,
+    prior=None,
+    n_draws=200,
+    burn_in=100,
+    thin=2,
+    chains=4,
+    random_state=0,
+    distances=None,
+    vertices=None,
+    progress=True,
+) -> DDCRPResult:
     """Functional wrapper around :class:`DDCRP` (convenience entry point).
 
     Pass ``vertices`` (mesh coordinates) to let the decay function use real
     Euclidean edge distances; otherwise neighbours are treated as equidistant.
     """
-    sampler = DDCRP(decay_kind=decay_kind, decay_scale=decay_scale, alpha=alpha,
-                    prior=prior, n_draws=n_draws, burn_in=burn_in, thin=thin,
-                    chains=chains, random_state=random_state)
-    return sampler.fit(X, adjacency_list, distances=distances, vertices=vertices,
-                       progress=progress)
+    sampler = DDCRP(
+        decay_kind=decay_kind,
+        decay_scale=decay_scale,
+        alpha=alpha,
+        prior=prior,
+        n_draws=n_draws,
+        burn_in=burn_in,
+        thin=thin,
+        chains=chains,
+        random_state=random_state,
+    )
+    return sampler.fit(X, adjacency_list, distances=distances, vertices=vertices, progress=progress)

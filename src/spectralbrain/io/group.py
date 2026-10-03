@@ -360,7 +360,9 @@ def _finalize_group(
     if failed:
         logger.warning(
             "%d/%d subjects failed to load and were dropped: %s",
-            n_failed, len(items), ", ".join(failed),
+            n_failed,
+            len(items),
+            ", ".join(failed),
         )
     sids = [s for s, _, _ in ok]
     out_paths = [p for _, p, _ in ok]
