@@ -6,7 +6,7 @@ based on [Keep a Changelog](https://keepachangelog.com/); the project follows
 
 ## [Unreleased]
 
-## [0.0.8] - 2026-10-03
+## [0.0.7] - 2026-10-03
 
 ### Fixed
 Library-wide audit for bugs and silent failures (about 120 issues; regression

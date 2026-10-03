@@ -73,7 +73,7 @@ except ImportError:  # pragma: no cover
 # §1  VERSIONING
 # ======================================================================
 
-_FALLBACK_VERSION: str = "0.0.8"  # keep in sync with [tool.hatch.version]
+_FALLBACK_VERSION: str = "0.0.7"  # keep in sync with [tool.hatch.version]
 
 
 def _resolve_version() -> str:
