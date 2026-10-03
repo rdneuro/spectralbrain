@@ -11,6 +11,7 @@ from spectralbrain.utils.atlas import (  # noqa: F401
     get_label_name,
     get_structure_ids,
     list_labels,
+    schaefer_name_to_yeo,
     schaefer_to_yeo,
 )
 from spectralbrain.utils.datasets import (  # noqa: F401

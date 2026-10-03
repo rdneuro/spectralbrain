@@ -28,13 +28,6 @@ Quick start::
 
 from __future__ import annotations
 
-# Version: set dynamically by hatch-vcs from git tags,
-# or fall back to a static string for editable installs.
-try:
-    from spectralbrain._version import __version__
-except ImportError:
-    __version__ = "0.0.6"
-
 # ── Runtime configuration ──
 # ── Backends (lazy — heavy imports deferred) ──
 from spectralbrain.backends import NumpyBackend
@@ -104,6 +97,10 @@ from spectralbrain.io import (
     save_npz,
     volume_to_mesh,
 )
+
+# Version: resolved once in ``runtime`` (hatch-vcs ``_version`` file →
+# installed metadata → static fallback) so that ``sb.__version__`` and the
+# provenance written by the library always agree.
 from spectralbrain.runtime import (  # noqa: F401
     AnalysisObjective,
     AtlasScheme,
@@ -112,6 +109,7 @@ from spectralbrain.runtime import (  # noqa: F401
     ContainerSpec,
     DescriptorType,
     GeometryFormat,
+    __version__,
     get_logger,
     set_log_level,
 )
@@ -159,8 +157,6 @@ from spectralbrain.utils import (
 )
 
 __all__ = [
-    # Expanded (non-LBO operators; lazy subpackage)
-    "expanded",
     # Utils
     "ASEG_LABELS",
     "ATLAS_REGISTRY",
@@ -215,6 +211,8 @@ __all__ = [
     "discover_freesurfer",
     "discover_tractseg_bundles",
     "discover_tractseg_subjects",
+    # Expanded (non-LBO operators; lazy subpackage)
+    "expanded",
     "extract_submesh",
     "farthest_point_sampling",
     "get_label_id",

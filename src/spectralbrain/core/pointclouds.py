@@ -31,6 +31,7 @@ spectral pipeline.
 
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 from typing import (
     Any,
@@ -44,6 +45,7 @@ from scipy.spatial import cKDTree
 from spectralbrain.backends.cpu import NumpyBackend
 from spectralbrain.core.base import (
     SpectralDecomposition,
+    _knn_excluding_self,
     compute_centroid,
     convex_hull_area,
     farthest_point_sampling,
@@ -58,6 +60,7 @@ from spectralbrain.runtime import (
     SparseMatrix,
     get_logger,
     progress_simple,
+    resolve_seed,
 )
 
 logger = get_logger(__name__)
@@ -105,6 +108,7 @@ class BrainPointCloud:
         self._normals: Normals | None = None
         self._L: SparseMatrix | None = None
         self._M: MassMatrix | None = None
+        self._lap_key: tuple | None = None
         self._kd_tree: cKDTree | None = None
 
     # ── GeometricObject protocol ──────────────────────────────────────
@@ -601,6 +605,8 @@ class BrainPointCloud:
         epsilon: float | None = None,
         sigma: float | None = None,
         robust_mollify: float = 1e-5,
+        kernel_sigma: float | None = None,
+        area: float | None = None,
     ) -> tuple[SparseMatrix, MassMatrix]:
         """Construct a graph Laplacian on the point cloud.
 
@@ -614,32 +620,41 @@ class BrainPointCloud:
             ``"robust"`` — Sharp & Crane tufted Laplacian
             (robust to noise and non-uniform density).
         k : int
-            Number of neighbours for kNN and Belkin–Niyogi.
+            Number of neighbours for kNN and Belkin–Niyogi (the point
+            itself is not counted).
         epsilon : float, optional
-            Bandwidth for ε-ball graph.  ``None`` = auto from
-            mean kNN distance.
+            Heat-kernel bandwidth ε for ``"belkin_niyogi"``.  ``None`` =
+            auto from the kNN radius.
         sigma : float, optional
-            Gaussian kernel bandwidth.  ``None`` = auto (median
-            distance heuristic).
+            Gaussian kernel bandwidth for ``"knn"``.  ``None`` = auto
+            (median distance heuristic).  Same as *kernel_sigma*.
         robust_mollify : float
             Mollification for the robust method.
+        kernel_sigma : float, optional
+            Preferred name for the Gaussian kernel bandwidth (takes
+            precedence over *sigma*).
+        area : float, optional
+            Surface area used by ``"belkin_niyogi"`` to scale the operator
+            to the continuous LBO.  ``None`` = convex-hull area.
 
         Returns
         -------
         L : SparseMatrix, shape (N, N)
         M : MassMatrix, shape (N, N)
         """
+        bw = kernel_sigma if kernel_sigma is not None else sigma
         if method == "knn":
             L, M = _knn_laplacian(
                 self.points,
                 k=k,
-                sigma=sigma,
+                sigma=bw,
             )
         elif method == "belkin_niyogi":
             L, M = _belkin_niyogi_laplacian(
                 self.points,
                 k=k,
                 epsilon=epsilon,
+                area=area,
             )
         elif method == "robust":
             L, M = _robust_laplacian_pc(
@@ -651,6 +666,14 @@ class BrainPointCloud:
 
         self._L = L
         self._M = M
+        self._lap_key = _laplacian_key(
+            method,
+            k=k,
+            epsilon=epsilon,
+            kernel_sigma=bw,
+            robust_mollify=robust_mollify,
+            area=area,
+        )
         logger.info(
             "Point cloud Laplacian (%s): N=%d, nnz=%d",
             method,
@@ -665,7 +688,7 @@ class BrainPointCloud:
         self,
         k: int = 50,
         *,
-        laplacian_method: Literal["knn", "belkin_niyogi", "robust"] = "robust",
+        laplacian_method: Literal["knn", "belkin_niyogi", "robust"] | None = None,
         backend: Any | None = None,
         **kwargs: Any,
     ) -> SpectralDecomposition:
@@ -675,32 +698,63 @@ class BrainPointCloud:
         ----------
         k : int
             Number of eigenpairs.
-        laplacian_method : str
-            Passed to :meth:`compute_laplacian`.
+        laplacian_method : str, optional
+            Passed to :meth:`compute_laplacian`.  ``None`` (default) reuses
+            the Laplacian already built by :meth:`compute_laplacian` (if no
+            Laplacian keyword is given), else ``"robust"``.
         backend : Backend, optional
         **kwargs
-            Extra args for :meth:`compute_laplacian` and
+            Laplacian keywords — ``knn_k``, ``kernel_sigma``, ``epsilon``,
+            ``robust_mollify``, ``area`` — are forwarded to
+            :meth:`compute_laplacian`; the Laplacian is cached and rebuilt
+            whenever the method or any of these change.  ``sigma`` is a
+            **deprecated** alias of ``kernel_sigma`` (Gaussian bandwidth);
+            to set the eigensolver's shift-invert value use
+            ``eigsh_sigma``.  Every other keyword goes to
             ``backend.eigsh()``.
 
         Returns
         -------
         SpectralDecomposition
         """
-        if self._L is None or self._M is None:
-            lap_kwargs = {
-                key: kwargs.pop(key)
-                for key in ("sigma", "epsilon", "robust_mollify")
-                if key in kwargs
-            }
-            self.compute_laplacian(
-                method=laplacian_method,
-                k=kwargs.pop("knn_k", 30),
-                **lap_kwargs,
+        if "sigma" in kwargs:
+            warnings.warn(
+                "decompose(sigma=...) is deprecated: it sets the kNN Gaussian "
+                "kernel bandwidth. Use kernel_sigma=... (bandwidth) or "
+                "eigsh_sigma=... (eigensolver shift) instead.",
+                DeprecationWarning,
+                stacklevel=2,
             )
+            bw = kwargs.pop("sigma")
+            kwargs.setdefault("kernel_sigma", bw)
+
+        lap_names = ("knn_k", "kernel_sigma", "epsilon", "robust_mollify", "area")
+        lap_kwargs = {name: kwargs.pop(name) for name in lap_names if name in kwargs}
+        if "eigsh_sigma" in kwargs:
+            kwargs["sigma"] = kwargs.pop("eigsh_sigma")
+
+        cached = self._L is not None and self._M is not None and self._lap_key is not None
+        if laplacian_method is None and not lap_kwargs and cached:
+            pass  # reuse the user's explicitly built Laplacian
+        else:
+            method = laplacian_method or (
+                self._lap_key[0] if cached and self._lap_key is not None else "robust"
+            )
+            build = {
+                "k": lap_kwargs.get("knn_k", 30),
+                "epsilon": lap_kwargs.get("epsilon"),
+                "kernel_sigma": lap_kwargs.get("kernel_sigma"),
+                "robust_mollify": lap_kwargs.get("robust_mollify", 1e-5),
+                "area": lap_kwargs.get("area"),
+            }
+            key = _laplacian_key(method, **build)
+            if not cached or key != self._lap_key:
+                self.compute_laplacian(method=method, **build)
 
         be = backend or NumpyBackend()
         evals, evecs = be.eigsh(self._L, self._M, k=k, **kwargs)
 
+        assert self._lap_key is not None
         return SpectralDecomposition(
             eigenvalues=evals,
             eigenvectors=evecs,
@@ -709,7 +763,8 @@ class BrainPointCloud:
             surface_area=self.surface_area(),
             metadata={
                 **self.metadata,
-                "laplacian_method": laplacian_method,
+                "laplacian_method": self._lap_key[0],
+                "laplacian_params": dict(self._lap_key[1]),
                 "backend": be.name,
                 "n_points": self.n_points,
             },
@@ -753,6 +808,7 @@ class BrainPointCloud:
         centroid = compute_centroid(self.points)
 
         with progress_simple("Estimating normals", total=N) as tick:
+            done = 0
             for i in range(N):
                 nbrs = self.points[indices[i]]  # (k, 3)
                 cov = np.cov(nbrs, rowvar=False)  # (3, 3)
@@ -766,7 +822,8 @@ class BrainPointCloud:
                         normals[i] *= -1
 
                 if (i + 1) % 500 == 0 or i == N - 1:
-                    tick(min(500, N - (i + 1 - 500)))
+                    tick(i + 1 - done)
+                    done = i + 1
 
         # Normalise (should already be unit, but ensure).
         norms = np.linalg.norm(normals, axis=1, keepdims=True)
@@ -803,6 +860,7 @@ class BrainPointCloud:
         _, indices = knn_search(self.points, k=k)
 
         with progress_simple("Estimating curvature", total=N) as tick:
+            done = 0
             for i in range(N):
                 nbrs = self.points[indices[i]]
                 cov = np.cov(nbrs, rowvar=False)
@@ -813,7 +871,8 @@ class BrainPointCloud:
                     if eigvals[2] > 1e-20:
                         linearity[i] = (eigvals[2] - eigvals[1]) / eigvals[2]
                 if (i + 1) % 500 == 0 or i == N - 1:
-                    tick(min(500, N - (i + 1 - 500)))
+                    tick(i + 1 - done)
+                    done = i + 1
 
         return curvature, linearity
 
@@ -833,6 +892,7 @@ class BrainPointCloud:
         n_clusters: int | None = None,
         min_cluster_size: int = 50,
         eps: float | None = None,
+        seed: int | None = None,
         **kwargs: Any,
     ) -> np.ndarray:
         """Atlas-free spatial clustering of the point cloud.
@@ -854,6 +914,10 @@ class BrainPointCloud:
             For HDBSCAN.
         eps : float, optional
             For DBSCAN.
+        seed : int, optional
+            ``random_state`` for the stochastic methods (k-means, spectral).
+            ``None`` falls back to the library-wide seed set by
+            :func:`~spectralbrain.utils.seed_everything`.
         **kwargs
             Passed to the underlying clustering algorithm.
 
@@ -872,6 +936,7 @@ class BrainPointCloud:
         elif method == "spectral":
             if n_clusters is None:
                 raise ValueError("n_clusters required for spectral clustering.")
+            kwargs.setdefault("random_state", resolve_seed(seed))
             return _cluster_spectral(
                 self.points,
                 n_clusters=n_clusters,
@@ -880,6 +945,7 @@ class BrainPointCloud:
         elif method == "kmeans":
             if n_clusters is None:
                 raise ValueError("n_clusters required for kmeans.")
+            kwargs.setdefault("random_state", resolve_seed(seed))
             return _cluster_kmeans(
                 self.points,
                 n_clusters=n_clusters,
@@ -1011,11 +1077,12 @@ def _knn_laplacian(
     L, M : SparseMatrix
     """
     N = points.shape[0]
-    dists, indices = knn_search(points, k=k)
+    dists, indices = _knn_excluding_self(points, k)  # no self-loops
+    k = indices.shape[1]
 
     if sigma is None:
         # Median heuristic: σ = median of all kNN distances.
-        sigma = float(np.median(dists[:, 1:]))
+        sigma = float(np.median(dists))
         if sigma < 1e-10:
             sigma = 1.0
     sigma2 = 2.0 * sigma**2
@@ -1042,55 +1109,73 @@ def _belkin_niyogi_laplacian(
     *,
     k: int = 30,
     epsilon: float | None = None,
+    area: float | None = None,
 ) -> tuple[SparseMatrix, MassMatrix]:
     """Belkin–Niyogi heat-kernel Laplacian with convergence guarantees.
 
-    The graph Laplacian L_ε converges to the continuous Laplace–
-    Beltrami operator as N → ∞ and ε → 0 at appropriate rate
-    (Belkin & Niyogi, JCSS 2008).
+    The point-cloud Laplacian (2-manifold, uniform sampling)
 
-    W_ij = (1 / (4πε)) · exp(-||x_i - x_j||² / (4ε))
-    L_ε = (1/N) · (D - W)
+        L_ε f(x_i) = 1/(ε · 4πε) · (1/N) Σ_j (f(x_i) − f(x_j)) e^{−‖x_i−x_j‖²/4ε}
+
+    converges to ``(1/A) Δ f`` as N → ∞, ε → 0 (Belkin & Niyogi, JCSS
+    2008), A being the surface area.  We therefore pose the generalised
+    problem ``L v = λ M v`` with the lumped mass ``M = (A/N) I`` and
+    stiffness ``L = (A/N)² / (4π ε²) · (D − W)``, so that
+    ``M⁻¹ L = A · L_ε → Δ`` and the eigenvalues approximate the LBO
+    spectrum (same scale as the mesh pathway).
 
     Parameters
     ----------
     points : ndarray, shape (N, 3)
     k : int
         kNN for sparsification (exact B-N uses all pairs;
-        kNN approximation is standard for scalability).
+        kNN approximation is standard for scalability).  The point itself
+        is excluded.
     epsilon : float, optional
-        Bandwidth ε.  ``None`` = auto from mean kNN distance squared.
+        Bandwidth ε.  ``None`` = auto, ``r_k² / 25`` with ``r_k`` the median
+        distance to the k-th neighbour (keeps the kernel inside the kNN
+        support).  Choose ``k`` large enough for the desired ε.
+    area : float, optional
+        Surface area A.  ``None`` = convex-hull area of the points.
 
     Returns
     -------
     L, M : SparseMatrix
     """
     N = points.shape[0]
-    dists, indices = knn_search(points, k=k)
+    dists, indices = _knn_excluding_self(points, k)
+    k = indices.shape[1]
 
     if epsilon is None:
-        mean_dist = float(np.mean(dists[:, 1:]))
-        epsilon = mean_dist**2
-        if epsilon < 1e-10:
+        # The heat kernel exp(−r²/4ε) (σ² = 2ε) must fit inside the kNN
+        # radius r_k, otherwise truncation biases the eigenvalues low:
+        # ε = r_k² / 25 puts r_k at ≈ 3.5σ.
+        r_k = float(np.median(dists[:, -1]))
+        epsilon = r_k**2 / 25.0
+        if epsilon < 1e-12:
             epsilon = 1.0
+    if area is None:
+        area = convex_hull_area(points)
+    if not area or area <= 0:
+        raise ValueError("Belkin–Niyogi Laplacian needs a positive surface area.")
 
-    coeff = 1.0 / (4.0 * np.pi * epsilon)
     exp_coeff = -1.0 / (4.0 * epsilon)
-
     rows = np.repeat(np.arange(N), k)
     cols = indices.ravel()
-    weights = coeff * np.exp(exp_coeff * dists.ravel() ** 2)
+    weights = np.exp(exp_coeff * dists.ravel() ** 2)
 
     W = sp.csr_matrix((weights, (rows, cols)), shape=(N, N))
     W = (W + W.T) / 2
 
     D_vals = np.asarray(W.sum(axis=1)).ravel()
     D = sp.diags(D_vals, 0, shape=(N, N), format="csc")
-    L = sp.csc_matrix((1.0 / N) * (D - W))
+    a_i = area / N
+    scale = a_i**2 / (4.0 * np.pi * epsilon**2)
+    L = sp.csc_matrix(scale * (D - W))
 
-    # Uniform mass for point clouds (1/N per point).
+    # Uniform lumped mass: each point carries A/N of the surface.
     M = sp.diags(
-        np.full(N, 1.0 / N, dtype=np.float64),
+        np.full(N, a_i, dtype=np.float64),
         0,
         shape=(N, N),
         format="csc",
@@ -1127,6 +1212,25 @@ def _robust_laplacian_pc(
         mollify_factor=mollify_factor,
     )
     return sp.csc_matrix(L), sp.csc_matrix(M)
+
+
+def _laplacian_key(
+    method: str,
+    *,
+    k: int = 30,
+    epsilon: float | None = None,
+    kernel_sigma: float | None = None,
+    robust_mollify: float = 1e-5,
+    area: float | None = None,
+) -> tuple[str, tuple[tuple[str, Any], ...]]:
+    """Cache key: method + only the parameters that method actually uses."""
+    if method == "knn":
+        params: dict[str, Any] = {"k": int(k), "kernel_sigma": kernel_sigma}
+    elif method == "belkin_niyogi":
+        params = {"k": int(k), "epsilon": epsilon, "area": area}
+    else:
+        params = {"robust_mollify": robust_mollify}
+    return method, tuple(sorted(params.items()))
 
 
 # ======================================================================

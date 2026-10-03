@@ -113,6 +113,61 @@ def _require_blackjax():
 
 
 # ======================================================================
+# Shared eigensolver helpers
+# ======================================================================
+
+_EIGSH_DEFAULTS: dict[str, Any] = {"sigma": -0.01, "which": "LM", "tol": 0.0, "maxiter": None}
+
+
+def _is_diagonal(M: Any) -> bool:
+    """True if sparse/dense matrix *M* has no off-diagonal non-zeros."""
+    if sp.issparse(M):
+        C = sp.coo_matrix(M)
+        off = C.row != C.col
+        return not np.any(C.data[off] != 0)
+    A = np.asarray(M)
+    return bool(np.count_nonzero(A - np.diag(np.diag(A))) == 0)
+
+
+def _cpu_fallback_reason(N: int, M: Any, dense_max: int) -> str | None:
+    """Why the dense-GPU path cannot be used (``None`` if it can)."""
+    if N > dense_max:
+        return f"N={N} > dense_max={dense_max} (dense eigh would exhaust memory)"
+    if M is not None and not _is_diagonal(M):
+        return "the mass matrix is not diagonal (diagonal standardisation would be wrong)"
+    return None
+
+
+def _scipy_shift_invert(
+    L: Any, M: Any, k: int, sigma: float, which: str, tol: float, maxiter: int | None
+) -> tuple[np.ndarray, np.ndarray]:
+    """CPU ARPACK shift-invert eigensolve (fallback path)."""
+    from scipy.sparse.linalg import eigsh as _scipy_eigsh
+
+    return _scipy_eigsh(
+        sp.csc_matrix(L, dtype=np.float64),
+        M=(sp.csc_matrix(M, dtype=np.float64) if M is not None else None),
+        k=k,
+        sigma=sigma,
+        which=which,
+        tol=tol,
+        maxiter=maxiter,
+    )
+
+
+def _warn_ignored_eigsh_args(backend: str, **given: Any) -> None:
+    """Warn when shift-invert options are passed to the dense GPU path."""
+    ignored = [n for n, v in given.items() if v != _EIGSH_DEFAULTS[n]]
+    if ignored:
+        logger.warning(
+            "%s.eigsh: %s ignored on the dense GPU path (all eigenpairs are "
+            "computed exactly; the k smallest are returned).",
+            backend,
+            ", ".join(ignored),
+        )
+
+
+# ======================================================================
 # §1  CUPY BACKEND
 # ======================================================================
 
@@ -179,10 +234,12 @@ class CupyBackend:
         (``cupy.linalg.eigh`` — robust, no ARPACK convergence issues), keep the
         ``k`` smallest, and recover the M-orthonormal eigenvectors
         ``v = D^{-1/2} ψ``.  Validated against SciPy shift-invert and the
-        analytic sphere spectrum.  Meshes with ``N > dense_max`` fall back to
-        CPU sparse shift-invert to avoid densification OOM.  ``sigma``/``which``/
-        ``tol``/``maxiter`` are honoured only on the fallback path; the
-        signature mirrors :meth:`NumpyBackend.eigsh`.  Returns **host** arrays.
+        analytic sphere spectrum.  Meshes with ``N > dense_max`` (or a
+        non-diagonal ``M``) fall back to CPU sparse shift-invert — a warning
+        is logged.  ``sigma``/``which``/``tol``/``maxiter`` are honoured only
+        on the fallback path (a warning is logged if they are set on the
+        dense path); the signature mirrors :meth:`NumpyBackend.eigsh`.
+        Returns **host** arrays.
         """
         cp = self._cp
         N = L.shape[0]
@@ -194,22 +251,20 @@ class CupyBackend:
         d = np.clip(d, 1e-20, None)
         dinv_sqrt = 1.0 / np.sqrt(d)
 
-        if N > dense_max:
-            # Large mesh: CPU sparse shift-invert (dense would OOM).
-            from scipy.sparse.linalg import eigsh as _scipy_eigsh
-
-            evals, evecs = _scipy_eigsh(
-                L.tocsc().astype(np.float64),
-                M=(M.tocsc().astype(np.float64) if M is not None else None),
-                k=k,
-                sigma=sigma,
-                which=which,
-                tol=tol,
-                maxiter=maxiter,
+        reason = _cpu_fallback_reason(N, M, dense_max)
+        if reason is not None:
+            logger.warning(
+                "CupyBackend.eigsh: %s — falling back to CPU SciPy shift-invert "
+                "(ARPACK); this solve does NOT run on the GPU.",
+                reason,
             )
+            evals, evecs = _scipy_shift_invert(L, M, k, sigma, which, tol, maxiter)
         else:
+            _warn_ignored_eigsh_args(
+                "CupyBackend", sigma=sigma, which=which, tol=tol, maxiter=maxiter
+            )
             # Standardise on host, dense symmetric eigh on the GPU.
-            A = L.tocsr().astype(np.float64).toarray()
+            A = sp.csr_matrix(L).astype(np.float64).toarray()
             A *= dinv_sqrt[:, None]
             A *= dinv_sqrt[None, :]
             A = 0.5 * (A + A.T)  # guard fp asymmetry
@@ -372,7 +427,27 @@ class JaxBackend:
             if not has_gpu:
                 logger.warning("No GPU found; JAX backend using CPU.")
                 self.device = "cpu"
-        logger.info("JAX backend: devices = %s", jax.devices())
+        # Concrete device that every array created by this backend lives on.
+        self._device = jax.devices(self.device)[0]
+
+        # Without x64, JAX silently downcasts every float64 request to
+        # float32 (precision loss; 1e-300 clamps underflow to 0).
+        try:
+            x64 = bool(jax.config.read("jax_enable_x64"))
+        except Exception:  # pragma: no cover - very old/new config API
+            x64 = bool(getattr(jax.config, "jax_enable_x64", False))
+        self.x64 = x64
+        if not x64:
+            logger.warning(
+                "JAX x64 mode is disabled: float64 arrays are computed in float32. "
+                "Call jax.config.update('jax_enable_x64', True) before creating "
+                "arrays for double precision."
+            )
+        logger.info("JAX backend: device = %s (all: %s)", self._device, jax.devices())
+
+    def _put(self, x: Any) -> Any:
+        """Place *x* on this backend's device."""
+        return self._jax.device_put(x, self._device)
 
     # ── Eigensolver ───────────────────────────────────────────────────
 
@@ -406,12 +481,19 @@ class JaxBackend:
         M_sp = sp.csc_matrix(M, dtype=np.float64) if M is not None else None
 
         sigma = kwargs.pop("sigma", -0.01)
+        which = kwargs.pop("which", "LM")
+        tol = kwargs.pop("tol", 0.0)
+        maxiter = kwargs.pop("maxiter", None)
+        if kwargs:
+            raise TypeError(f"JaxBackend.eigsh got unexpected arguments: {sorted(kwargs)}")
         evals, evecs = spla.eigsh(
             L_sp,
             k=k,
             M=M_sp,
             sigma=sigma,
-            which="LM",
+            which=which,
+            tol=tol,
+            maxiter=maxiter,
         )
         order = np.argsort(evals)
         evals = np.clip(evals[order], 0.0, None)
@@ -470,19 +552,19 @@ class JaxBackend:
 
     def array(self, data: Any, dtype: Any = np.float64) -> Any:
         """Create a JAX array."""
-        return self._jnp.asarray(data, dtype=dtype)
+        return self._put(self._jnp.asarray(data, dtype=dtype))
 
     def zeros(self, shape: tuple[int, ...], dtype: Any = np.float64) -> Any:
         """Create a zero-filled JAX array."""
-        return self._jnp.zeros(shape, dtype=dtype)
+        return self._put(self._jnp.zeros(shape, dtype=dtype))
 
     def ones(self, shape: tuple[int, ...], dtype: Any = np.float64) -> Any:
         """Create a ones-filled JAX array."""
-        return self._jnp.ones(shape, dtype=dtype)
+        return self._put(self._jnp.ones(shape, dtype=dtype))
 
     def eye(self, n: int, dtype: Any = np.float64) -> Any:
         """Create a JAX identity matrix."""
-        return self._jnp.eye(n, dtype=dtype)
+        return self._put(self._jnp.eye(n, dtype=dtype))
 
     def matmul(self, a: Any, b: Any) -> Any:
         """JAX matrix multiply."""
@@ -493,8 +575,11 @@ class JaxBackend:
         return self._jnp.exp(x)
 
     def log(self, x: Any) -> Any:
-        """Element-wise safe log via JAX."""
-        return self._jnp.log(self._jnp.clip(x, 1e-300, None))
+        """Element-wise safe log via JAX (clamp at the dtype's smallest normal)."""
+        x = self._jnp.asarray(x)
+        dt = x.dtype if self._jnp.issubdtype(x.dtype, self._jnp.floating) else self._jnp.float32
+        tiny = float(self._jnp.finfo(dt).tiny)
+        return self._jnp.log(self._jnp.clip(x, tiny, None))
 
     def sqrt(self, x: Any) -> Any:
         """Element-wise safe sqrt via JAX."""
@@ -536,11 +621,11 @@ class JaxBackend:
 
     def linspace(self, start: float, stop: float, num: int) -> Any:
         """Linearly spaced values via JAX."""
-        return self._jnp.linspace(start, stop, num, dtype=np.float64)
+        return self._put(self._jnp.linspace(start, stop, num, dtype=np.float64))
 
     def logspace(self, start: float, stop: float, num: int) -> Any:
         """Log-spaced values via JAX."""
-        return self._jnp.logspace(start, stop, num, dtype=np.float64)
+        return self._put(self._jnp.logspace(start, stop, num, dtype=np.float64))
 
 
 # ======================================================================
@@ -608,10 +693,11 @@ class TorchBackend:
         Uses the diagonal-mass standardisation ``Ã = D^{-1/2} L D^{-1/2}``
         with a dense ``torch.linalg.eigh`` on the device, keeps the ``k``
         smallest, and recovers the M-orthonormal eigenvectors
-        ``v = D^{-1/2} ψ``.  Meshes with ``N > dense_max`` fall back to CPU
-        sparse shift-invert to avoid densification OOM.  ``sigma``/``which``/
-        ``tol``/``maxiter`` are honoured only on that fallback path.  Returns
-        **host** (NumPy) arrays, matching :meth:`NumpyBackend.eigsh`.
+        ``v = D^{-1/2} ψ``.  Meshes with ``N > dense_max`` (or a non-diagonal
+        ``M``) fall back to CPU sparse shift-invert with a logged warning.
+        ``sigma``/``which``/``tol``/``maxiter`` are honoured only on that
+        fallback path (a warning is logged otherwise).  Returns **host**
+        (NumPy) arrays, matching :meth:`NumpyBackend.eigsh`.
         """
         torch = self._torch
         N = L.shape[0]
@@ -623,22 +709,21 @@ class TorchBackend:
         d = np.clip(d, 1e-20, None)
         dinv_sqrt = 1.0 / np.sqrt(d)
 
-        if N > dense_max:
-            # Large mesh: CPU sparse shift-invert (dense would OOM).
-            from scipy.sparse.linalg import eigsh as _scipy_eigsh
-
-            evals, evecs = _scipy_eigsh(
-                L.tocsc().astype(np.float64),
-                M=(M.tocsc().astype(np.float64) if M is not None else None),
-                k=k,
-                sigma=sigma,
-                which=which,
-                tol=tol,
-                maxiter=maxiter,
+        reason = _cpu_fallback_reason(N, M, dense_max)
+        if reason is not None:
+            logger.warning(
+                "TorchBackend.eigsh: %s — falling back to CPU SciPy shift-invert "
+                "(ARPACK); this solve does NOT run on %s.",
+                reason,
+                self.device,
             )
+            evals, evecs = _scipy_shift_invert(L, M, k, sigma, which, tol, maxiter)
         else:
+            _warn_ignored_eigsh_args(
+                "TorchBackend", sigma=sigma, which=which, tol=tol, maxiter=maxiter
+            )
             # Standardise on host, dense symmetric eigh on the device.
-            A = L.tocsr().astype(np.float64).toarray()
+            A = sp.csr_matrix(L).astype(np.float64).toarray()
             A *= dinv_sqrt[:, None]
             A *= dinv_sqrt[None, :]
             A = 0.5 * (A + A.T)  # guard fp asymmetry
@@ -676,21 +761,28 @@ class TorchBackend:
 
     # ── Dense ops (device tensors) ────────────────────────────────────
 
+    def _tdtype(self, dtype: Any) -> Any:
+        """Map a NumPy/Torch dtype to the corresponding Torch dtype."""
+        torch = self._torch
+        if isinstance(dtype, torch.dtype):
+            return dtype
+        return torch.from_numpy(np.empty(0, dtype=np.dtype(dtype))).dtype
+
     def array(self, data: Any, dtype: Any = np.float64) -> Any:
         """Create a Torch tensor on the device."""
         return self._torch.as_tensor(np.asarray(data, dtype=dtype), device=self.device)
 
     def zeros(self, shape: tuple[int, ...], dtype: Any = np.float64) -> Any:
         """Create a zero-filled tensor."""
-        return self._torch.zeros(shape, dtype=self._torch.float64, device=self.device)
+        return self._torch.zeros(shape, dtype=self._tdtype(dtype), device=self.device)
 
     def ones(self, shape: tuple[int, ...], dtype: Any = np.float64) -> Any:
         """Create a ones-filled tensor."""
-        return self._torch.ones(shape, dtype=self._torch.float64, device=self.device)
+        return self._torch.ones(shape, dtype=self._tdtype(dtype), device=self.device)
 
     def eye(self, n: int, dtype: Any = np.float64) -> Any:
         """Create an identity tensor."""
-        return self._torch.eye(n, dtype=self._torch.float64, device=self.device)
+        return self._torch.eye(n, dtype=self._tdtype(dtype), device=self.device)
 
     def matmul(self, a: Any, b: Any) -> Any:
         """Matrix multiply."""
@@ -701,8 +793,9 @@ class TorchBackend:
         return self._torch.exp(x)
 
     def log(self, x: Any) -> Any:
-        """Element-wise safe log."""
-        return self._torch.log(self._torch.clamp(x, min=1e-300))
+        """Element-wise safe log (clamp at the dtype's smallest normal)."""
+        tiny = self._torch.finfo(x.dtype).tiny if x.is_floating_point() else 1e-300
+        return self._torch.log(self._torch.clamp(x, min=tiny))
 
     def sqrt(self, x: Any) -> Any:
         """Element-wise safe sqrt."""
