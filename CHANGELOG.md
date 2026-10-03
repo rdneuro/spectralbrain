@@ -6,6 +6,47 @@ based on [Keep a Changelog](https://keepachangelog.com/); the project follows
 
 ## [Unreleased]
 
+## [0.0.8] - 2026-10-03
+
+### Fixed
+Library-wide audit for bugs and silent failures (about 120 issues; regression
+tests in `tests/test_fix_{core,io,spectral,statistics,viz}.py`). Highlights:
+
+- **Spectral / expanded** — anisotropic Laplacian is symmetric with the correct
+  diagonal and `min_curvature` no longer returns the normal; Finsler conductivity
+  acts along the requested direction; Hamiltonian spectra keep negative
+  eigenvalues; functional maps are full-rank with a documented conformal shape
+  difference; Bates and SGW descriptors are sign-invariant; persistent
+  Laplacian, Betti curves, persistence images, NetLSD/FGSD normalisations fixed.
+- **Core / backends / runtime / utils** — Laplacian caches keyed on the method
+  (point-cloud `sigma` no longer leaks into `eigsh`); `shape_index` bounded to
+  [-1, 1] and signed mean curvature; degenerate faces dropped (new
+  `weld_mesh()`, welded `example_sphere()`); mixed Voronoi areas;
+  `marching_cubes` binarises labels and orients faces outward;
+  `schaefer_to_yeo` exact from parcel names; GPU CPU-fallback warnings;
+  `set_log_level` works; library-wide seed.
+- **IO** — SynthStrip/FastSurfer no longer crash; native-space segmentation;
+  unique subject keys and `skip_existing`; MNI atlases require a registration;
+  correct face orientation for any affine; GIfTI label keys; duplicate subject
+  IDs raise; full-precision connectome export.
+- **Statistics** — eigenstrapping, Maslov–Sneppen rewiring and phase
+  randomisation produce valid nulls; TFCE treats tails separately; NaN-robust
+  FDR/correlation; true Jensen–Shannon; ComBat rewritten (`combat_apply`) and
+  applied when scoring; GP z-scores include observation noise; Bayesian models
+  check diagnostics (`SamplingWarning`), support LOO/WAIC and resized
+  prediction; clustering fixes (joint spectral, idct scaling, ToMATo, ST-GNMF).
+- **Viz** — explicit RAS cameras for multi-view panels; `savefig` keeps dotted
+  names; boolean medial masks; NaN colour; shared colour limits for comparisons.
+
+### Changed (behaviour)
+- `parcellate()` raises for MNI-space atlases unless `atlas_reg=` (or
+  `atlas_space="native"`) is given.
+- `load_group` raises on duplicate subject IDs (pass a `{id: path}` dict).
+- `NormativeModel` harmonised with ComBat needs `site=` when scoring.
+- Segmentation runs in native space by default (`segment_space="template"`
+  restores the old behaviour).
+- `compute_functional_map` default `regularize` is now 1e-8.
+
 ### Added
 - **`spectralbrain.io.meshing`** — deterministic volume → surface meshing that
   produces well-conditioned, LBO-ready meshes from label volumes:
