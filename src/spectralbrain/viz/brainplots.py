@@ -28,7 +28,8 @@ Figure types
 from __future__ import annotations
 
 import tempfile
-from dataclasses import dataclass, field
+import warnings
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -76,19 +77,19 @@ DESCRIPTOR_STYLES: dict[str, dict[str, Any]] = {
     "si_hks": {"cmap": "viridis", "vminmax": [None, None], "label": "SI-HKS"},
     "bks": {"cmap": "magma", "vminmax": [None, None], "label": "BKS"},
     "ibks": {"cmap": "magma", "vminmax": [None, None], "label": "IBKS"},
-    "gps": {"cmap": "coolwarm", "vminmax": [None, None], "label": "GPS"},
+    "gps": {"cmap": "coolwarm", "vminmax": [None, None], "label": "GPS", "signed": True},
     "shapedna": {"cmap": "plasma", "vminmax": [None, None], "label": "ShapeDNA"},
     "bates_sp": {"cmap": "inferno", "vminmax": [None, None], "label": "Bates SP"},
-    "gaussian_k": {"cmap": "RdBu_r", "vminmax": [None, None], "label": "Gaussian K"},
-    "mean_k": {"cmap": "RdBu_r", "vminmax": [None, None], "label": "Mean H"},
-    "shape_idx": {"cmap": "RdBu_r", "vminmax": [-1, 1], "label": "Shape Index"},
+    "gaussian_k": {"cmap": "RdBu_r", "vminmax": [None, None], "label": "Gaussian K", "signed": True},
+    "mean_k": {"cmap": "RdBu_r", "vminmax": [None, None], "label": "Mean H", "signed": True},
+    "shape_idx": {"cmap": "RdBu_r", "vminmax": [-1, 1], "label": "Shape Index", "signed": True},
     "casorati": {"cmap": "magma", "vminmax": [None, None], "label": "Casorati"},
     "curvedness": {"cmap": "magma", "vminmax": [None, None], "label": "Curvedness"},
     "willmore": {"cmap": "inferno", "vminmax": [None, None], "label": "Willmore H²"},
-    "z_score": {"cmap": "RdBu_r", "vminmax": [-3, 3], "label": "Z-score"},
-    "effect_d": {"cmap": "RdBu_r", "vminmax": [-1.5, 1.5], "label": "Cohen's d"},
-    "clusters": {"cmap": "tab10", "vminmax": [None, None], "label": "Clusters"},
-    "normative": {"cmap": "coolwarm", "vminmax": [-3, 3], "label": "Normative Z"},
+    "z_score": {"cmap": "RdBu_r", "vminmax": [-3, 3], "label": "Z-score", "signed": True},
+    "effect_d": {"cmap": "RdBu_r", "vminmax": [-1.5, 1.5], "label": "Cohen's d", "signed": True},
+    "clusters": {"cmap": "tab10", "vminmax": [None, None], "label": "Clusters", "categorical": True},
+    "normative": {"cmap": "coolwarm", "vminmax": [-3, 3], "label": "Normative Z", "signed": True},
 }
 
 
@@ -116,6 +117,14 @@ class BrainPlotSpec:
         Atlas name for parcellated data.
     extra_kwargs : dict
         Additional kwargs passed to the yabplot function.
+    signed : bool or None
+        Signed map (z, d, curvature, ...): when ``vminmax`` has ``None``
+        entries the range is made symmetric about 0 (``±max|v|``) so the
+        diverging colormap is centred on zero.  ``None`` → inferred from a
+        diverging ``cmap``.
+    categorical : bool
+        Integer labels (clusters/parcels): rendered with one discrete colour
+        per label (labels < 0 → ``nan_color``).
     """
 
     label: str = ""
@@ -126,6 +135,8 @@ class BrainPlotSpec:
     plot_kind: str = "cortical"
     atlas: str | None = None
     extra_kwargs: dict[str, Any] = field(default_factory=dict)
+    signed: bool | None = None
+    categorical: bool = False
 
     @classmethod
     def from_descriptor(
@@ -144,13 +155,153 @@ class BrainPlotSpec:
             nan_color=overrides.get("nan_color", (1.0, 1.0, 1.0)),
             plot_kind=overrides.get("plot_kind", "cortical"),
             atlas=overrides.get("atlas"),
-            extra_kwargs=overrides.get("extra_kwargs", {}),
+            extra_kwargs=dict(overrides.get("extra_kwargs", {})),
+            signed=overrides.get("signed", style.get("signed")),
+            categorical=overrides.get("categorical", style.get("categorical", False)),
         )
 
 
 # ======================================================================
 # §1  INTERNAL RENDERING ENGINE
 # ======================================================================
+
+_DIVERGING_CMAPS = {
+    "rdbu", "rdbu_r", "coolwarm", "bwr", "seismic", "rdylbu", "rdylbu_r", "piyg",
+    "prgn", "brbg", "puor", "rdgy", "spectral", "spectral_r", "sb_diverging", "vik",
+}
+
+
+def _is_diverging(cmap: Any) -> bool:
+    name = cmap if isinstance(cmap, str) else getattr(cmap, "name", "")
+    return str(name).lower() in _DIVERGING_CMAPS
+
+
+def _vertexwise_name(mesh: Any, scalars: str | None) -> str:
+    """Name of the per-vertex array to use on a (pyvista-like) mesh."""
+    if scalars is not None:
+        return scalars
+    name = getattr(mesh, "active_scalars_name", None)
+    if name:
+        return name
+    keys = list(getattr(mesh, "point_data", {}).keys())
+    if len(keys) == 1:
+        return keys[0]
+    raise ValueError(
+        "Cannot tell which per-vertex array to use; pass scalars=<name> "
+        f"(available: {keys})."
+    )
+
+
+def _data_values(data: Any, scalars: str | None = None) -> np.ndarray:
+    """All finite numeric values carried by a spec's ``data`` (best effort)."""
+    if data is None:
+        return np.array([])
+    if isinstance(data, dict):
+        vals = np.asarray(
+            [v for v in data.values() if isinstance(v, (int, float, np.number))], dtype=float
+        )
+    elif isinstance(data, (tuple, list)) and len(data) == 2 and not np.isscalar(data[0]):
+        parts = []
+        for m in data:
+            if isinstance(m, np.ndarray):
+                parts.append(np.asarray(m, float).ravel())
+            elif hasattr(m, "point_data"):
+                parts.append(np.asarray(m.point_data[_vertexwise_name(m, scalars)], float).ravel())
+        vals = np.concatenate(parts) if parts else np.array([])
+    else:
+        try:
+            vals = np.asarray(data, dtype=float).ravel()
+        except (TypeError, ValueError):
+            return np.array([])
+    return vals[np.isfinite(vals)]
+
+
+def _map_values(data: Any, fn, scalars: str | None = None) -> Any:
+    """Apply ``fn`` (array → array) to a copy of the data (dict / (lh, rh) / array)."""
+    if isinstance(data, dict):
+        keys = list(data)
+        arr = fn(np.asarray([np.nan if data[k] is None else data[k] for k in keys], float))
+        return {k: float(v) for k, v in zip(keys, arr)}
+    if isinstance(data, (tuple, list)) and len(data) == 2:
+        out = []
+        for m in data:
+            if isinstance(m, np.ndarray):
+                out.append(fn(np.asarray(m, float).copy()))
+            else:
+                m2 = m.copy()
+                name = _vertexwise_name(m2, scalars)
+                m2.point_data[name] = fn(np.asarray(m2.point_data[name], float).copy())
+                try:
+                    m2.set_active_scalars(name)
+                except Exception:
+                    pass
+                out.append(m2)
+        return tuple(out)
+    return fn(np.asarray(data, float).copy())
+
+
+def _resolve_spec(spec: BrainPlotSpec) -> BrainPlotSpec:
+    """Return a copy of ``spec`` with signed/categorical colour handling applied."""
+    scal = spec.extra_kwargs.get("scalars") if spec.plot_kind == "vertexwise" else None
+    vm = list(spec.vminmax) if spec.vminmax is not None else [None, None]
+    if spec.categorical and spec.data is not None:
+        from matplotlib.colors import ListedColormap
+
+        vals = _data_values(spec.data, scal)
+        uniq = np.unique(vals[vals >= 0])
+        rank = {float(u): i for i, u in enumerate(uniq)}
+
+        def _to_rank(a):
+            out = np.full(a.shape, np.nan)
+            for i, x in enumerate(a.ravel()):
+                if np.isfinite(x) and x >= 0:
+                    out.flat[i] = rank[float(x)]
+            return out
+
+        base = plt.get_cmap(spec.cmap if isinstance(spec.cmap, str) else "tab10")
+        n_base = getattr(base, "N", 256)
+        k = max(len(uniq), 1)
+        colors = [
+            base(i % n_base) if n_base < 256 else base(i / max(k - 1, 1)) for i in range(k)
+        ]
+        return replace(
+            spec,
+            data=_map_values(spec.data, _to_rank, scal),
+            cmap=ListedColormap(colors, name="sb_discrete"),
+            vminmax=[-0.5, k - 0.5],
+        )
+    signed = spec.signed if spec.signed is not None else _is_diverging(spec.cmap)
+    if signed and (vm[0] is None or vm[1] is None):
+        vals = _data_values(spec.data, scal)
+        m = float(np.max(np.abs(vals))) if vals.size else 1.0
+        m = m or 1.0
+        vm = [-m if vm[0] is None else vm[0], m if vm[1] is None else vm[1]]
+    return replace(spec, vminmax=vm)
+
+
+def _shared_vminmax(specs: list[BrainPlotSpec]) -> list[BrainPlotSpec]:
+    """Give comparison rows one common colour range (only where not set)."""
+    pooled = [
+        _data_values(sp.data, sp.extra_kwargs.get("scalars")) for sp in specs if sp.data is not None
+    ]
+    vals = np.concatenate(pooled) if pooled else np.array([])
+    if vals.size == 0:
+        return specs
+    signed = any(
+        (sp.signed if sp.signed is not None else _is_diverging(sp.cmap)) for sp in specs
+    )
+    if signed:
+        m = float(np.max(np.abs(vals))) or 1.0
+        lo, hi = -m, m
+    else:
+        lo, hi = float(np.min(vals)), float(np.max(vals))
+    out = []
+    for sp in specs:
+        vm = list(sp.vminmax) if sp.vminmax is not None else [None, None]
+        out.append(
+            replace(sp, vminmax=[lo if vm[0] is None else vm[0], hi if vm[1] is None else vm[1]])
+        )
+    return out
 
 
 def _require_yabplot():
@@ -228,6 +379,7 @@ def _render_row(
     Path
     """
     fn = _get_plot_fn(spec.plot_kind)
+    spec = _resolve_spec(spec)
 
     kwargs = {
         "views": views,
@@ -252,6 +404,7 @@ def _render_row(
         if isinstance(spec.data, tuple) and len(spec.data) == 2:
             kwargs.pop("data", None)
             kwargs.pop("atlas", None)
+            kwargs.update(spec.extra_kwargs)  # previously silently dropped
             fn(spec.data[0], spec.data[1], **kwargs)
             return out_png
         else:
@@ -378,6 +531,8 @@ def plot_brain(
     title: str = "",
     save: PathLike | None = None,
     formats: str | list[str] | None = None,
+    signed: bool | None = None,
+    categorical: bool = False,
     **kwargs: Any,
 ) -> tuple[Figure, Axes]:
     """Single-row brain surface plot.
@@ -404,6 +559,11 @@ def plot_brain(
     title : str
     save : PathLike, optional
     formats : str or list, optional
+    signed : bool or None
+        Centre the colour range on 0 when ``vminmax`` is not given (``None`` →
+        inferred from a diverging ``cmap``).
+    categorical : bool
+        Integer labels: one discrete colour per label, labels < 0 → nan_color.
 
     Returns
     -------
@@ -426,6 +586,8 @@ def plot_brain(
         plot_kind=plot_kind,
         atlas=atlas,
         extra_kwargs=kwargs,
+        signed=signed,
+        categorical=categorical,
     )
 
     tmp = Path(tempfile.mkdtemp())
@@ -526,6 +688,7 @@ def plot_group_comparison(
     title: str = "Group Comparison",
     save: PathLike | None = None,
     formats: str | list[str] | None = None,
+    shared_scale: bool = True,
 ) -> tuple[Figure, list[Axes]]:
     """Two- or three-row group comparison panel.
 
@@ -541,6 +704,10 @@ def plot_group_comparison(
     style, display_type : str
     title : str
     save : PathLike, optional
+    shared_scale : bool
+        If True (default), ``group_a`` and ``group_b`` share one colour range
+        (wherever their ``vminmax`` entries are ``None``), so the two rows are
+        directly comparable.  False → each row auto-scales on its own.
 
     Returns
     -------
@@ -550,6 +717,8 @@ def plot_group_comparison(
         views = VIEWS_CORTEX
 
     specs = [group_a, group_b]
+    if shared_scale:
+        specs = _shared_vminmax(specs)
     if difference is not None:
         specs.append(difference)
 
@@ -594,6 +763,7 @@ def plot_normative_map(
     show_thresholded: bool = True,
     save: PathLike | None = None,
     formats: str | list[str] | None = None,
+    scalars: str | None = None,
 ) -> tuple[Figure, list[Axes]]:
     """Normative z-score map with optional thresholded view.
 
@@ -604,7 +774,11 @@ def plot_normative_map(
     threshold : float
         Threshold for the second row (if show_thresholded=True).
     show_thresholded : bool
-        Show a second row with only extreme deviations.
+        Show a second row with only extreme deviations (|z| <= threshold set
+        to NaN, for parcellated dicts *and* vertex-wise data).
+    scalars : str, optional
+        Vertex-wise only: name of the per-vertex array holding the z-scores
+        (default: the meshes' active scalars).
 
     Returns
     -------
@@ -623,16 +797,20 @@ def plot_normative_map(
         nan_color=nan_color,
         plot_kind=plot_kind,
         atlas=atlas,
+        extra_kwargs={"scalars": scalars} if scalars and plot_kind == "vertexwise" else {},
     )
 
     specs = [spec_full]
 
     if show_thresholded:
         # Threshold: set values within [-thr, thr] to NaN.
-        if isinstance(z_data, dict):
-            thr_data = {k: (v if abs(v) > threshold else float("nan")) for k, v in z_data.items()}
-        else:
-            thr_data = z_data  # user handles thresholding for vertex-wise
+        def _thr(a: np.ndarray) -> np.ndarray:
+            with np.errstate(invalid="ignore"):
+                a[~(np.abs(a) > threshold)] = np.nan
+            return a
+
+        # Works on a copy for dicts, (lh, rh) meshes/arrays and plain arrays.
+        thr_data = _map_values(z_data, _thr, scalars)
 
         spec_thr = BrainPlotSpec(
             label=f"|Z| > {threshold}",
@@ -642,6 +820,7 @@ def plot_normative_map(
             nan_color=nan_color,
             plot_kind=plot_kind,
             atlas=atlas,
+            extra_kwargs=dict(spec_full.extra_kwargs),
         )
         specs.append(spec_thr)
 
@@ -688,7 +867,9 @@ def plot_clustering_map(
     Parameters
     ----------
     cluster_data : dict or (lh, rh)
-        Cluster labels per region or per vertex.
+        Cluster labels per region or per vertex.  Rendered with one discrete
+        colour per cluster (``cmap`` cycled); labels < 0 (noise) use
+        ``nan_color``.
     """
     if views is None:
         views = VIEWS_CORTEX
@@ -704,6 +885,7 @@ def plot_clustering_map(
         views=views,
         title=title,
         save=save,
+        categorical=kwargs.pop("categorical", True),
         **kwargs,
     )
 
@@ -834,17 +1016,27 @@ def plot_top10_morphometrics(
         "casorati",
         "curvedness",
     ]
-    specs = []
-    for name in order:
-        if name in descriptor_data:
-            specs.append(
-                BrainPlotSpec.from_descriptor(
-                    name,
-                    data=descriptor_data[name],
-                    plot_kind=plot_kind,
-                    atlas=atlas,
-                )
-            )
+    # Canonical order first, then any other provided descriptor (e.g.
+    # "shapedna", "bates_sp") — nothing passed in is silently dropped.
+    names = [n for n in order if n in descriptor_data]
+    names += [n for n in descriptor_data if n not in order]
+    unknown = [n for n in names if n not in DESCRIPTOR_STYLES]
+    if unknown:
+        warnings.warn(
+            f"No DESCRIPTOR_STYLES entry for {unknown}; rendered with default styling.",
+            stacklevel=2,
+        )
+    specs = [
+        BrainPlotSpec.from_descriptor(
+            name,
+            data=descriptor_data[name],
+            plot_kind=plot_kind,
+            atlas=atlas,
+        )
+        for name in names
+    ]
+    if not specs:
+        raise ValueError("descriptor_data is empty.")
 
     return plot_morphometric_gallery(
         specs,
@@ -909,6 +1101,7 @@ def plot_bilateral_comparison(
     title: str = "L vs R Comparison",
     save: PathLike | None = None,
     formats: str | list[str] | None = None,
+    shared_scale: bool = True,
 ) -> tuple[Figure, list[Axes]]:
     """Side-by-side L vs R hemisphere comparison (2 rows).
 
@@ -916,7 +1109,12 @@ def plot_bilateral_comparison(
     ----------
     left_spec, right_spec : BrainPlotSpec
         Specs for left and right hemisphere data.
+    shared_scale : bool
+        If True (default) both rows share one colour range (where their
+        ``vminmax`` entries are ``None``) so asymmetries are visible.
     """
+    if shared_scale:
+        left_spec, right_spec = _shared_vminmax([left_spec, right_spec])
     views_l = ["left_lateral", "left_medial", "superior", "inferior"]
     views_r = ["right_lateral", "right_medial", "superior", "inferior"]
 

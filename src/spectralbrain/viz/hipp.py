@@ -37,6 +37,7 @@ Figure types
 
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 from typing import Any, Literal
 
@@ -150,6 +151,64 @@ HIPP_DESCRIPTOR_STYLES: dict[str, dict[str, Any]] = {
     "shape_idx": {"cmap": "RdBu_r", "vmin": -1, "vmax": 1, "label": "Shape Index"},
     "casorati": {"cmap": "magma", "vmin": None, "vmax": None, "label": "Casorati"},
 }
+
+
+_DEFAULT_NAN_COLOR = (0.85, 0.85, 0.85)
+
+
+def _warn_ignored(nan_color: Any = _DEFAULT_NAN_COLOR, style: str = "default",
+                  display_type: str = "static") -> None:
+    """Warn about styling arguments hippunfold_plot cannot honour."""
+    ignored = []
+    try:
+        same = tuple(float(x) for x in nan_color) == _DEFAULT_NAN_COLOR
+    except (TypeError, ValueError):
+        same = False
+    if not same:
+        ignored.append("nan_color (NaN vertices show the background shading)")
+    if style != "default":
+        ignored.append("style")
+    if display_type != "static":
+        ignored.append("display_type")
+    if ignored:
+        warnings.warn(
+            "hippunfold_plot does not support: " + ", ".join(ignored) + "; ignored.",
+            stacklevel=3,
+        )
+
+
+def _load_map(surf_map: Any) -> np.ndarray | None:
+    """Per-vertex values of a surf_map (array or GIfTI path); None if unknown."""
+    if surf_map is None:
+        return None
+    if isinstance(surf_map, (str, Path)):
+        try:
+            import nibabel as nib
+
+            return np.asarray(nib.load(str(surf_map)).agg_data(), dtype=np.float64).ravel()
+        except Exception as exc:  # unreadable path → cannot compute shared range
+            logger.warning("Could not read %s for colour scaling: %s", surf_map, exc)
+            return None
+    try:
+        return np.asarray(surf_map, dtype=np.float64).ravel()
+    except (TypeError, ValueError):
+        return None
+
+
+def _shared_range(maps: list[Any], vmin: float | None, vmax: float | None
+                  ) -> tuple[float | None, float | None]:
+    """Fill ``None`` limits from the pooled finite values of ``maps``."""
+    if vmin is not None and vmax is not None:
+        return vmin, vmax
+    arrs = [a for a in (_load_map(m) for m in maps) if a is not None]
+    vals = np.concatenate(arrs) if arrs else np.array([])
+    vals = vals[np.isfinite(vals)]
+    if vals.size == 0:
+        return vmin, vmax
+    return (
+        float(vals.min()) if vmin is None else vmin,
+        float(vals.max()) if vmax is None else vmax,
+    )
 
 
 # ======================================================================
@@ -366,6 +425,7 @@ def plot_hippocampus(
     """
     if views is None:
         views = HIPP_VIEWS_3D
+    _warn_ignored(nan_color, style, display_type)
 
     _apply_style()
 
@@ -457,15 +517,22 @@ def plot_hippocampus_bilateral(
     title: str = "Bilateral Hippocampus",
     save: PathLike | None = None,
     formats: str | list[str] | None = None,
+    shared_scale: bool = True,
 ) -> tuple[Figure, np.ndarray]:
     """Two-row bilateral panel: L (top) + R (bottom).
 
     Parameters
     ----------
     surf_map_left, surf_map_right : str or ndarray
+    shared_scale : bool
+        If True (default) and ``vmin``/``vmax`` are not given, both hemispheres
+        share one colour range (pooled min/max) so asymmetries stay visible.
     """
     if views is None:
         views = ["lateral", "medial", "dorsal", "anterior"]
+    _warn_ignored(nan_color, style, display_type)
+    if shared_scale:
+        vmin, vmax = _shared_range([surf_map_left, surf_map_right], vmin, vmax)
 
     _apply_style()
 
@@ -569,6 +636,7 @@ def plot_hippocampus_comparison(
     title: str = "Group Comparison",
     save: PathLike | None = None,
     formats: str | list[str] | None = None,
+    shared_scale: bool = True,
 ) -> tuple[Figure, np.ndarray]:
     """2–3 row group comparison: A, B, [A−B].
 
@@ -578,7 +646,14 @@ def plot_hippocampus_comparison(
         Mean descriptor map per group.
     diff_map : str or ndarray, optional
         A − B difference (or t-map / z-map).
+    shared_scale : bool
+        If True (default) and ``vmin``/``vmax`` are not given, groups A and B
+        share one colour range (pooled min/max).  False → each rendered map
+        auto-scales on its own (not comparable).
     """
+    _warn_ignored(nan_color, style, display_type)
+    if shared_scale:
+        vmin, vmax = _shared_range([group_a_map, group_b_map], vmin, vmax)
     if views is None:
         views = ["lateral", "medial", "dorsal", "anterior"]
     if row_labels is None:
@@ -684,6 +759,7 @@ def plot_hippocampus_gallery(
     title: str = "Hippocampal Spectral Gallery",
     save: PathLike | None = None,
     formats: str | list[str] | None = None,
+    styles: dict[str, dict[str, Any]] | None = None,
 ) -> tuple[Figure, np.ndarray]:
     """Multi-row descriptor gallery — one row per descriptor.
 
@@ -698,6 +774,10 @@ def plot_hippocampus_gallery(
     show_flatmap : bool
     title : str
     save : PathLike, optional
+    styles : dict, optional
+        Per-call style overrides ``{name: {"cmap", "vmin", "vmax", "label"}}``
+        merged over :data:`HIPP_DESCRIPTOR_STYLES` (the global is never
+        modified).
 
     Returns
     -------
@@ -715,9 +795,13 @@ def plot_hippocampus_gallery(
     if views is None:
         views = ["lateral", "medial", "dorsal"]
 
+    _warn_ignored(nan_color, style, display_type)
     _apply_style()
     from spectralbrain.runtime import progress_simple
 
+    style_table = {k: dict(v) for k, v in HIPP_DESCRIPTOR_STYLES.items()}
+    for k, v in (styles or {}).items():
+        style_table[k] = {**style_table.get(k, {}), **v}
     all_rows = []
     row_labels = []
 
@@ -725,7 +809,7 @@ def plot_hippocampus_gallery(
     with progress_simple("Rendering hippocampal gallery", total=len(desc_names)) as tick:
         for name in desc_names:
             smap = descriptors[name]
-            sty = HIPP_DESCRIPTOR_STYLES.get(name, {})
+            sty = style_table.get(name, {})
             cm = sty.get("cmap", "inferno")
             vmn = sty.get("vmin")
             vmx = sty.get("vmax")
@@ -841,24 +925,24 @@ def plot_hippocampus_normative(
     """
     descriptors = {"Z-score": z_map}
 
-    # Build thresholded version.
-    if isinstance(z_map, np.ndarray):
-        thr_map = z_map.copy()
-        thr_map[np.abs(thr_map) <= threshold] = np.nan
-        descriptors[f"|Z| > {threshold}"] = thr_map
+    # Build thresholded version (arrays and GIfTI paths alike; never in place).
+    z_arr = _load_map(z_map)
+    if z_arr is None:
+        raise ValueError("z_map must be a per-vertex array or a readable GIfTI path.")
+    thr_map = z_arr.astype(np.float64, copy=True)
+    with np.errstate(invalid="ignore"):
+        thr_map[~(np.abs(thr_map) > threshold)] = np.nan
+    descriptors[f"|Z| > {threshold}"] = thr_map
 
-    # Override styles for this specific plot.
-    HIPP_DESCRIPTOR_STYLES["Z-score"] = {
-        "cmap": cmap,
-        "vmin": vmin,
-        "vmax": vmax,
-        "label": "Z-score",
-    }
-    HIPP_DESCRIPTOR_STYLES[f"|Z| > {threshold}"] = {
-        "cmap": cmap,
-        "vmin": vmin,
-        "vmax": vmax,
-        "label": f"|Z| > {threshold}",
+    # Per-call styles — the module-level HIPP_DESCRIPTOR_STYLES is not mutated.
+    styles = {
+        "Z-score": {"cmap": cmap, "vmin": vmin, "vmax": vmax, "label": "Z-score"},
+        f"|Z| > {threshold}": {
+            "cmap": cmap,
+            "vmin": vmin,
+            "vmax": vmax,
+            "label": f"|Z| > {threshold}",
+        },
     }
 
     return plot_hippocampus_gallery(
@@ -868,9 +952,12 @@ def plot_hippocampus_normative(
         views=views,
         show_flatmap=show_flatmap,
         nan_color=nan_color,
+        style=style,
+        display_type=display_type,
         title=title,
         save=save,
         formats=formats,
+        styles=styles,
     )
 
 
@@ -1030,8 +1117,13 @@ def plot_hippocampus_spatiotemporal(
         xlabel="AP coordinate (Laplace)",
         ylabel="PD coordinate (Laplace)",
         figsize=figsize,
-        save=save,
+        save=None,
     )
+    if save is not None:
+        from spectralbrain.viz.graphics import savefig
+
+        fmts = [formats] if isinstance(formats, str) else list(formats or ())
+        savefig(fig, save, formats=fmts, dpi=DPI)
 
     return fig, axes
 

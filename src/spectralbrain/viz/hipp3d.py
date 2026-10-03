@@ -253,10 +253,15 @@ def _sixview_figure(
     pad: float,
     save: PathLike | None,
     formats: list[str] | None,
+    nan_color: str = "lightgray",
 ):
     """Core: render the requested views with vedo, compose in matplotlib."""
     import matplotlib.pyplot as plt
 
+    views = tuple(views)
+    unknown = [v for v in views if v not in _VIEW_PLANE]
+    if unknown:
+        raise ValueError(f"Unknown view(s) {unknown}. Valid views: {list(_VIEW_PLANE)}")
     vedo = _require_vedo()
 
     # ── colour mapping ────────────────────────────────────────────────
@@ -280,12 +285,18 @@ def _sixview_figure(
                 clim = (-m, m)
             else:
                 clim = (float(lo), float(hi))
-        s_filled = np.where(np.isfinite(s), s, clim[0])
-        mesh.cmap(cmap, s_filled, vmin=clim[0], vmax=clim[1])
-        mesh.phong()  # smooth shading without geometric change
         from matplotlib import cm, colors
 
         norm = colors.Normalize(vmin=clim[0], vmax=clim[1])
+        # Colour per vertex in matplotlib so NaN (medial wall / missing) gets
+        # an explicit ``nan_color`` — never the colour of clim[0], which for a
+        # signed map would read as the strongest negative effect.
+        lut = plt.get_cmap(cmap).copy()
+        lut.set_bad(nan_color)
+        rgba = lut(norm(np.ma.masked_invalid(s)))
+        mesh.pointdata["RGBA"] = (np.clip(rgba, 0, 1) * 255).astype(np.uint8)
+        mesh.pointdata.select("RGBA")
+        mesh.phong()  # smooth shading without geometric change
         mappable = cm.ScalarMappable(norm=norm, cmap=cmap)
     else:
         # Geometry-only: smoothing is safe (no scalar to scramble).
@@ -300,7 +311,7 @@ def _sixview_figure(
     cams = _sixview_cameras(center, cam_dist)
     imgs = {}
     for v in views:
-        cam = cams.get(v, cams["superior"])
+        cam = cams[v]
         scale = _view_scale(v, extent, window, pad)
         imgs[v] = _render_one(mesh.clone(), cam, window=window, parallel_scale=scale, vedo=vedo)
 
@@ -362,6 +373,7 @@ def plot_hippocampus_sixview(
     pad: float = 0.05,
     save: PathLike | None = None,
     formats: list[str] | None = None,
+    nan_color: str = "lightgray",
 ):
     """Render a hippocampal surface in six canonical anatomical views.
 
@@ -404,6 +416,8 @@ def plot_hippocampus_sixview(
         The camera auto-fits the bounds per view, so no view is cropped.
     save : path, optional
         If given, write the figure (``formats`` controls extensions).
+    nan_color : str
+        Colour for vertices whose scalar is NaN (e.g. medial wall).
 
     Returns
     -------
@@ -426,6 +440,7 @@ def plot_hippocampus_sixview(
         pad=pad,
         save=save,
         formats=formats,
+        nan_color=nan_color,
     )
 
 

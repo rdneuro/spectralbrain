@@ -188,6 +188,9 @@ def figure(
 # ======================================================================
 
 
+_IMAGE_FORMATS = {"png", "pdf", "svg", "svgz", "jpg", "jpeg", "tif", "tiff", "eps", "ps", "webp"}
+
+
 def savefig(
     fig: Figure,
     path: PathLike,
@@ -198,10 +201,23 @@ def savefig(
     bbox_inches: str = "tight",
     pad_inches: float = 0.05,
 ) -> list[Path]:
-    """Save figure — **always** PNG, plus optional PDF/SVG/JPG."""
+    """Save figure — **always** PNG, plus optional PDF/SVG/JPG.
+
+    The extension of ``path`` (if it is a known image format) is honoured as
+    an extra requested format, e.g. ``"fig.pdf"`` writes ``fig.png`` **and**
+    ``fig.pdf``.  Dots inside the stem are preserved: ``"hks_t0.5.png"`` is
+    written as ``hks_t0.5.png`` (not ``hks_t0.png``), and ``"hks_t0.5"`` (no
+    image extension) as ``hks_t0.5.png``.
+    """
     base = Path(path)
-    stem = base.parent / base.stem
     base.parent.mkdir(parents=True, exist_ok=True)
+    suffix = base.suffix.lower().lstrip(".")
+    if suffix in _IMAGE_FORMATS:
+        stem_name = base.name[: -len(base.suffix)]
+        requested = [suffix]
+    else:
+        stem_name = base.name
+        requested = []
 
     if formats is None:
         fmt_list = []
@@ -209,12 +225,16 @@ def savefig(
         fmt_list = [formats]
     else:
         fmt_list = list(formats)
+    fmt_list = [f.lower().lstrip(".") for f in [*requested, *fmt_list]]
 
-    all_fmts = ["png"] + [f for f in fmt_list if f != "png"]
+    all_fmts = ["png"]
+    for f in fmt_list:
+        if f not in all_fmts:
+            all_fmts.append(f)
     kw = dict(dpi=dpi, transparent=transparent, bbox_inches=bbox_inches, pad_inches=pad_inches)
     saved = []
     for fmt in all_fmts:
-        out = stem.with_suffix(f".{fmt}")
+        out = base.parent / f"{stem_name}.{fmt}"
         fig.savefig(str(out), format=fmt, **kw)
         saved.append(out)
         logger.info("Saved %s (%d dpi)", out.name, dpi)
@@ -258,9 +278,15 @@ def distplot(
         data = [data]
     n_groups = len(data)
     if colors is None:
-        colors = PALETTE_LIST[:n_groups]
+        colors = PALETTE_LIST
+    if not colors:
+        raise ValueError("colors must not be empty")
+    # Cycle the palette so no group is silently dropped (zip would truncate).
+    colors = [colors[i % len(colors)] for i in range(n_groups)]
     if labels is None:
         labels = [None] * n_groups
+    elif len(labels) != n_groups:
+        raise ValueError(f"labels has {len(labels)} entries but data has {n_groups} groups")
     if ax is None:
         fig, ax = figure(width=120, height=75)
     else:

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 spectral_deformation.py  —  SpectralBrain
 =========================================
@@ -66,7 +65,6 @@ Autor: Rodrigo Debona (Velho Mago) — com Claudinho.
 # %% ───────────────────────────── imports & ambiente ─────────────────────────
 import os
 import warnings
-from typing import Dict, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import scipy.sparse as sp
@@ -74,7 +72,7 @@ from scipy.sparse.linalg import eigsh
 
 ArrayF = np.ndarray
 ArrayI = np.ndarray
-PathLike = Union[str, os.PathLike]
+PathLike = str | os.PathLike
 
 
 # %% ───────────────────── operadores LBO: stiffness & massa ───────────────────
@@ -135,7 +133,7 @@ def _weighted_eigs(
     mass_diag: ArrayF,
     k_nonzero: int,
     sigma: float = -1e-6,
-) -> Tuple[ArrayF, ArrayF]:
+) -> tuple[ArrayF, ArrayF]:
     """Resolve W v = λ (B) v, B = diag(mass_diag), retornando os k_nonzero
     menores autopares NÃO-NULOS (pula o modo constante λ≈0).
 
@@ -192,11 +190,12 @@ def _qp_step(
     if status not in (1, 2):  # 1=solved, 2=solved_inaccurate
         warnings.warn(
             f"OSQP não convergiu plenamente (status={res.info.status}). "
-            "Considere aumentar `align_tol` (modo soft) ou afrouxar os limites."
+            "Considere aumentar `align_tol` (modo soft) ou afrouxar os limites.",
+            stacklevel=2,
         )
     d = res.x
     if d is None or not np.all(np.isfinite(d)):
-        warnings.warn("QP retornou solução inválida; passo zerado.")
+        warnings.warn("QP retornou solução inválida; passo zerado.", stacklevel=2)
         return np.zeros(n)
     return np.asarray(d, dtype=float)
 
@@ -207,11 +206,11 @@ def spectral_deformation(
     V_M: ArrayF, F_M: ArrayI,           # malha M (alvo)
     k1: int = 100,
     n_steps: int = 10,
-    bounds: Tuple[float, float] = (0.1, 10.0),
+    bounds: tuple[float, float] = (0.1, 10.0),
     align_tol: float = 0.0,
     eig_sigma: float = -1e-6,
     return_history: bool = True,
-) -> Dict[str, object]:
+) -> dict[str, object]:
     """Alinha os primeiros k1 autovalores de N aos de M via função de escala ω.
 
     Parameters
@@ -243,8 +242,10 @@ def spectral_deformation(
     hipocampais (~5k–8k vértices) com k1=100, K=10 roda em segundos a poucos
     minutos na workstation. NÃO rode isto no sandbox — entregue para a RTX 3090.
     """
-    V_N = np.asarray(V_N, float); F_N = np.asarray(F_N, int)
-    V_M = np.asarray(V_M, float); F_M = np.asarray(F_M, int)
+    V_N = np.asarray(V_N, float)
+    F_N = np.asarray(F_N, int)
+    V_M = np.asarray(V_M, float)
+    F_M = np.asarray(F_M, int)
     n_N = V_N.shape[0]
     h_l, h_u = float(bounds[0]), float(bounds[1])
     h_low = np.full(n_N, h_l)
@@ -287,7 +288,7 @@ def spectral_deformation(
     # autovalores finais de N após deformação
     lam_final, _ = _weighted_eigs(W_N, v_omega * m_N, k1, sigma=eig_sigma)
 
-    out: Dict[str, object] = {
+    out: dict[str, object] = {
         "scale": v_omega,
         "log_scale": np.log(np.clip(v_omega, 1e-12, None)),
         "lambda_M": lam_M,
@@ -307,9 +308,9 @@ def lateralization_map(
     V_contra: ArrayF, F_contra: ArrayI,
     k1: int = 100,
     n_steps: int = 10,
-    bounds: Tuple[float, float] = (0.1, 10.0),
+    bounds: tuple[float, float] = (0.1, 10.0),
     align_tol: float = 0.0,
-) -> Dict[str, object]:
+) -> dict[str, object]:
     """Mapa de lateralização L-vs-R do hipocampo, definido na malha IPSILATERAL.
 
     Convenção MTLE-HS: N = ipsilateral (lado da esclerose), M = contralateral.
@@ -336,8 +337,8 @@ def render_scale_on_mesh(
     cmap: str = "RdBu_r",
     percentile_clim: float = 98.0,
     symmetric: bool = True,
-    title: Optional[str] = None,
-    size: Tuple[int, int] = (1200, 900),
+    title: str | None = None,
+    size: tuple[int, int] = (1200, 900),
     zoom: float = 1.3,
 ) -> str:
     """Pinta um campo escalar por-vértice (tipicamente log ω) sobre a malha.

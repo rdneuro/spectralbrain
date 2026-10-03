@@ -56,6 +56,7 @@ from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 
 from spectralbrain.runtime import PathLike, get_logger
+from spectralbrain.viz import _camera as _cam
 
 logger = get_logger(__name__)
 
@@ -90,19 +91,31 @@ CLUSTER_COLORS: list[str] = [
 # Standard 3-pose views for brain structures
 VIEWS_3POSE: list[str] = ["left_lateral", "anterior", "superior"]
 
-# Camera presets — identical to geometry/meshes.py for consistency
-CAMERA_PRESETS: dict[str, dict[str, Any]] = {
-    "anterior": {"azimuth": 0, "elevation": 0},
-    "posterior": {"azimuth": 180, "elevation": 0},
-    "left_lateral": {"azimuth": -90, "elevation": 0},
-    "right_lateral": {"azimuth": 90, "elevation": 0},
-    "superior": {"azimuth": 0, "elevation": 90},
-    "inferior": {"azimuth": 0, "elevation": -90},
-    "left_medial": {"azimuth": 90, "elevation": 0},
-    "right_medial": {"azimuth": -90, "elevation": 0},
-    "oblique_left": {"azimuth": -45, "elevation": 30},
-    "oblique_right": {"azimuth": 45, "elevation": 30},
-}
+# Camera presets — identical to geometry/meshes.py for consistency.
+# RAS convention (see :mod:`spectralbrain.viz._camera`): azimuth measured from
+# +x towards +y, elevation towards +z.  Left lateral camera at −x, anterior at
+# +y, superior at +z.  Cameras are built as explicit dicts from these angles.
+CAMERA_PRESETS: dict[str, dict[str, Any]] = _cam.presets(
+    [
+        "anterior",
+        "posterior",
+        "left_lateral",
+        "right_lateral",
+        "superior",
+        "inferior",
+        "left_medial",
+        "right_medial",
+        "oblique_left",
+        "oblique_right",
+    ]
+)
+
+
+def _view_camera(view: str, points: np.ndarray) -> dict[str, Any]:
+    """Explicit camera dict for a ``CAMERA_PRESETS`` view (raises on unknown)."""
+    if view not in CAMERA_PRESETS:
+        raise ValueError(f"Unknown view {view!r}. Valid views: {sorted(CAMERA_PRESETS)}")
+    return _cam.camera_for_view(view, points, angles=CAMERA_PRESETS)
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -196,6 +209,38 @@ def _savefig(fig: Figure, save: PathLike | None) -> None:
         logger.info("Saved figure → %s", p)
 
 
+def _check_vertex_count(H: np.ndarray, coords: np.ndarray) -> None:
+    """Raise if a per-vertex matrix and its coordinates disagree in length."""
+    if H.shape[0] != coords.shape[0]:
+        raise ValueError(
+            f"H has {H.shape[0]} vertices but the coordinates have {coords.shape[0]}. "
+            "They must match (same surface / density)."
+        )
+
+
+def _robust_norm(values: np.ndarray, log_norm: bool):
+    """2nd-98th percentile Normalize/LogNorm over the finite values (NaN-safe)."""
+    from matplotlib.colors import LogNorm, Normalize
+
+    v = np.asarray(values, dtype=np.float64)
+    v = v[np.isfinite(v)]
+    if log_norm:
+        pos = v[v > 0]
+        if pos.size == 0:
+            return LogNorm(vmin=1e-12, vmax=1.0)
+        vmin = float(np.percentile(pos, 2))
+        vmax = float(np.percentile(pos, 98))
+        vmin = max(vmin, 1e-12)
+        return LogNorm(vmin=vmin, vmax=max(vmax, vmin * 2))
+    if v.size == 0:
+        return Normalize(vmin=0.0, vmax=1.0)
+    vmin = float(np.percentile(v, 2))
+    vmax = float(np.percentile(v, 98))
+    if vmax <= vmin:
+        vmax = vmin + 1.0
+    return Normalize(vmin=vmin, vmax=vmax)
+
+
 # ======================================================================
 # §1  3D CLUSTER MAP — mesh coloured by labels, 3-pose panel
 # ======================================================================
@@ -268,6 +313,7 @@ def plot_cluster_map(
 
     plt = vedo.Plotter(
         shape=(1, n_views),
+        sharecam=False,
         offscreen=True,
         size=size,
         bg=bg,
@@ -279,13 +325,11 @@ def plot_cluster_map(
         mesh.pointdata.select("ClusterRGBA")
         mesh.lighting(lighting)
 
-        preset = CAMERA_PRESETS.get(view_name, {})
         plt.at(vi).show(
             mesh,
             title=view_name.replace("_", " ").title() if not title else title,
-            viewup="z",
+            camera=_view_camera(view_name, vertices),
             zoom=1.1,
-            **{k: v for k, v in preset.items() if k in ("azimuth", "elevation")},
         )
 
     meta = {
@@ -381,6 +425,7 @@ def plot_cluster_boundaries(
 
     plt_obj = vedo.Plotter(
         shape=(1, n_views),
+        sharecam=False,
         offscreen=True,
         size=size,
         bg=bg,
@@ -394,13 +439,11 @@ def plot_cluster_boundaries(
         if lines is not None:
             actors.append(lines.clone())
 
-        preset = CAMERA_PRESETS.get(view_name, {})
         plt_obj.at(vi).show(
             *actors,
             title=view_name.replace("_", " ").title(),
-            viewup="z",
+            camera=_view_camera(view_name, verts),
             zoom=1.1,
-            **{k: v for k, v in preset.items() if k in ("azimuth", "elevation")},
         )
 
     meta = {"n_boundary_edges": n_boundary, "views": views}
@@ -451,8 +494,8 @@ def plot_method_comparison_3d(
     if size is None:
         size = (600 * n, 600)
 
-    plt = vedo.Plotter(shape=(1, n), offscreen=True, size=size, bg=bg)
-    preset = CAMERA_PRESETS.get(view, {})
+    plt = vedo.Plotter(shape=(1, n), sharecam=False, offscreen=True, size=size, bg=bg)
+    cam = _view_camera(view, vertices)
 
     for i, method in enumerate(methods):
         lab = np.asarray(results[method], dtype=np.int64)
@@ -474,9 +517,8 @@ def plot_method_comparison_3d(
         plt.at(i).show(
             mesh,
             title=f"{method} (k={n_clust})",
-            viewup="z",
+            camera=cam,
             zoom=1.1,
-            **{k: v for k, v in preset.items() if k in ("azimuth", "elevation")},
         )
 
     meta = {"methods": methods, "view": view}
@@ -535,11 +577,12 @@ def plot_gnmf_components(
 
     plt = vedo.Plotter(
         shape=(n_rows, n_cols),
+        sharecam=False,
         offscreen=True,
         size=size,
         bg=bg,
     )
-    preset = CAMERA_PRESETS.get(view, {})
+    cam = _view_camera(view, vertices)
 
     for k in range(K):
         row, col = divmod(k, n_cols)
@@ -555,9 +598,8 @@ def plot_gnmf_components(
         plt.at(row * n_cols + col).show(
             mesh,
             title=f"W[:, {k}]",
-            viewup="z",
+            camera=cam,
             zoom=1.1,
-            **{kk: v for kk, v in preset.items() if kk in ("azimuth", "elevation")},
         )
 
     meta = {"n_components": K, "view": view}
@@ -611,7 +653,7 @@ def plot_soft_membership(
     if size is None:
         size = (600 * n_views, 600)
 
-    plt = vedo.Plotter(shape=(1, n_views), offscreen=True, size=size, bg=bg)
+    plt = vedo.Plotter(shape=(1, n_views), sharecam=False, offscreen=True, size=size, bg=bg)
 
     for vi, view_name in enumerate(views):
         mesh = _build_vedo_mesh(vertices, faces, vedo)
@@ -620,13 +662,11 @@ def plot_soft_membership(
         mesh.add_scalarbar(title=f"P(cluster={cluster_idx})")
         mesh.lighting(lighting)
 
-        preset = CAMERA_PRESETS.get(view_name, {})
         plt.at(vi).show(
             mesh,
             title=view_name.replace("_", " ").title(),
-            viewup="z",
+            camera=_view_camera(view_name, vertices),
             zoom=1.1,
-            **{k: v for k, v in preset.items() if k in ("azimuth", "elevation")},
         )
 
     meta = {"cluster_idx": cluster_idx}
@@ -718,14 +758,14 @@ def plot_cluster_exploded(
         mesh.color(color).lighting(lighting)
         actors.append(mesh)
 
-    preset = CAMERA_PRESETS.get(view, {})
+    exploded_pts = np.vstack([np.asarray(a.vertices) for a in actors]) if actors else verts
+    cam = _view_camera(view, exploded_pts)
     plt = vedo.Plotter(offscreen=True, size=size, bg=bg)
     plt.show(
         *actors,
         title="Exploded Cluster View",
-        viewup="z",
+        camera=cam,
         zoom=0.9,
-        **{k: v for k, v in preset.items() if k in ("azimuth", "elevation")},
     )
 
     meta = {"n_clusters": n_clusters, "explosion_factor": explosion_factor}
@@ -791,11 +831,12 @@ def plot_hks_cluster_progression(
     # 2 rows: top = HKS, bottom = clusters
     plt = vedo.Plotter(
         shape=(2, n_panels),
+        sharecam=False,
         offscreen=True,
         size=size,
         bg=bg,
     )
-    preset = CAMERA_PRESETS.get(view, {})
+    cam = _view_camera(view, vertices)
 
     unique = sorted(set(labels[labels >= 0]))
     n_clusters = len(unique)
@@ -822,9 +863,8 @@ def plot_hks_cluster_progression(
         plt.at(0 * n_panels + pi).show(
             mesh_hks,
             title=f"HKS t[{ti}]",
-            viewup="z",
+            camera=cam,
             zoom=1.1,
-            **{k: v for k, v in preset.items() if k in ("azimuth", "elevation")},
         )
 
         # bottom row: clusters
@@ -836,9 +876,8 @@ def plot_hks_cluster_progression(
         plt.at(1 * n_panels + pi).show(
             mesh_cl,
             title="Clusters",
-            viewup="z",
+            camera=cam,
             zoom=1.1,
-            **{k: v for k, v in preset.items() if k in ("azimuth", "elevation")},
         )
 
     meta = {"t_indices": t_indices, "n_panels": n_panels}
@@ -884,8 +923,8 @@ def plot_fusion_panel(
     (Path, dict)
     """
     vedo = _get_vedo()
-    preset = CAMERA_PRESETS.get(view, {})
-    plt = vedo.Plotter(shape=(1, 3), offscreen=True, size=size, bg=bg)
+    cam = _view_camera(view, vertices)
+    plt = vedo.Plotter(shape=(1, 3), sharecam=False, offscreen=True, size=size, bg=bg)
 
     for pi, (sc, name, cm) in enumerate(
         [
@@ -906,9 +945,8 @@ def plot_fusion_panel(
         plt.at(pi).show(
             mesh,
             title=name,
-            viewup="z",
+            camera=cam,
             zoom=1.1,
-            **{k: v for k, v in preset.items() if k in ("azimuth", "elevation")},
         )
 
     meta = {"view": view}
@@ -957,7 +995,8 @@ def plot_cluster_profiles(
 
     T = H.shape[1]
     if t_values is None:
-        t_values = np.arange(T, dtype=np.float64)
+        # 1-based scale indices so a log axis does not drop the first scale.
+        t_values = np.arange(1, T + 1, dtype=np.float64)
     t_values = np.asarray(t_values, dtype=np.float64)
 
     unique = sorted(set(labels[labels >= 0]))
@@ -966,7 +1005,7 @@ def plot_cluster_profiles(
     for i, lab in enumerate(unique):
         mask = labels == lab
         cluster_h = H[mask]
-        mean = cluster_h.mean(axis=0)
+        mean = np.nanmean(cluster_h, axis=0)
         color = CLUSTER_COLORS[i % len(CLUSTER_COLORS)]
 
         if log_t:
@@ -975,7 +1014,8 @@ def plot_cluster_profiles(
             ax.plot(t_values, mean, color=color, label=f"Cluster {lab}", linewidth=1.8)
 
         if show_sem and mask.sum() > 1:
-            sem = cluster_h.std(axis=0) / np.sqrt(mask.sum())
+            n_eff = np.maximum(np.sum(np.isfinite(cluster_h), axis=0), 1)
+            sem = np.nanstd(cluster_h, axis=0) / np.sqrt(n_eff)
             ax.fill_between(t_values, mean - sem, mean + sem, color=color, alpha=0.2)
 
     if log_t:
@@ -1023,7 +1063,9 @@ def plot_silhouette_diagram(
     _apply_style()
     labels = np.asarray(labels, dtype=np.int64)
     valid = labels >= 0
-    H_v = H[valid]
+    H = np.asarray(H)
+    # A precomputed (N, N) distance matrix must be subset on rows AND columns.
+    H_v = H[np.ix_(valid, valid)] if metric == "precomputed" else H[valid]
     lab_v = labels[valid]
 
     sil_vals = silhouette_samples(H_v, lab_v, metric=metric)
@@ -1276,7 +1318,8 @@ def plot_gnmf_temporal_factors(
     F = np.asarray(F, dtype=np.float64)
     K, T = F.shape
     if t_values is None:
-        t_values = np.arange(T, dtype=np.float64)
+        # 1-based scale indices so a log axis does not drop the first scale.
+        t_values = np.arange(1, T + 1, dtype=np.float64)
 
     fig, ax = plt.subplots(figsize=figsize)
     for k in range(K):
@@ -1363,10 +1406,7 @@ def plot_bayesian_confirmation(
 
     for k in clusters:
         ci = credible_intervals[k]
-        # norm of centroid mean as a summary scalar
-        m = np.linalg.norm(ci["mean"])
-        lo = np.linalg.norm(ci["hdi_3"])
-        hi = np.linalg.norm(ci["hdi_97"])
+        lo, m, hi = _centroid_norm_interval(ci)
         means.append(m)
         lows.append(lo)
         highs.append(hi)
@@ -1398,6 +1438,33 @@ def plot_bayesian_confirmation(
     return fig, (ax1, ax2)
 
 
+def _centroid_norm_interval(ci: dict[str, Any]) -> tuple[float, float, float]:
+    """(lo, point, hi) credible interval for the centroid norm ``||mu_k||``.
+
+    If posterior draws are available (``ci["samples"]``, shape ``(S, d)``) the
+    interval is the 3rd/97th percentile of the per-draw norms. Otherwise the
+    per-dimension bounds ``[hdi_3, hdi_97]`` define a box, and the interval is
+    the exact range of ``||x||`` over that box (a conservative bound that always
+    contains ``||mean||``) — the norm of a bound vector is *not* a bound.
+    """
+    if "samples" in ci and ci["samples"] is not None:
+        draws = np.linalg.norm(np.atleast_2d(np.asarray(ci["samples"], float)), axis=1)
+        return (
+            float(np.percentile(draws, 3)),
+            float(np.mean(draws)),
+            float(np.percentile(draws, 97)),
+        )
+    mean = np.asarray(ci["mean"], dtype=np.float64)
+    lo_v = np.minimum(np.asarray(ci["hdi_3"], float), np.asarray(ci["hdi_97"], float))
+    hi_v = np.maximum(np.asarray(ci["hdi_3"], float), np.asarray(ci["hdi_97"], float))
+    nearest = np.where((lo_v <= 0) & (hi_v >= 0), 0.0, np.minimum(np.abs(lo_v), np.abs(hi_v)))
+    farthest = np.maximum(np.abs(lo_v), np.abs(hi_v))
+    m = float(np.linalg.norm(mean))
+    lo = min(float(np.linalg.norm(nearest)), m)
+    hi = max(float(np.linalg.norm(farthest)), m)
+    return lo, m, hi
+
+
 # ======================================================================
 # §17  CLUSTER SIZE DISTRIBUTION
 # ======================================================================
@@ -1426,11 +1493,14 @@ def plot_cluster_sizes(
     unique, counts = np.unique(labels, return_counts=True)
 
     fig, ax = plt.subplots(figsize=figsize)
+    # Colour index counts clusters only (noise excluded) so colours match the
+    # 3D maps / scatter plots of the same labelling.
+    cluster_rank = {lab: j for j, lab in enumerate(unique[unique >= 0])}
     for i, (lab, cnt) in enumerate(zip(unique, counts)):
         if lab < 0:
             color = "lightgray"
         else:
-            color = CLUSTER_COLORS[i % len(CLUSTER_COLORS)]
+            color = CLUSTER_COLORS[cluster_rank[lab] % len(CLUSTER_COLORS)]
         ax.bar(i, cnt, color=color, edgecolor="k", linewidth=0.3)
         ax.text(i, cnt + max(counts) * 0.01, str(cnt), ha="center", va="bottom", fontsize=7)
 
@@ -1635,6 +1705,8 @@ def plot_cluster_summary(
     _apply_style()
     import matplotlib.image as mpimg
 
+    labels = np.asarray(labels, dtype=np.int64)
+    H = np.asarray(H, dtype=np.float64)
     fig, axes = plt.subplots(2, 3, figsize=figsize)
 
     # --- [0,0] 3D render as embedded image ---
@@ -1714,17 +1786,17 @@ def plot_cluster_summary(
 
     # --- [1,0] HKS profiles per cluster ---
     if t_values is None:
-        t_vals = np.arange(H.shape[1], dtype=np.float64)
+        t_vals = np.arange(1, H.shape[1] + 1, dtype=np.float64)
     else:
         t_vals = np.asarray(t_values)
 
     for i, lab in enumerate(sorted(set(labels[labels >= 0]))):
         mask = labels == lab
-        mean_h = H[mask].mean(axis=0)
+        mean_h = np.nanmean(H[mask], axis=0)
         color = CLUSTER_COLORS[i % len(CLUSTER_COLORS)]
         axes[1, 0].plot(t_vals, mean_h, color=color, linewidth=1.2, label=f"Cl {lab}")
         if mask.sum() > 1:
-            sem = H[mask].std(axis=0) / np.sqrt(mask.sum())
+            sem = np.nanstd(H[mask], axis=0) / np.sqrt(mask.sum())
             axes[1, 0].fill_between(t_vals, mean_h - sem, mean_h + sem, color=color, alpha=0.15)
 
     axes[1, 0].set_xscale("log")
@@ -1868,6 +1940,7 @@ def plot_spatiotemporal_field(
     uv = np.asarray(unfolded_coords, dtype=np.float64)
     fcs = np.asarray(faces, dtype=np.int64)
     _V, T = H.shape
+    _check_vertex_count(H, uv)
 
     # --- select scale indices ---
     if t_indices is not None:
@@ -2036,6 +2109,7 @@ def plot_spatiotemporal_animation(
     uv = np.asarray(unfolded_coords, dtype=np.float64)
     fcs = np.asarray(faces, dtype=np.int64)
     _V, T = H.shape
+    _check_vertex_count(H, uv)
 
     if t_values is None:
         t_values = np.arange(T, dtype=np.float64)
@@ -2170,14 +2244,15 @@ def plot_hovmoller(
     (Figure, Axes)
     """
     _apply_style()
-    from matplotlib.colors import LogNorm, Normalize
 
     H = np.asarray(H, dtype=np.float64)
     uv = np.asarray(unfolded_coords, dtype=np.float64)
-    V, T = H.shape
+    _V, T = H.shape
+    _check_vertex_count(H, uv)
 
     if t_values is None:
-        t_values = np.arange(T, dtype=np.float64)
+        # 1-based scale indices so a log axis does not drop the first scale.
+        t_values = np.arange(1, T + 1, dtype=np.float64)
     t_values = np.asarray(t_values, dtype=np.float64)
 
     # --- select spatial coordinate ---
@@ -2185,28 +2260,23 @@ def plot_hovmoller(
     pos = uv[:, col_idx]
 
     # --- bin vertices along the chosen axis ---
-    bin_edges = np.linspace(pos.min(), pos.max(), n_bins + 1)
+    bin_edges = np.linspace(np.nanmin(pos), np.nanmax(pos), n_bins + 1)
     bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
     digitized = np.digitize(pos, bin_edges) - 1
     digitized = np.clip(digitized, 0, n_bins - 1)
 
-    # average H within each spatial bin → (n_bins, T)
-    H_binned = np.zeros((n_bins, T), dtype=np.float64)
-    counts = np.zeros(n_bins, dtype=np.float64)
-    for i in range(V):
-        b = digitized[i]
-        H_binned[b] += H[i]
-        counts[b] += 1.0
-    counts[counts == 0] = 1.0
-    H_binned /= counts[:, None]
+    # nan-aware average of H within each spatial bin → (n_bins, T).
+    # Empty bins (and bins with no finite value) stay NaN — never a fake 0.
+    finite = np.isfinite(H) & np.isfinite(pos)[:, None]
+    sums = np.zeros((n_bins, T), dtype=np.float64)
+    counts = np.zeros((n_bins, T), dtype=np.float64)
+    np.add.at(sums, digitized, np.where(finite, H, 0.0))
+    np.add.at(counts, digitized, finite.astype(np.float64))
+    with np.errstate(invalid="ignore", divide="ignore"):
+        H_binned = np.where(counts > 0, sums / np.maximum(counts, 1.0), np.nan)
 
-    # --- normalisation ---
-    vmin = float(np.nanpercentile(H_binned[H_binned > 0], 2)) if log_norm else float(H_binned.min())
-    vmax = float(np.nanpercentile(H_binned, 98))
-    if log_norm:
-        norm = LogNorm(vmin=max(vmin, 1e-12), vmax=max(vmax, vmin * 2))
-    else:
-        norm = Normalize(vmin=vmin, vmax=vmax)
+    # --- normalisation (NaN-aware) ---
+    norm = _robust_norm(H_binned, log_norm)
 
     # --- plot ---
     fig, ax = plt.subplots(figsize=figsize)
@@ -2286,64 +2356,48 @@ def plot_kymograph(
     (Figure, Axes)
     """
     _apply_style()
-    from matplotlib.colors import LogNorm, Normalize
     from scipy.interpolate import LinearNDInterpolator
 
     H = np.asarray(H, dtype=np.float64)
     uv = np.asarray(unfolded_coords, dtype=np.float64)
     _V, T = H.shape
+    _check_vertex_count(H, uv)
+    if not 0.0 <= float(line_position) <= 1.0:
+        raise ValueError(f"line_position must be in [0, 1] (normalised), got {line_position}")
 
     if t_values is None:
-        t_values = np.arange(T, dtype=np.float64)
+        # 1-based scale indices so a log axis does not drop the first scale.
+        t_values = np.arange(1, T + 1, dtype=np.float64)
     t_values = np.asarray(t_values, dtype=np.float64)
 
-    # --- build interpolator (Delaunay computed once) ---
-    interp = LinearNDInterpolator(uv, H[:, 0])
-
-    # --- define the 1D line ---
+    # --- define the 1D line (line_position is normalised to [0, 1]) ---
     u_range = uv[:, 0]
     v_range = uv[:, 1]
+    u_lo, u_hi = float(np.nanmin(u_range)), float(np.nanmax(u_range))
+    v_lo, v_hi = float(np.nanmin(v_range)), float(np.nanmax(v_range))
 
     if line_axis == "AP":
-        line_u = np.linspace(u_range.min(), u_range.max(), n_samples)
-        line_v = np.full_like(line_u, line_position)
+        line_u = np.linspace(u_lo, u_hi, n_samples)
+        line_v = np.full_like(line_u, v_lo + line_position * (v_hi - v_lo))
         spatial_coord = line_u
         spatial_label = "AP coordinate"
     else:
-        line_v = np.linspace(v_range.min(), v_range.max(), n_samples)
-        line_u = np.full_like(line_v, line_position)
+        line_v = np.linspace(v_lo, v_hi, n_samples)
+        line_u = np.full_like(line_v, u_lo + line_position * (u_hi - u_lo))
         spatial_coord = line_v
         spatial_label = "PD coordinate"
 
     line_pts = np.column_stack([line_u, line_v])
 
-    # --- interpolate each scale ---
-    kymo = np.empty((n_samples, T), dtype=np.float64)
-    for k in range(T):
-        # reuse the same Delaunay but update values
-        interp.values = H[:, k : k + 1]
-        kymo[:, k] = interp(line_pts).squeeze()
-
-    # fill NaN from outside convex hull with nearest valid
-    for k in range(T):
-        nans = np.isnan(kymo[:, k])
-        if nans.any() and not nans.all():
-            valid = ~nans
-            kymo[nans, k] = np.interp(
-                np.where(nans)[0],
-                np.where(valid)[0],
-                kymo[valid, k],
-            )
+    # --- interpolate all scales at once (one Delaunay, vector-valued data) ---
+    # Samples outside the convex hull stay NaN (rendered as "bad"), they are
+    # never filled with fabricated edge values.
+    interp = LinearNDInterpolator(uv, np.ascontiguousarray(H))
+    kymo = np.asarray(interp(line_pts), dtype=np.float64).reshape(n_samples, T)
 
     # --- plot ---
     fig, ax = plt.subplots(figsize=figsize)
-
-    vmin_val = float(np.nanpercentile(kymo[kymo > 0], 2)) if log_norm else float(np.nanmin(kymo))
-    vmax_val = float(np.nanpercentile(kymo, 98))
-    if log_norm:
-        norm = LogNorm(vmin=max(vmin_val, 1e-12), vmax=max(vmax_val, vmin_val * 2))
-    else:
-        norm = Normalize(vmin=vmin_val, vmax=vmax_val)
+    norm = _robust_norm(kymo, log_norm)
 
     mesh_plot = ax.pcolormesh(
         t_values,
@@ -2427,12 +2481,15 @@ def plot_warped_surface(
     uv = np.asarray(unfolded_coords, dtype=np.float64)
     fcs = np.asarray(faces, dtype=np.int64)
     sc = np.asarray(scalars, dtype=np.float64)
+    if sc.shape[0] != uv.shape[0]:
+        raise ValueError(f"scalars ({sc.shape[0]}) must match unfolded_coords ({uv.shape[0]}).")
 
-    # normalise scalars for z-displacement
-    sc_norm = sc - sc.min()
-    sc_max = sc_norm.max()
+    # normalise scalars for z-displacement (NaN-safe; NaN vertices stay flat)
+    sc_norm = sc - np.nanmin(sc)
+    sc_max = np.nanmax(sc_norm)
     if sc_max > 0:
         sc_norm /= sc_max
+    sc_norm = np.nan_to_num(sc_norm, nan=0.0)
 
     # build 3D vertices: (u, v, warp_factor * normalised_scalar)
     verts_3d = np.column_stack(
@@ -2456,6 +2513,7 @@ def plot_warped_surface(
 
     plt_obj = vedo.Plotter(
         shape=(1, n_views),
+        sharecam=False,
         offscreen=True,
         size=size,
         bg=bg,
@@ -2468,13 +2526,11 @@ def plot_warped_surface(
         mesh.add_scalarbar(title=descriptor_name)
         mesh.lighting(lighting)
 
-        preset = CAMERA_PRESETS.get(view_name, {"azimuth": -45, "elevation": 30})
         plt_obj.at(vi).show(
             mesh,
             title=f"{descriptor_name} (warped)",
-            viewup="z",
+            camera=_view_camera(view_name, verts_3d),
             zoom=1.0,
-            **{k: v for k, v in preset.items() if k in ("azimuth", "elevation")},
         )
 
     meta = {
@@ -2533,7 +2589,6 @@ def plot_descriptor_evolution_comparison(
     """
     _apply_style()
     import matplotlib.tri as mtri
-    from matplotlib.colors import LogNorm, Normalize
 
     H_h = np.asarray(H_hks, dtype=np.float64)
     H_w = np.asarray(H_wks, dtype=np.float64)
@@ -2569,13 +2624,8 @@ def plot_descriptor_evolution_comparison(
 
     # --- helper to get norm ---
     def _make_norm(H_block, indices):
-        """Create a matplotlib Normalize instance for the given range."""
-        vals = H_block[:, indices]
-        vmin = float(np.nanpercentile(vals[vals > 0], 2)) if log_norm else float(vals.min())
-        vmax = float(np.nanpercentile(vals, 98))
-        if log_norm:
-            return LogNorm(vmin=max(vmin, 1e-12), vmax=max(vmax, vmin * 2))
-        return Normalize(vmin=vmin, vmax=vmax)
+        """Create a NaN-safe matplotlib Normalize instance for the given range."""
+        return _robust_norm(H_block[:, indices], log_norm)
 
     norm_h = _make_norm(H_h, sel_h)
     norm_w = _make_norm(H_w, sel_w)

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 viz/eigenmodes.py  —  SpectralBrain
 ===================================
@@ -36,13 +35,13 @@ Autor: Rodrigo Debona (Velho Mago) — com Claudinho.
 from __future__ import annotations
 
 import os
-from typing import Optional, Sequence, Tuple, Union
+from collections.abc import Sequence
 
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
 from matplotlib import gridspec
-from matplotlib.colors import Normalize
 from matplotlib.cm import ScalarMappable
+from matplotlib.colors import Normalize
 
 # Render offscreen na workstation (headless). Defina ANTES de qualquer VTK.
 os.environ.setdefault("VTK_USE_OFFSCREEN", "1")
@@ -51,16 +50,16 @@ os.environ.setdefault("VTK_USE_OFFSCREEN", "1")
 _FOUR_VIEWS = ["left_lateral", "left_medial", "right_medial", "right_lateral"]
 _ONE_VIEW = ["left_lateral"]
 
-PathLike = Union[str, os.PathLike]
+PathLike = str | os.PathLike
 
 __all__ = [
-    "eigenmode_wavelength",
-    "standardize_sign",
+    "assemble_eigenmode_panel",
     "compute_geometric_eigenmodes",
+    "eigenmode_wavelength",
+    "plot_eigenmode_panel",
     "render_eigenmodes",
     "select_mode_indices",
-    "assemble_eigenmode_panel",
-    "plot_eigenmode_panel",
+    "standardize_sign",
 ]
 
 
@@ -104,15 +103,36 @@ def standardize_sign(field: np.ndarray, method: str = "max_abs") -> np.ndarray:
     return f if f[idx] >= 0 else -f
 
 
-def _apply_medial_mask(field: np.ndarray, mask: Optional[np.ndarray]) -> np.ndarray:
+def _medial_mask_bool(mask: np.ndarray, n: int) -> np.ndarray:
+    """Interpreta a máscara medial como booleana (V,) ou lista de índices.
+
+    * ``bool`` de comprimento V → usada diretamente;
+    * numérica de comprimento V contendo só 0/1 (ex.: ``.label.gii`` / float
+      0.0/1.0) → binária (1 = parede medial);
+    * qualquer outra coisa inteira → índices dos vértices mediais.
+    """
+    mask = np.asarray(mask)
+    if mask.dtype == bool:
+        if mask.shape[0] != n:
+            raise ValueError(f"máscara booleana tem {mask.shape[0]} entradas, malha tem {n}.")
+        return mask
+    if mask.ndim == 1 and mask.shape[0] == n:
+        vals = np.unique(mask[np.isfinite(mask)]) if mask.dtype.kind == "f" else np.unique(mask)
+        if np.isin(vals, (0, 1)).all():
+            return mask.astype(float) == 1
+    idx = np.asarray(mask, dtype=float)
+    if not np.all(np.isfinite(idx)) or np.any(idx != np.round(idx)):
+        raise ValueError("máscara medial não-binária deve conter índices inteiros.")
+    out = np.zeros(n, dtype=bool)
+    out[idx.astype(int)] = True
+    return out
+
+
+def _apply_medial_mask(field: np.ndarray, mask: np.ndarray | None) -> np.ndarray:
     if mask is None:
         return field
     out = field.astype(float).copy()
-    mask = np.asarray(mask)
-    if mask.dtype == bool:
-        out[mask] = np.nan
-    else:
-        out[mask.astype(int)] = np.nan
+    out[_medial_mask_bool(mask, out.shape[0])] = np.nan
     return out
 
 
@@ -130,14 +150,14 @@ def compute_geometric_eigenmodes(
     surf_path: PathLike,
     n_modes: int = 50,
     use_lumped_mass: bool = True,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Eigenmodes geométricos (Laplace-Beltrami) na MALHA DE RENDER, via LaPy.
 
     Resolve Delta psi = -lambda psi (forma fraca FEM) na superfície. Garante
     mesh-match: os modos são resolvidos na mesma malha em que serão plotados.
     """
     try:
-        from lapy import TriaMesh, Solver
+        from lapy import Solver, TriaMesh
     except Exception as exc:  # pragma: no cover
         raise ImportError(
             "LaPy não encontrado. `pip install lapy` ou use o caminho 2 "
@@ -163,14 +183,14 @@ def render_eigenmodes(
     rh_surf_path: PathLike,
     mode_indices: Sequence[int],
     out_dir: PathLike = "eigenmode_pngs",
-    views: Optional[Sequence[str]] = None,
+    views: Sequence[str] | None = None,
     cmap: str = "RdBu_r",
     style: str = "matte",
     percentile_clim: float = 99.0,
     sign_method: str = "max_abs",
-    medial_mask_lh: Optional[np.ndarray] = None,
-    medial_mask_rh: Optional[np.ndarray] = None,
-    figsize: Tuple[int, int] = (1600, 400),
+    medial_mask_lh: np.ndarray | None = None,
+    medial_mask_rh: np.ndarray | None = None,
+    figsize: tuple[int, int] = (1600, 400),
     zoom: float = 1.25,
 ) -> list:
     """Renderiza um PNG por modo (cada PNG já com as vistas pedidas).
@@ -186,11 +206,13 @@ def render_eigenmodes(
 
     png_paths = []
     for k in mode_indices:
-        psi_lh = standardize_sign(evecs_lh[:, k], method=sign_method)
-        psi_rh = standardize_sign(evecs_rh[:, k], method=sign_method)
+        # Máscara ANTES do sinal e do clim: a parede medial não deve definir
+        # nem a convenção de sinal nem a escala de cor.
+        psi_lh = _apply_medial_mask(np.asarray(evecs_lh[:, k], float), medial_mask_lh)
+        psi_rh = _apply_medial_mask(np.asarray(evecs_rh[:, k], float), medial_mask_rh)
+        psi_lh = standardize_sign(psi_lh, method=sign_method)
+        psi_rh = standardize_sign(psi_rh, method=sign_method)
         vmax = _symmetric_clim(np.concatenate([psi_lh, psi_rh]), percentile_clim)
-        psi_lh = _apply_medial_mask(psi_lh, medial_mask_lh)
-        psi_rh = _apply_medial_mask(psi_rh, medial_mask_rh)
 
         lh_mesh = make_cortical_mesh(lh_v, lh_f, psi_lh, scalar_name="mode")
         rh_mesh = make_cortical_mesh(rh_v, rh_f, psi_rh, scalar_name="mode")
@@ -228,7 +250,7 @@ def assemble_eigenmode_panel(
     cmap: str = "RdBu_r",
     annotate: str = "wavelength",
     dpi: int = 300,
-    panel_title: Optional[str] = None,
+    panel_title: str | None = None,
     label_fontsize: float = 7.0,
 ) -> str:
     """Monta os PNGs numa grade de publicação, com colorbar única (a.u., −/0/+)."""
@@ -248,7 +270,8 @@ def assemble_eigenmode_panel(
         r, c = divmod(i, ncols)
         ax = fig.add_subplot(gs[r, c])
         ax.imshow(plt.imread(str(png)))
-        ax.set_xticks([]); ax.set_yticks([])
+        ax.set_xticks([])
+        ax.set_yticks([])
         for spine in ax.spines.values():
             spine.set_visible(False)
         lam = float(evals[k]) if k < len(evals) else np.nan
@@ -291,16 +314,16 @@ def plot_eigenmode_panel(
     ncols: int = 3,
     out_path: PathLike = "eigenmode_panel.pdf",
     out_dir: PathLike = "eigenmode_pngs",
-    views_per_mode: Optional[Sequence[str]] = None,
-    evecs_lh: Optional[np.ndarray] = None,
-    evecs_rh: Optional[np.ndarray] = None,
-    evals: Optional[np.ndarray] = None,
+    views_per_mode: Sequence[str] | None = None,
+    evecs_lh: np.ndarray | None = None,
+    evecs_rh: np.ndarray | None = None,
+    evals: np.ndarray | None = None,
     cmap: str = "RdBu_r",
     annotate: str = "wavelength",
     skip_constant: bool = True,
-    medial_mask_lh: Optional[np.ndarray] = None,
-    medial_mask_rh: Optional[np.ndarray] = None,
-    panel_title: Optional[str] = None,
+    medial_mask_lh: np.ndarray | None = None,
+    medial_mask_rh: np.ndarray | None = None,
+    panel_title: str | None = None,
 ) -> str:
     """Pipeline completo: (computa ->) renderiza -> monta painel estilo Cao."""
     if evecs_lh is None or evecs_rh is None or evals is None:

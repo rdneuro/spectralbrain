@@ -170,12 +170,17 @@ def plot_posterior(
 
 def _hdi(samples: np.ndarray, prob: float) -> tuple[float, float]:
     """Highest Density Interval (narrowest interval containing prob mass)."""
-    s = np.sort(samples)
+    s = np.sort(np.asarray(samples, dtype=np.float64).ravel())
+    s = s[np.isfinite(s)]
     n = len(s)
-    interval_width = int(np.ceil(prob * n))
-    widths = s[interval_width:] - s[: n - interval_width]
-    best = widths.argmin()
-    return float(s[best]), float(s[best + interval_width])
+    if n == 0:
+        return float("nan"), float("nan")
+    # Number of samples the interval must contain; the interval
+    # [s[i], s[i + m - 1]] spans exactly m samples (ArviZ convention).
+    m = min(max(int(np.ceil(prob * n)), 1), n)
+    widths = s[m - 1 :] - s[: n - m + 1]
+    best = int(widths.argmin())
+    return float(s[best]), float(s[best + m - 1])
 
 
 # ======================================================================
@@ -209,6 +214,8 @@ def plot_forest(
     """
     _apply_style()
     n = len(var_names)
+    if len(posteriors) != n:
+        raise ValueError(f"{n} var_names but {len(posteriors)} posteriors")
     if ax is None:
         fig, ax = plt.subplots(figsize=(5, 0.35 * n + 1), dpi=DPI)
     else:
@@ -527,7 +534,9 @@ def plot_horseshoe_coefficients(
     """Horseshoe coefficient plot: forest + shrinkage heatmap.
 
     Left panel: forest plot of β posteriors.
-    Right panel: local shrinkage (κ = 1/(1+λ²)) — darker = more shrunk.
+    Right panel: shrinkage factor κ_j = E[1/(1 + τ²λ_j²)] (posterior mean
+    over draws, with the global scale τ from the trace; the model is
+    β_j ~ N(0, τλ_j)) — darker = more shrunk.
 
     Parameters
     ----------
@@ -548,9 +557,17 @@ def plot_horseshoe_coefficients(
 
     if var_names is None:
         var_names = [f"β_{i}" for i in range(d)]
+    if len(var_names) != d:
+        raise ValueError(f"var_names has {len(var_names)} entries but beta has {d} coefficients")
 
-    # Shrinkage factor: κ = 1/(1 + λ²)
-    kappa = 1.0 / (1.0 + lam**2)
+    # Shrinkage factor per draw: κ = 1/(1 + τ²λ²) — the effective prior scale
+    # of β_j is τ·λ_j, so the global τ must be included.
+    try:
+        tau = np.asarray(trace.posterior["tau"].values, dtype=np.float64).reshape(-1, 1)
+    except (KeyError, AttributeError):
+        logger.warning("trace has no 'tau'; shrinkage κ computed from λ alone (τ = 1).")
+        tau = np.ones((lam.shape[0], 1))
+    kappa = 1.0 / (1.0 + (tau * lam) ** 2)
     kappa_mean = kappa.mean(axis=0)
 
     fig, (ax_forest, ax_shrink) = plt.subplots(
@@ -866,8 +883,11 @@ def plot_connectome_posterior(
     else:
         fig = ax.figure
 
+    edge_diff_matrix = np.asarray(edge_diff_matrix, dtype=np.float64)
     if vmax is None:
-        vmax = np.abs(edge_diff_matrix).max()
+        finite = np.abs(edge_diff_matrix[np.isfinite(edge_diff_matrix)])
+        vmax = float(finite.max()) if finite.size else 1.0
+        vmax = vmax or 1.0
 
     im = ax.imshow(
         edge_diff_matrix, cmap=cmap, aspect="auto", vmin=-vmax, vmax=vmax, interpolation="nearest"
