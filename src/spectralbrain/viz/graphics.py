@@ -26,7 +26,7 @@ from spectralbrain.runtime import PathLike, get_logger
 logger = get_logger(__name__)
 
 # ======================================================================
-# §1  DEFAULTS & STYLE
+# S1  DEFAULTS & STYLE
 # ======================================================================
 
 DPI: int = 600
@@ -102,7 +102,7 @@ def set_style(
 set_style("paper")
 
 # ======================================================================
-# §2  COLORMAPS
+# S2  COLORMAPS
 # ======================================================================
 
 
@@ -142,7 +142,7 @@ except Exception:
 
 
 # ======================================================================
-# §3  FIGURE FACTORY
+# S3  FIGURE FACTORY
 # ======================================================================
 
 _JOURNAL_PRESETS = {
@@ -184,7 +184,7 @@ def figure(
 
 
 # ======================================================================
-# §4  MULTI-FORMAT SAVE (always PNG + extras)
+# S4  MULTI-FORMAT SAVE (always PNG + extras)
 # ======================================================================
 
 
@@ -201,7 +201,7 @@ def savefig(
     bbox_inches: str = "tight",
     pad_inches: float = 0.05,
 ) -> list[Path]:
-    """Save figure — **always** PNG, plus optional PDF/SVG/JPG.
+    """Save figure -- **always** PNG, plus optional PDF/SVG/JPG.
 
     The extension of ``path`` (if it is a known image format) is honoured as
     an extra requested format, e.g. ``"fig.pdf"`` writes ``fig.png`` **and**
@@ -242,7 +242,7 @@ def savefig(
 
 
 # ======================================================================
-# §5  CUSTOM DISTPLOT
+# S5  CUSTOM DISTPLOT
 # ======================================================================
 
 
@@ -267,7 +267,7 @@ def distplot(
     save: PathLike | None = None,
     **save_kw,
 ) -> tuple[Figure, Axes]:
-    """Custom distribution plot — histogram + KDE + rug.
+    """Custom distribution plot -- histogram + KDE + rug.
 
     Drop-in replacement for seaborn's deprecated ``distplot`` with
     SpectralBrain styling and multi-group support.
@@ -339,7 +339,7 @@ def distplot(
 
 
 # ======================================================================
-# §6  STATISTICAL FIGURES (linked to analysis.py)
+# S6  STATISTICAL FIGURES (linked to analysis.py)
 # ======================================================================
 
 
@@ -354,7 +354,7 @@ def plot_volcano(
     ax: Axes | None = None,
     save: PathLike | None = None,
 ) -> tuple[Figure, Axes]:
-    """Volcano plot: effect size vs −log₁₀(p).
+    """Volcano plot: effect size vs -log_10(p).
 
     Visualises :func:`~spectralbrain.statistics.analysis.vertexwise_ttest`.
     """
@@ -402,7 +402,7 @@ def plot_roc_curve(
     ax: Axes | None = None,
     save: PathLike | None = None,
 ) -> tuple[Figure, Axes]:
-    """ROC curve with AUC — visualises :func:`~...analysis.classify`."""
+    """ROC curve with AUC -- visualises :func:`~...analysis.classify`."""
     from sklearn.metrics import roc_auc_score, roc_curve
 
     if ax is None:
@@ -435,7 +435,7 @@ def plot_rdm(
     ax: Axes | None = None,
     save: PathLike | None = None,
 ) -> tuple[Figure, Axes]:
-    """RDM heatmap — visualises :func:`~...analysis.rdm`."""
+    """RDM heatmap -- visualises :func:`~...analysis.rdm`."""
     if ax is None:
         fig, ax = figure(width=100, height=90)
     else:
@@ -464,7 +464,7 @@ def plot_connectome_matrix(
     ax: Axes | None = None,
     save: PathLike | None = None,
 ) -> tuple[Figure, Axes]:
-    """Connectome heatmap — visualises :func:`~...distances.build_geometric_connectome`."""
+    """Connectome heatmap -- visualises :func:`~...distances.build_geometric_connectome`."""
     if ax is None:
         fig, ax = figure(width=110, height=95)
     else:
@@ -499,7 +499,7 @@ def plot_embedding(
     ax: Axes | None = None,
     save: PathLike | None = None,
 ) -> tuple[Figure, Axes]:
-    """2D scatter — visualises PCA/MDS/UMAP from analysis.py."""
+    """2D scatter -- visualises PCA/MDS/UMAP from analysis.py."""
     if ax is None:
         fig, ax = figure(width=110, height=90)
     else:
@@ -541,7 +541,7 @@ def plot_effect_size_distribution(
     ax: Axes | None = None,
     save: PathLike | None = None,
 ) -> tuple[Figure, Axes]:
-    """Cohen's d distribution — visualises :func:`~...analysis.cohens_d_map`."""
+    """Cohen's d distribution -- visualises :func:`~...analysis.cohens_d_map`."""
     fig, ax = distplot(
         effect_sizes,
         hist=True,
@@ -576,7 +576,7 @@ def plot_laterality(
     ax: Axes | None = None,
     save: PathLike | None = None,
 ) -> tuple[Figure, Axes]:
-    """Paired violin L vs R — visualises :func:`~...analysis.asymmetry_test`."""
+    """Paired violin L vs R -- visualises :func:`~...analysis.asymmetry_test`."""
     if ax is None:
         fig, ax = figure(width=100, height=85)
     else:
@@ -626,7 +626,7 @@ def plot_pvalue_histogram(
     ax: Axes | None = None,
     save: PathLike | None = None,
 ) -> tuple[Figure, Axes]:
-    """P-value diagnostic histogram — for :func:`~...analysis.vertexwise_ttest`."""
+    """P-value diagnostic histogram -- for :func:`~...analysis.vertexwise_ttest`."""
     if ax is None:
         fig, ax = figure(width=100, height=70)
     else:
@@ -642,10 +642,10 @@ def plot_pvalue_histogram(
         alpha=0.6,
     )
     ax.axhline(1.0, color=PALETTE["grey"], ls="--", lw=1, label="Uniform null")
-    ax.axvline(alpha, color=PALETTE["red"], ls="--", lw=1, alpha=0.7, label=f"α = {alpha}")
+    ax.axvline(alpha, color=PALETTE["red"], ls="--", lw=1, alpha=0.7, label=rf"$\alpha$ = {alpha}")
     pct = 100 * np.mean(p_values < alpha)
     ax.annotate(
-        f"{pct:.1f}% < α",
+        rf"{pct:.1f}% < $\alpha$",
         xy=(alpha + 0.02, ax.get_ylim()[1] * 0.9),
         fontsize=7,
         color=PALETTE["red"],

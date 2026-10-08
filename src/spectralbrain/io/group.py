@@ -6,7 +6,7 @@ functions in :mod:`spectralbrain.statistics.analysis`. The workflow is:
 1. **Discover** one file per subject from a BIDS/derivatives tree, a
    FreeSurfer ``SUBJECTS_DIR``, or an explicit list/dict of paths.
 2. **Load** every subject in parallel (joblib via
-   :func:`spectralbrain.backends.cpu.parallel_map`), fail-soft: a subject
+   :func:`spectralbrain.runtime.parallel_map`), fail-soft: a subject
    that errors is logged and dropped rather than aborting the cohort.
 3. **Stack** the per-subject arrays into a single ``(S, N)`` (or
    ``(S, N, T)``) array, packaged in a :class:`GroupData` object that
@@ -14,10 +14,10 @@ functions in :mod:`spectralbrain.statistics.analysis`. The workflow is:
 
 Two loading modes:
 
-- ``mode="maps"`` — load a per-vertex overlay/metric or a precomputed
+- ``mode="maps"`` -- load a per-vertex overlay/metric or a precomputed
   descriptor field that is **already vertex-corresponded** on a common
   template (the light path).
-- ``mode="pipeline"`` — load each surface, build the Laplace–Beltrami
+- ``mode="pipeline"`` -- load each surface, build the Laplace-Beltrami
   decomposition, and compute a spectral descriptor per subject (the heavy
   path, where joblib and the GPU backends pay off).
 
@@ -36,7 +36,7 @@ Examples
 
 >>> # Full pipeline from FreeSurfer surfaces, HKS per subject, on GPU:
 >>> files = discover_freesurfer("/data/fs", surface="white", hemi="lh")
->>> from spectralbrain.backends import TorchBackend
+>>> from spectralbrain.core.backends import TorchBackend
 >>> group = load_group(
 ...     files, mode="pipeline", descriptor="hks", k=100,
 ...     backend=TorchBackend(), n_jobs=4,
@@ -72,7 +72,7 @@ PROGRAMMING_ERRORS: tuple[type[BaseException], ...] = (
 
 
 # ======================================================================
-# §1  GROUP CONTAINER
+# S1  GROUP CONTAINER
 # ======================================================================
 
 
@@ -92,9 +92,9 @@ class GroupData:
     paths : list of Path
         Source file per subject.
     faces : ndarray, optional
-        Template faces ``(F, 3)`` — useful for TFCE adjacency.
+        Template faces ``(F, 3)`` -- useful for TFCE adjacency.
     metadata : dict
-        Bookkeeping (mode, number of failed subjects, …).
+        Bookkeeping (mode, number of failed subjects, ...).
     """
 
     data: Any
@@ -159,7 +159,7 @@ class GroupData:
 
 
 # ======================================================================
-# §2  DISCOVERY
+# S2  DISCOVERY
 # ======================================================================
 
 
@@ -171,8 +171,8 @@ def _norm_sid(s: str) -> str:
 def _subject_id_from_path(p: Path) -> str:
     """Best-effort subject ID for a file path.
 
-    Order: BIDS ``sub-`` entity in the filename → a ``sub-*`` ancestor
-    directory → FreeSurfer layout (``<subject>/surf/<file>``) → parent
+    Order: BIDS ``sub-`` entity in the filename -> a ``sub-*`` ancestor
+    directory -> FreeSurfer layout (``<subject>/surf/<file>``) -> parent
     directory name + file stem.
     """
     sub = parse_bids_filename(p.name).get("sub")
@@ -252,9 +252,9 @@ def discover_freesurfer(
     hemi : str
         ``"lh"`` or ``"rh"``.
     surface : str, optional
-        Surface geometry name (``"white"``, ``"pial"``, …).
+        Surface geometry name (``"white"``, ``"pial"``, ...).
     measure : str, optional
-        Morphometry overlay (``"thickness"``, ``"curv"``, ``"sulc"``, …).
+        Morphometry overlay (``"thickness"``, ``"curv"``, ``"sulc"``, ...).
     subjects : list of str, optional
         Restrict to these subject directory names.
 
@@ -284,7 +284,7 @@ def discover_freesurfer(
 
 
 # ======================================================================
-# §3  PER-SUBJECT LOADERS
+# S3  PER-SUBJECT LOADERS
 # ======================================================================
 
 
@@ -293,7 +293,7 @@ def _default_map_loader(path: PathLike) -> np.ndarray:
     r = _load(path)
     if "scalars" in r:
         return np.asarray(r["scalars"])
-    if "data" in r:  # volume → flattened
+    if "data" in r:  # volume -> flattened
         return np.asarray(r["data"]).ravel()
     if "vertices" in r:
         raise ValueError(
@@ -312,9 +312,9 @@ def _make_descriptor_loader(
     laplacian: str = "cotangent",
     **descriptor_kwargs: Any,
 ) -> Callable[[PathLike], np.ndarray]:
-    """Build a loader: surface file → decompose → spectral descriptor."""
+    """Build a loader: surface file -> decompose -> spectral descriptor."""
     from spectralbrain.core.meshes import BrainMesh
-    from spectralbrain.spectral import descriptors as _desc
+    from spectralbrain.spectral.lbo import descriptors as _desc
 
     table: dict[str, Callable[..., np.ndarray]] = {
         "hks": _desc.compute_hks,
@@ -339,7 +339,7 @@ def _make_descriptor_loader(
 
 
 # ======================================================================
-# §4  GROUP LOADER
+# S4  GROUP LOADER
 # ======================================================================
 
 
@@ -469,13 +469,13 @@ def load_group(
         except PROGRAMMING_ERRORS:
             raise
         except Exception as exc:
-            logger.error("✗ %s: %s", path.name, exc)
+            logger.error("FAILED %s: %s", path.name, exc)
             return None
 
     if n_jobs == 1:
         arrays = [_one(p) for p in paths]
     else:
-        from spectralbrain.backends.cpu import parallel_map
+        from spectralbrain.runtime import parallel_map
 
         arrays = parallel_map(_one, paths, n_jobs=n_jobs, description="Loading group")
 
@@ -483,7 +483,7 @@ def load_group(
 
 
 # ======================================================================
-# §5  TEMPLATE RESAMPLING (FreeSurfer)
+# S5  TEMPLATE RESAMPLING (FreeSurfer)
 # ======================================================================
 
 
@@ -587,7 +587,7 @@ def load_group_freesurfer(
     """Load a FreeSurfer morphometry measure across a cohort onto a template.
 
     For each subject the native overlay (``{hemi}.{measure}``) is loaded and
-    — unless ``resample=False`` — resampled to *template* via
+    -- unless ``resample=False`` -- resampled to *template* via
     :func:`resample_to_template`, so the cohort stacks into a single
     vertex-corresponded ``(S, N_template)`` array ready for
     :func:`group_comparison`.
@@ -597,7 +597,7 @@ def load_group_freesurfer(
     subjects_dir : PathLike
         FreeSurfer ``SUBJECTS_DIR``.
     measure : str
-        Morphometry overlay (``"thickness"``, ``"curv"``, ``"sulc"``, …).
+        Morphometry overlay (``"thickness"``, ``"curv"``, ``"sulc"``, ...).
     hemi : str
         ``"lh"`` or ``"rh"``.
     template : str
@@ -632,22 +632,22 @@ def load_group_freesurfer(
         except PROGRAMMING_ERRORS:
             raise
         except Exception as exc:
-            logger.error("✗ %s: %s", sid, exc)
+            logger.error("FAILED %s: %s", sid, exc)
             return None
 
     if n_jobs == 1:
         arrays = [_one(it) for it in items]
     else:
-        from spectralbrain.backends.cpu import parallel_map
+        from spectralbrain.runtime import parallel_map
 
         arrays = parallel_map(_one, items, n_jobs=n_jobs, description="Loading FS group")
 
-    mode = f"freesurfer:{measure}" + (f"→{template}" if resample else "")
+    mode = f"freesurfer:{measure}" + (f"->{template}" if resample else "")
     return _finalize_group(items, arrays, mode=mode)
 
 
 # ======================================================================
-# §6  ANALYSIS GLUE
+# S6  ANALYSIS GLUE
 # ======================================================================
 
 

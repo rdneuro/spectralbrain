@@ -6,14 +6,13 @@ directory (72 bundles in the standard atlas, e.g. ``CST_left.nii.gz``,
 ``AF_left.nii.gz``). This module turns those masks into the geometric
 objects SpectralBrain operates on:
 
-- ``output="pointcloud"`` → a :class:`~spectralbrain.core.pointclouds.BrainPointCloud`
-  of the mask's world-space voxel coordinates (ready for point-cloud
-  Laplacian spectral analysis).
-- ``output="mesh"`` → a :class:`~spectralbrain.core.meshes.BrainMesh`
-  isosurface (marching cubes on the binary mask), ready for
-  ``.decompose()`` and the mesh descriptors.
+a :class:`~spectralbrain.core.meshes.BrainMesh` isosurface per bundle
+(marching cubes on the binary mask, improved for the LBO by default), ready
+for ``.decompose()`` and the mesh descriptors. Each mesh carries the bundle
+name and source path in its metadata.
 
-Both carry the bundle name and source path in their metadata.
+Point-cloud representations of the same masks live in the sibling library
+``pointsbrain``.
 
 Examples
 --------
@@ -22,9 +21,9 @@ Examples
 >>> decomp = cst.decompose(k=80)
 >>> hks = sb.compute_hks(decomp, t_values=[1, 10, 100])
 
->>> # A single bundle across a cohort, as point clouds:
+>>> # A single bundle across a cohort:
 >>> files = discover_tractseg_subjects("/data/derivatives/tractseg", "CST_left")
->>> clouds = {sid: load_tractseg_bundle(p) for sid, p in files.items()}
+>>> csts = {sid: load_tractseg_bundle(p) for sid, p in files.items()}
 """
 
 from __future__ import annotations
@@ -43,7 +42,7 @@ _DEFAULT_SUBDIR = "bundle_segmentations"
 
 
 # ======================================================================
-# §1  DISCOVERY
+# S1  DISCOVERY
 # ======================================================================
 
 
@@ -139,51 +138,58 @@ def discover_tractseg_subjects(
 
 
 # ======================================================================
-# §2  LOADING
+# S2  LOADING
 # ======================================================================
+
+
+def _check_output(output: str) -> None:
+    """Only meshes are supported; point clouds moved to ``pointsbrain``."""
+    if output == "pointcloud":
+        raise ValueError(
+            "SpectralBrain is mesh-only since 0.1.0: TractSeg masks load as "
+            "BrainMesh (output='mesh'). For point clouds use the 'pointsbrain' "
+            "library (pointsbrain.io.load_tractseg)."
+        )
+    if output != "mesh":
+        raise ValueError(f"Unknown output {output!r}; use 'mesh'.")
 
 
 def load_tractseg_bundle(
     mask_path: PathLike,
     *,
-    output: str = "pointcloud",
+    output: str = "mesh",
     level: float = 0.5,
-    jitter: bool = False,
-    jitter_scale: float = 0.25,
-    seed: int | None = None,
     step_size: int = 1,
     raw: bool = False,
 ) -> Any:
-    """Load one TractSeg bundle mask as a point cloud or isosurface mesh.
+    """Load one TractSeg bundle mask as an isosurface mesh.
 
     Parameters
     ----------
     mask_path : PathLike
         A binary (or probabilistic) bundle mask NIfTI.
-    output : ``"pointcloud"`` or ``"mesh"``
-        ``"pointcloud"`` returns a :class:`BrainPointCloud` of the
-        mask's world-space voxel coordinates; ``"mesh"`` returns a
-        :class:`BrainMesh` isosurface via marching cubes.
+    output : ``"mesh"``
+        Kept for call compatibility; ``"mesh"`` is the only representation.
+        (``"pointcloud"`` raises and points to ``pointsbrain``.)
     level : float
         Threshold separating inside/outside the bundle (default ``0.5``;
         appropriate for binary masks and TractSeg probability maps).
-    jitter, jitter_scale, seed :
-        Point-cloud only — optional sub-voxel jitter to break the regular
-        grid (helps point-cloud Laplacian estimation).
     step_size : int
-        Mesh only — marching-cubes step (larger = coarser/faster; raw path).
+        Marching-cubes step (larger = coarser/faster; raw path).
     raw : bool
-        Mesh only — if ``False`` (default) the isosurface is improved for
+        If ``False`` (default) the isosurface is improved for
         spectral analysis (open-surface-safe: field smoothing + Taubin, no
         watertight forcing or component pruning). If ``True``, reproduce the
         legacy plain marching-cubes mesh exactly.
 
     Returns
     -------
-    BrainPointCloud or BrainMesh
+    BrainMesh
         With ``metadata["bundle"]`` and ``metadata["source"]`` set.
     """
-    from spectralbrain.io.loaders import labels_to_pointcloud, load_nifti
+    from spectralbrain.io.loaders import load_nifti
+
+    _check_output(output)
 
     path = Path(mask_path)
     vol, affine = load_nifti(path)
@@ -202,46 +208,30 @@ def load_tractseg_bundle(
     bundle = path.name.split(".")[0]
     meta = {"bundle": bundle, "source": str(path)}
 
-    if output == "pointcloud":
-        from spectralbrain.core.pointclouds import BrainPointCloud
+    from spectralbrain.core.meshes import BrainMesh
+    from spectralbrain.io.meshing import volume_to_mesh
 
-        pts = labels_to_pointcloud(
-            binary,
-            affine,
-            label_id=1,
-            jitter=jitter,
-            jitter_scale=jitter_scale,
-            seed=seed,
-        )
-        return BrainPointCloud(pts, metadata={**meta, "n_voxels": int(binary.sum())})
-
-    if output == "mesh":
-        from spectralbrain.core.meshes import BrainMesh
-        from spectralbrain.io.meshing import volume_to_mesh
-
-        # Bundle masks are open / branching / possibly multi-part surfaces, so
-        # closed=False: no watertight forcing and no largest-component pruning
-        # (which would amputate branches). raw=True reproduces the legacy plain
-        # marching-cubes mesh exactly.
-        verts, faces, info = volume_to_mesh(
-            binary.astype(np.float32),
-            affine,
-            raw=raw,
-            closed=False,
-            level=0.5,
-            step_size=step_size,
-            return_info=True,
-        )
-        return BrainMesh(verts, faces, metadata={**meta, **info})
-
-    raise ValueError(f"Unknown output {output!r}; use 'pointcloud' or 'mesh'.")
+    # Bundle masks are open / branching / possibly multi-part surfaces, so
+    # closed=False: no watertight forcing and no largest-component pruning
+    # (which would amputate branches). raw=True reproduces the legacy plain
+    # marching-cubes mesh exactly.
+    verts, faces, info = volume_to_mesh(
+        binary.astype(np.float32),
+        affine,
+        raw=raw,
+        closed=False,
+        level=0.5,
+        step_size=step_size,
+        return_info=True,
+    )
+    return BrainMesh(verts, faces, metadata={**meta, **info})
 
 
 def load_tractseg(
     tractseg_dir: PathLike,
     *,
     bundles: list[str] | None = None,
-    output: str = "pointcloud",
+    output: str = "mesh",
     subdir: str | None = _DEFAULT_SUBDIR,
     return_failed: bool = False,
     **kwargs: Any,
@@ -254,20 +244,20 @@ def load_tractseg(
         TractSeg output directory for a subject.
     bundles : list of str, optional
         Restrict to these bundle names. Defaults to all masks found.
-    output : ``"pointcloud"`` or ``"mesh"``
-        Geometric representation per bundle.
+    output : ``"mesh"``
+        Kept for call compatibility; meshes are the only representation.
     subdir : str, optional
         Mask subdirectory (default ``"bundle_segmentations"``).
     return_failed : bool
         If True, also return ``{bundle_name: error message}`` for the bundles
         that were skipped.
     **kwargs
-        Forwarded to :func:`load_tractseg_bundle` (``level``, ``jitter``,
-        ``step_size``, …).
+        Forwarded to :func:`load_tractseg_bundle` (``level``, ``step_size``,
+        ``raw``).
 
     Returns
     -------
-    dict of {bundle_name: BrainPointCloud or BrainMesh}
+    dict of {bundle_name: BrainMesh}
         Bundles that fail to load (e.g. empty masks, unreadable files) are
         logged and skipped. Programming errors (``TypeError`` etc., e.g. a
         misspelt keyword argument) are re-raised rather than skipped.
@@ -275,6 +265,7 @@ def load_tractseg(
     """
     from spectralbrain.io.group import PROGRAMMING_ERRORS
 
+    _check_output(output)  # fail once, before the per-bundle loop swallows it
     files = discover_tractseg_bundles(tractseg_dir, bundles=bundles, subdir=subdir)
     out: dict[str, Any] = {}
     failed: dict[str, str] = {}
@@ -284,7 +275,7 @@ def load_tractseg(
         except PROGRAMMING_ERRORS:
             raise
         except Exception as exc:
-            logger.error("✗ %s: %s", name, exc)
+            logger.error("FAILED %s: %s", name, exc)
             failed[name] = str(exc)
     if failed:
         logger.warning("Skipped %d TractSeg bundle(s): %s", len(failed), ", ".join(failed))

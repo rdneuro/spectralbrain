@@ -34,9 +34,9 @@ def _write_png(path):
     return path
 
 
-# ──────────────────────────────────────────────────────────────────────
-# #1 / #2  camera conventions (RAS) — vedo, PyVista and FURY
-# ──────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------
+# #1 / #2  camera conventions (RAS) -- vedo, PyVista and FURY
+# ----------------------------------------------------------------------
 
 
 def test_camera_ras_convention():
@@ -63,7 +63,7 @@ def test_camera_ras_convention():
 
 def test_camera_presets_consistent_and_unknown_view_raises():
     from spectralbrain.viz.clusters import CAMERA_PRESETS, _view_camera
-    from spectralbrain.viz.geometry.meshes import CAMERA_PRESETS as MESH_PRESETS
+    from spectralbrain.viz.render3d import CAMERA_PRESETS as MESH_PRESETS
 
     assert CAMERA_PRESETS == MESH_PRESETS
     pts = np.random.default_rng(1).random((50, 3))
@@ -72,14 +72,18 @@ def test_camera_presets_consistent_and_unknown_view_raises():
 
 
 def test_pyvista_camera_uses_ras_and_cluster_names():
-    from spectralbrain.viz.tracts3d import _set_pv_camera
+    from spectralbrain.viz.render3d import _set_pv_camera
 
     class FakePlotter:
         camera_position = None
 
     V = np.random.default_rng(2).normal(size=(100, 3))
-    for view, axis in [("left", [-1, 0, 0]), ("left_lateral", [-1, 0, 0]),
-                       ("anterior", [0, 1, 0]), ("superior", [0, 0, 1])]:
+    for view, axis in [
+        ("left", [-1, 0, 0]),
+        ("left_lateral", [-1, 0, 0]),
+        ("anterior", [0, 1, 0]),
+        ("superior", [0, 0, 1]),
+    ]:
         p = FakePlotter()
         _set_pv_camera(p, V, view)
         pos, foc, _up = p.camera_position
@@ -90,7 +94,7 @@ def test_pyvista_camera_uses_ras_and_cluster_names():
 
 
 def test_fury_camera_is_explicit_ras():
-    from spectralbrain.viz.tracts3d import _set_fury_camera
+    from spectralbrain.viz.render3d import _set_fury_camera
 
     class FakeScene:
         def set_camera(self, position, focal_point, view_up):
@@ -100,21 +104,25 @@ def test_fury_camera_is_explicit_ras():
             pass
 
     pts = np.random.default_rng(3).normal(size=(300, 3))
-    for view, axis in [("left", [-1, 0, 0]), ("right", [1, 0, 0]),
-                       ("anterior", [0, 1, 0]), ("superior", [0, 0, 1])]:
+    for view, axis in [
+        ("left", [-1, 0, 0]),
+        ("right", [1, 0, 0]),
+        ("anterior", [0, 1, 0]),
+        ("superior", [0, 0, 1]),
+    ]:
         sc = FakeScene()
         _set_fury_camera(sc, view, pts)
         d = np.asarray(sc.pos) - np.asarray(sc.foc)
         np.testing.assert_allclose(d / np.linalg.norm(d), axis, atol=1e-9)
 
 
-# ──────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------
 # #3  tract panel colorbar == render clim / cmap / norm
-# ──────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------
 
 
 def test_streamlines_multiview_colorbar_matches_renders(tmp_path, monkeypatch):
-    from spectralbrain.viz import tracts3d as nt
+    from spectralbrain.viz import render3d as nt
 
     calls = []
 
@@ -127,7 +135,10 @@ def test_streamlines_multiview_colorbar_matches_renders(tmp_path, monkeypatch):
     sl = [np.cumsum(rng.normal(size=(20, 3)), axis=0) for _ in range(5)]
     sc = [rng.normal(loc=3.0, size=20) for _ in range(5)]
     fig, _ = nt.streamlines_multiview(
-        sl, views=("left", "anterior"), color_by="scalar", scalars=sc,
+        sl,
+        views=("left", "anterior"),
+        color_by="scalar",
+        scalars=sc,
         colorbar={"kind": "sequential", "label": "FA"},
     )
     clims = {tuple(c["clim"]) for c in calls}
@@ -141,7 +152,7 @@ def test_streamlines_multiview_colorbar_matches_renders(tmp_path, monkeypatch):
 
 
 def test_compose_tract_panel_uses_linear_norm(tmp_path):
-    from spectralbrain.viz import tracts3d as nt
+    from spectralbrain.viz import render3d as nt
 
     pngs = [_write_png(tmp_path / f"{i}.png") for i in range(2)]
     fig = nt.compose_tract_panel(pngs, colorbar={"kind": "diverging", "clim": (-1.0, 3.0)})
@@ -150,9 +161,9 @@ def test_compose_tract_panel_uses_linear_norm(tmp_path):
     assert (cbar.norm.vmin, cbar.norm.vmax) == (-1.0, 3.0)
 
 
-# ──────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------
 # #4  medial-wall mask
-# ──────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -165,16 +176,16 @@ def test_compose_tract_panel_uses_linear_norm(tmp_path):
     ],
 )
 def test_medial_mask_binary_and_indices(mask):
-    from spectralbrain.viz.eigenmodes import _apply_medial_mask
+    from spectralbrain.viz.spectral import _apply_medial_mask
 
     out = _apply_medial_mask(np.arange(6.0), mask)
     assert np.isnan(out[3:]).all()
     np.testing.assert_array_equal(out[:3], [0.0, 1.0, 2.0])
 
 
-# ──────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------
 # #6  savefig
-# ──────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------
 
 
 def test_savefig_keeps_dotted_stem_and_requested_suffix(tmp_path):
@@ -190,9 +201,9 @@ def test_savefig_keeps_dotted_stem_and_requested_suffix(tmp_path):
     assert sorted(p.name for p in out) == ["wks_e2.5.png", "wks_e2.5.svg"]
 
 
-# ──────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------
 # #7  kymograph
-# ──────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------
 
 
 def test_kymograph_runs_and_line_position_is_normalised():
@@ -225,13 +236,13 @@ def test_kymograph_outside_hull_is_nan():
     assert np.isnan(np.asarray(ax.collections[0].get_array(), float)).any()
 
 
-# ──────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------
 # #8  thresholded rows
-# ──────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------
 
 
 def test_brain_normative_vertexwise_thresholded(monkeypatch, tmp_path):
-    from spectralbrain.viz import brainplots as bp
+    from spectralbrain.viz import render3d as bp
 
     specs = []
 
@@ -273,9 +284,9 @@ def test_hipp_normative_no_global_mutation_and_path_input(monkeypatch, tmp_path)
     assert captured["styles"]["Z-score"]["vmin"] == -3.0
 
 
-# ──────────────────────────────────────────────────────────────────────
-# #9  Hovmöller
-# ──────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------
+# #9  Hovmoller
+# ----------------------------------------------------------------------
 
 
 def test_hovmoller_empty_bins_nan_and_shape_check():
@@ -294,9 +305,9 @@ def test_hovmoller_empty_bins_nan_and_shape_check():
         plot_hovmoller(rng.random((500, 2)), H)
 
 
-# ──────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------
 # #10  cluster colours independent of noise
-# ──────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------
 
 
 def test_cluster_sizes_colours_ignore_noise():
@@ -308,13 +319,13 @@ def test_cluster_sizes_colours_ignore_noise():
     assert cols[2].lower() == CLUSTER_COLORS[1].lower()
 
 
-# ──────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------
 # #12  shared colour limits for comparisons
-# ──────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------
 
 
 def test_brainplots_shared_vminmax():
-    from spectralbrain.viz.brainplots import BrainPlotSpec, _shared_vminmax
+    from spectralbrain.viz.render3d import BrainPlotSpec, _shared_vminmax
 
     a = BrainPlotSpec(data={"r1": 1.0, "r2": 2.0}, cmap="viridis")
     b = BrainPlotSpec(data={"r1": 3.0, "r2": 5.0}, cmap="viridis", vminmax=[None, 4.0])
@@ -334,9 +345,9 @@ def test_hipp_shared_range():
     assert _shared_range([np.array([1.0])], 0.0, None) == (0.0, 1.0)
 
 
-# ──────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------
 # #13  log axis does not drop the first scale
-# ──────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------
 
 
 def test_cluster_profiles_default_t_starts_at_one():
@@ -349,22 +360,20 @@ def test_cluster_profiles_default_t_starts_at_one():
     assert ax.get_xlim()[0] <= 1.0
 
 
-# ──────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------
 # #14 / #15  colormap selection: z_score, signed, categorical
-# ──────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------
 
 
 def test_resolve_cmap_z_score():
-    from spectralbrain.viz.geometry.meshes import _resolve_cmap as mesh_cmap
-    from spectralbrain.viz.geometry.points import _resolve_cmap as pts_cmap
+    from spectralbrain.viz.render3d import _resolve_cmap as mesh_cmap
 
     assert mesh_cmap("z_score", None) == "RdBu_r"
-    assert pts_cmap("z_score", None) == "RdBu_r"
     assert mesh_cmap("hks_t10", None) == "inferno"
 
 
 def test_signed_descriptor_centred_and_labels_discrete():
-    from spectralbrain.viz.brainplots import BrainPlotSpec, _resolve_spec
+    from spectralbrain.viz.render3d import BrainPlotSpec, _resolve_spec
 
     spec = BrainPlotSpec.from_descriptor("gaussian_k", data={"a": -0.2, "b": 0.6})
     assert _resolve_spec(spec).vminmax == [-0.6, 0.6]
@@ -372,13 +381,13 @@ def test_signed_descriptor_centred_and_labels_discrete():
     r = _resolve_spec(lab)
     assert r.vminmax == [-0.5, 2.5]
     assert r.data == {"a": 0.0, "b": 2.0, "c": 1.0, "d": r.data["d"]}
-    assert np.isnan(r.data["d"])  # noise → nan_color
+    assert np.isnan(r.data["d"])  # noise -> nan_color
     assert r.cmap.N == 3
 
 
-# ──────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------
 # #16 / #17  Bayesian summaries
-# ──────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------
 
 
 def _fake_trace(**arrays):
@@ -393,7 +402,9 @@ def test_horseshoe_kappa_includes_tau():
     beta = rng.normal(size=(1, 50, 2))
     lam = np.ones((1, 50, 2))
     tau = np.full((1, 50), 0.1)
-    _, (_, ax_shrink) = plot_horseshoe_coefficients(_fake_trace(beta=beta, **{"lambda": lam}, tau=tau))
+    _, (_, ax_shrink) = plot_horseshoe_coefficients(
+        _fake_trace(beta=beta, **{"lambda": lam}, tau=tau)
+    )
     vals = sorted(float(t.get_text()) for t in ax_shrink.texts)
     np.testing.assert_allclose(vals, [round(1 / (1 + 0.01), 2)] * 2)  # not 0.5
 
@@ -401,8 +412,11 @@ def test_horseshoe_kappa_includes_tau():
 def test_centroid_norm_interval_contains_mean():
     from spectralbrain.viz.clusters import _centroid_norm_interval
 
-    ci = {"mean": np.array([0.1, -0.1]), "hdi_3": np.array([-1.0, -1.0]),
-          "hdi_97": np.array([1.0, 1.0])}
+    ci = {
+        "mean": np.array([0.1, -0.1]),
+        "hdi_3": np.array([-1.0, -1.0]),
+        "hdi_97": np.array([1.0, 1.0]),
+    }
     lo, m, hi = _centroid_norm_interval(ci)
     assert lo <= m <= hi
     assert lo == 0.0
@@ -437,31 +451,34 @@ def test_forest_length_mismatch_raises():
         plot_forest(["a", "b"], [np.zeros(10)])
 
 
-# ──────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------
 # #18 / #19  panels NaN, unknown views, distplot
-# ──────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------
 
 
 def test_panels_nan_gets_noise_colour():
-    from spectralbrain.viz.panels import _label_rgba
+    from spectralbrain.viz.clusters import _label_rgba
 
-    rgba = _label_rgba(np.array([0.0, 1.0, np.nan, 2.0]), noise_color="lightgray",
-                       categorical=False)
+    rgba = _label_rgba(
+        np.array([0.0, 1.0, np.nan, 2.0]), noise_color="lightgray", categorical=False
+    )
     grey = (np.array(mcolors.to_rgba("lightgray")) * 255).astype(np.uint8)
     np.testing.assert_array_equal(rgba[2], grey)
-    rgba = _label_rgba(np.array([0.0, np.nan, -1.0, 1.0]), noise_color="lightgray",
-                       categorical=True)
+    rgba = _label_rgba(
+        np.array([0.0, np.nan, -1.0, 1.0]), noise_color="lightgray", categorical=True
+    )
     np.testing.assert_array_equal(rgba[1], grey)
     np.testing.assert_array_equal(rgba[2], grey)
 
 
 def test_panels_unknown_view_raises():
-    from spectralbrain.viz.panels import plot_parcellation_cluster_grid
+    from spectralbrain.viz.clusters import plot_parcellation_cluster_grid
 
     V = np.random.default_rng(0).normal(size=(10, 3))
     with pytest.raises(ValueError, match="Unknown view"):
-        plot_parcellation_cluster_grid(V, np.array([[0, 1, 2]]), {"a": np.zeros(10)},
-                                       views=["left_lateal"])
+        plot_parcellation_cluster_grid(
+            V, np.array([[0, 1, 2]]), {"a": np.zeros(10)}, views=["left_lateal"]
+        )
 
 
 def test_distplot_keeps_all_groups():
@@ -472,13 +489,13 @@ def test_distplot_keeps_all_groups():
     assert len(ax.lines) == 12
 
 
-# ──────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------
 # #20  parameters no longer silently ignored
-# ──────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------
 
 
 def test_vertexwise_extra_kwargs_forwarded(monkeypatch, tmp_path):
-    from spectralbrain.viz import brainplots as bp
+    from spectralbrain.viz import render3d as bp
 
     seen = {}
 
@@ -486,21 +503,27 @@ def test_vertexwise_extra_kwargs_forwarded(monkeypatch, tmp_path):
         seen.update(kw)
 
     monkeypatch.setattr(bp, "_get_plot_fn", lambda kind: fake_fn)
-    spec = bp.BrainPlotSpec(data=(np.zeros(3), np.ones(3)), plot_kind="vertexwise",
-                            cmap="viridis", extra_kwargs={"zoom": 1.4})
+    spec = bp.BrainPlotSpec(
+        data=(np.zeros(3), np.ones(3)),
+        plot_kind="vertexwise",
+        cmap="viridis",
+        extra_kwargs={"zoom": 1.4},
+    )
     bp._render_row(spec, tmp_path / "x.png", views=["left_lateral"])
     assert seen["zoom"] == 1.4
 
 
 def test_top10_keeps_documented_keys_and_warns_unknown(monkeypatch):
-    from spectralbrain.viz import brainplots as bp
+    from spectralbrain.viz import render3d as bp
 
     captured = {}
-    monkeypatch.setattr(bp, "plot_morphometric_gallery",
-                        lambda specs, **kw: captured.setdefault("specs", specs))
+    monkeypatch.setattr(
+        bp, "plot_morphometric_gallery", lambda specs, **kw: captured.setdefault("specs", specs)
+    )
     with pytest.warns(UserWarning, match="mystery"):
-        bp.plot_top10_morphometrics({"hks": {"a": 1.0}, "shapedna": {"a": 2.0},
-                                     "mystery": {"a": 3.0}})
+        bp.plot_top10_morphometrics(
+            {"hks": {"a": 1.0}, "shapedna": {"a": 2.0}, "mystery": {"a": 3.0}}
+        )
     labels = [s.label for s in captured["specs"]]
     assert labels[:2] == ["HKS", "ShapeDNA"] and "mystery" in labels
 
@@ -515,9 +538,9 @@ def test_hipp_warns_on_unsupported_nan_color():
         _warn_ignored()  # defaults: silent
 
 
-# ──────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------
 # #21  misc edge paths
-# ──────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------
 
 
 def test_silhouette_precomputed_with_noise():
@@ -534,14 +557,14 @@ def test_silhouette_precomputed_with_noise():
     assert len(ax.patches) == 40
 
 
-# ──────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------
 # vedo-dependent regressions (skipped when vedo is absent)
-# ──────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------
 
 
 def test_hipp3d_nan_not_painted_as_clim_min():
     pytest.importorskip("vedo")
-    from spectralbrain.viz.hipp3d import plot_hippocampus_sixview
+    from spectralbrain.viz.hipp import plot_hippocampus_sixview
 
     zz, yy, xx = np.mgrid[0:16, 0:16, 0:16]
     from spectralbrain.core.base import marching_cubes
@@ -558,7 +581,7 @@ def test_hipp3d_nan_not_painted_as_clim_min():
 
 def test_mesh_comparison_respects_zero_vmin():
     pytest.importorskip("vedo")
-    from spectralbrain.viz.geometry.meshes import plot_mesh_comparison
+    from spectralbrain.viz.render3d import plot_mesh_comparison
 
     V = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1.0]])
     F = np.array([[0, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]])

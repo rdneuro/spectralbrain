@@ -2,7 +2,7 @@
 Heat Kernel Signature on a surface
 ==================================
 
-Compute the Laplace–Beltrami decomposition of a small synthetic surface and
+Compute the Laplace-Beltrami decomposition of a small synthetic surface and
 render its Heat Kernel Signature at one time scale. Replace the icosphere with
 ``sb.load_freesurfer_surface("lh.pial")`` to run on a real cortical surface.
 """

@@ -1,4 +1,4 @@
-"""SpectralBrain utilities — atlases, datasets, and helpers."""
+"""SpectralBrain utilities -- atlases, datasets, and helpers."""
 
 from spectralbrain.utils.atlas import (  # noqa: F401
     AMYGDALA_NUCLEI,
@@ -15,7 +15,6 @@ from spectralbrain.utils.atlas import (  # noqa: F401
     schaefer_to_yeo,
 )
 from spectralbrain.utils.datasets import (  # noqa: F401
-    example_point_cloud,
     example_sphere,
     make_connectome_example,
     make_laterality_example,

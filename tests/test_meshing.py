@@ -1,4 +1,4 @@
-"""Tests for :mod:`spectralbrain.io.meshing` (volume → LBO-ready mesh).
+"""Tests for :mod:`spectralbrain.io.meshing` (volume -> LBO-ready mesh).
 
 The improvement pipeline needs ``trimesh`` (core) and, for remeshing,
 ``pyacvd``; tests ``importorskip`` those so a minimal install skips rather than
@@ -100,7 +100,7 @@ def test_from_volume_decomposes_like_a_sphere():
 
 
 def test_refine_mesh_improves_raw_surface():
-    """refine_mesh cleans a raw surface (closed=True → watertight genus-0)."""
+    """refine_mesh cleans a raw surface (closed=True -> watertight genus-0)."""
     pytest.importorskip("pyacvd")
     vol, affine = _ball_label_volume()
     rv, rf = sb.volume_to_mesh(vol, affine, raw=True, label=LABEL)

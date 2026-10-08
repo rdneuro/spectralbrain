@@ -7,21 +7,21 @@ source format and applies the appropriate projection strategy.
 
 Two source modalities are supported:
 
-1. **FreeSurfer subjects_dir** — loads the requested surface, finds
+1. **FreeSurfer subjects_dir** -- loads the requested surface, finds
    or projects the target atlas onto it, and returns parcellated
    sub-meshes.
-2. **Raw T1w NIfTI** — runs the preprocessing pipeline
-   (skull-strip → segment → recon), then follows the FreeSurfer
+2. **Raw T1w NIfTI** -- runs the preprocessing pipeline
+   (skull-strip -> segment -> recon), then follows the FreeSurfer
    pathway.
 
 Three atlas projection strategies are implemented:
 
-A. **Native annot** — the atlas is already on the individual subject
+A. **Native annot** -- the atlas is already on the individual subject
    as a ``.annot`` file (e.g. DKT, Destrieux after ``recon-all``).
-B. **fsaverage → individual via surf2surf** — the atlas exists on
+B. **fsaverage -> individual via surf2surf** -- the atlas exists on
    ``fsaverage`` (Schaefer, Glasser) and is resampled to the
    individual via ``mri_surf2surf`` or a Python fallback.
-C. **MNI volume → surface via vol2surf** — the atlas is a volumetric
+C. **MNI volume -> surface via vol2surf** -- the atlas is a volumetric
    label map in MNI space (Brainnetome, AAL3, Julich) and is
    projected onto the individual's surface via ``mri_vol2surf`` or a
    pure-Python nearest-voxel sampler. An MNI-space atlas needs a
@@ -74,7 +74,7 @@ LabelArray = np.ndarray  # (N,)
 
 
 # ======================================================================
-# §0  Atlas registry — maps atlas names to resolution strategies
+# S0  Atlas registry -- maps atlas names to resolution strategies
 # ======================================================================
 
 
@@ -112,7 +112,7 @@ class AtlasSpec:
 # Registry of supported atlases.
 # Key: canonical short name (lowercased, used in the public API).
 ATLAS_REGISTRY: dict[str, AtlasSpec] = {
-    # ── Native FreeSurfer parcellations ──
+    # -- Native FreeSurfer parcellations --
     "dkt": AtlasSpec(
         name="Desikan-Killiany-Tourville (DKT)",
         strategy="native_annot",
@@ -131,7 +131,7 @@ ATLAS_REGISTRY: dict[str, AtlasSpec] = {
         annot_pattern="{hemi}.aparc.a2009s.annot",
         n_parcels=74,
     ),
-    # ── fsaverage-based (need surf2surf projection) ──
+    # -- fsaverage-based (need surf2surf projection) --
     "schaefer_100": AtlasSpec(
         name="Schaefer 100 (7 networks)",
         strategy="fsaverage_annot",
@@ -174,7 +174,7 @@ ATLAS_REGISTRY: dict[str, AtlasSpec] = {
         annot_pattern="{hemi}.HCPMMP1.annot",
         n_parcels=180,
     ),
-    # ── MNI volume-based (need vol2surf projection) ──
+    # -- MNI volume-based (need vol2surf projection) --
     "brainnetome": AtlasSpec(
         name="Brainnetome Atlas",
         strategy="mni_volume",
@@ -223,7 +223,7 @@ def _resolve_atlas(name: str) -> AtlasSpec:
 
 
 # ======================================================================
-# §1  ParcellationResult — output container
+# S1  ParcellationResult -- output container
 # ======================================================================
 
 
@@ -292,7 +292,7 @@ class ParcellationResult:
 
 
 # ======================================================================
-# §2  FreeSurfer environment helpers
+# S2  FreeSurfer environment helpers
 # ======================================================================
 
 
@@ -332,7 +332,7 @@ def _has_freesurfer_cmd(cmd: str) -> bool:
 
 
 # ======================================================================
-# §3  Strategy A — native annot (DKT, Destrieux)
+# S3  Strategy A -- native annot (DKT, Destrieux)
 # ======================================================================
 
 
@@ -375,7 +375,7 @@ def _parcellate_native_annot(
     )
 
     logger.info(
-        "Strategy A (native_annot): %s → %d parcels",
+        "Strategy A (native_annot): %s -> %d parcels",
         atlas.name,
         len(parcels),
     )
@@ -393,7 +393,7 @@ def _parcellate_native_annot(
 
 
 # ======================================================================
-# §4  Strategy B — fsaverage annot → individual via surf2surf
+# S4  Strategy B -- fsaverage annot -> individual via surf2surf
 # ======================================================================
 
 
@@ -482,7 +482,7 @@ def _surf2surf_freesurfer(
             raise RuntimeError(f"mri_surf2surf reported success but wrote no {tmp_out.name}")
         target_annot.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(tmp_out, target_annot)
-    logger.info("mri_surf2surf → %s", target_annot)
+    logger.info("mri_surf2surf -> %s", target_annot)
 
 
 def _surf2surf_python_fallback(
@@ -496,7 +496,7 @@ def _surf2surf_python_fallback(
     This is a fallback when ``mri_surf2surf`` is not available.  It
     loads both surfaces, builds a KD-tree on fsaverage, and assigns
     each individual vertex the label of its nearest fsaverage vertex.
-    This is an approximation — ``mri_surf2surf`` is more accurate
+    This is an approximation -- ``mri_surf2surf`` is more accurate
     because it uses sphere registration.
     """
     from scipy.spatial import cKDTree
@@ -573,7 +573,7 @@ def _parcellate_fsaverage_annot(
             f"Atlas '{atlas.name}' annot file not found on fsaverage.  "
             f"Expected: {atlas.annot_pattern.format(hemi=hemi)}\n"
             f"Download Schaefer annots from: "
-            f"https://github.com/ThomasYeoLab/CBIG → stable_projects/"
+            f"https://github.com/ThomasYeoLab/CBIG -> stable_projects/"
             f"brain_parcellation/Schaefer2018_LocalGlobal"
         )
 
@@ -626,7 +626,7 @@ def _parcellate_fsaverage_annot(
     )
 
     logger.info(
-        "Strategy B (%s): %s → %d parcels",
+        "Strategy B (%s): %s -> %d parcels",
         strategy,
         atlas.name,
         len(parcels),
@@ -645,7 +645,7 @@ def _parcellate_fsaverage_annot(
 
 
 # ======================================================================
-# §5  Strategy C — MNI volume → surface via vol2surf
+# S5  Strategy C -- MNI volume -> surface via vol2surf
 # ======================================================================
 
 
@@ -678,7 +678,7 @@ def _fetch_atlas_volume(atlas: AtlasSpec) -> Path:
             "nilearn is required for volumetric atlas fetching.  Install with: pip install nilearn"
         )
 
-    # Deterministic (max-probability) label maps only — probabilistic 4-D
+    # Deterministic (max-probability) label maps only -- probabilistic 4-D
     # maps cannot be projected as labels.
     fetcher_map = {
         "fetch_atlas_aal": lambda: datasets.fetch_atlas_aal(version="3v2"),  # AAL3
@@ -718,9 +718,9 @@ def _fetch_atlas_volume(atlas: AtlasSpec) -> Path:
 
 
 def _tkr_to_scanner(subjects_dir: Path, subject_id: str) -> np.ndarray:
-    """4×4 matrix mapping FreeSurfer surface (tkr-RAS) to scanner RAS.
+    """4x4 matrix mapping FreeSurfer surface (tkr-RAS) to scanner RAS.
 
-    ``scanner = Vox2RAS · inv(Vox2RAS_tkr) · tkr`` — i.e. it adds the
+    ``scanner = Vox2RAS * inv(Vox2RAS_tkr) * tkr`` -- i.e. it adds the
     ``c_ras`` offset that FreeSurfer surface files omit.
     """
     import nibabel as nib
@@ -734,7 +734,7 @@ def _tkr_to_scanner(subjects_dir: Path, subject_id: str) -> np.ndarray:
                 np.asarray(hdr.get_vox2ras_tkr(), float)
             )
     raise FileNotFoundError(
-        f"No conformed volume (orig.mgz, T1.mgz, …) in {mri}; it is needed to convert "
+        f"No conformed volume (orig.mgz, T1.mgz, ...) in {mri}; it is needed to convert "
         "surface tkr-RAS coordinates to scanner RAS (c_ras offset)."
     )
 
@@ -869,7 +869,7 @@ def _vol2surf_with_method(
                 "--hemi",
                 hemi,
                 "--interp",
-                "nearest",  # label map → nearest-neighbour
+                "nearest",  # label map -> nearest-neighbour
                 "--projfrac",
                 "0.5",
                 "--surf",
@@ -886,7 +886,7 @@ def _vol2surf_with_method(
 
                 img = nib.load(tmp_out)
                 labels = np.rint(np.asarray(img.get_fdata()).squeeze()).astype(np.int64)
-                logger.info("mri_vol2surf → %d unique labels", len(np.unique(labels)))
+                logger.info("mri_vol2surf -> %d unique labels", len(np.unique(labels)))
                 return labels, "mri_vol2surf"
             logger.warning(
                 "mri_vol2surf failed (exit %d): %s",
@@ -935,7 +935,7 @@ def _parcellate_mni_volume(
     else:
         vol_path = _fetch_atlas_volume(atlas)
 
-    # 2. Project volume → surface labels
+    # 2. Project volume -> surface labels
     labels, method = _vol2surf_with_method(
         vol_path,
         subjects_dir,
@@ -972,7 +972,7 @@ def _parcellate_mni_volume(
 
     strategy = f"mni_volume ({method})"
     logger.info(
-        "Strategy C (%s): %s → %d parcels",
+        "Strategy C (%s): %s -> %d parcels",
         strategy,
         atlas.name,
         len(parcels),
@@ -991,7 +991,7 @@ def _parcellate_mni_volume(
 
 
 # ======================================================================
-# §6  Main entry point — parcellate()
+# S6  Main entry point -- parcellate()
 # ======================================================================
 
 
@@ -1055,19 +1055,19 @@ def parcellate(
     t1_path : PathLike, optional
         Path to a raw T1-weighted NIfTI file.  If provided (and no
         ``subjects_dir``), the preprocessing pipeline is run first:
-        skull-strip → FastSurfer/recon-all → then parcellate.
+        skull-strip -> FastSurfer/recon-all -> then parcellate.
     atlas : str
         Target atlas short name.  See :func:`list_atlases` for all
         supported names.  Common choices:
 
-        - ``'schaefer_200'`` — Schaefer 200 parcels, 7 networks
-        - ``'schaefer_400'`` — Schaefer 400 parcels, 7 networks
-        - ``'dkt'`` — Desikan-Killiany-Tourville (FreeSurfer native)
-        - ``'destrieux'`` — Destrieux 2009 (FreeSurfer native)
-        - ``'glasser'`` — HCP-MMP 1.0 (360 parcels)
-        - ``'brainnetome'`` — Brainnetome 246 regions
-        - ``'aal3'`` — AAL3 atlas
-        - ``'harvard_oxford'`` — Harvard-Oxford cortical
+        - ``'schaefer_200'`` -- Schaefer 200 parcels, 7 networks
+        - ``'schaefer_400'`` -- Schaefer 400 parcels, 7 networks
+        - ``'dkt'`` -- Desikan-Killiany-Tourville (FreeSurfer native)
+        - ``'destrieux'`` -- Destrieux 2009 (FreeSurfer native)
+        - ``'glasser'`` -- HCP-MMP 1.0 (360 parcels)
+        - ``'brainnetome'`` -- Brainnetome 246 regions
+        - ``'aal3'`` -- AAL3 atlas
+        - ``'harvard_oxford'`` -- Harvard-Oxford cortical
 
     hemi : {'lh', 'rh'}
         Hemisphere.
@@ -1140,13 +1140,13 @@ def parcellate(
     ...     atlas_reg="/data/freesurfer/sub-01/mri/transforms/mni_to_sub.lta",
     ... )
     """
-    # ── Validate inputs ──
+    # -- Validate inputs --
     if hemi not in ("lh", "rh"):
         raise ValueError(f"hemi must be 'lh' or 'rh', got '{hemi}'")
 
     atlas_spec = _resolve_atlas(atlas)
 
-    # ── Determine the source ──
+    # -- Determine the source --
     if subjects_dir is not None or subject_id is not None:
         # FreeSurfer path
         sd = _get_subjects_dir(subjects_dir)
@@ -1158,12 +1158,12 @@ def parcellate(
             raise FileNotFoundError(f"Subject directory not found: {subj_dir}")
 
     elif t1_path is not None:
-        # Raw T1 path — run preprocessing to generate FS outputs
+        # Raw T1 path -- run preprocessing to generate FS outputs
         t1 = Path(t1_path)
         if not t1.exists():
             raise FileNotFoundError(f"T1w file not found: {t1}")
 
-        logger.info("T1w source provided — running preprocessing pipeline.")
+        logger.info("T1w source provided -- running preprocessing pipeline.")
         from spectralbrain.io.preprocess import run_fastsurfer
 
         # Run FastSurfer to generate FS-compatible outputs
@@ -1183,7 +1183,7 @@ def parcellate(
             "data, or t1_path for raw T1w data."
         )
 
-    # ── Dispatch to the appropriate strategy ──
+    # -- Dispatch to the appropriate strategy --
     if atlas_spec.strategy == "native_annot":
         return _parcellate_native_annot(
             sd,
@@ -1220,7 +1220,7 @@ def parcellate(
 
 
 # ======================================================================
-# §7  Batch parcellation
+# S7  Batch parcellation
 # ======================================================================
 
 
@@ -1248,7 +1248,7 @@ def parcellate_batch(
     atlas, hemi, surface
         Passed to :func:`parcellate`.
     atlas_volume_path : PathLike, optional
-        For volumetric atlases — shared across all subjects.
+        For volumetric atlases -- shared across all subjects.
     n_jobs : int
         Number of parallel workers (1 = sequential).
     atlas_reg : PathLike or dict of {subject_id: PathLike}, optional
@@ -1284,18 +1284,18 @@ def parcellate_batch(
                 atlas_reg=reg,
                 atlas_space=atlas_space,
             )
-            logger.info("✓ %s: %d parcels", sid, result.n_parcels)
+            logger.info("OK %s: %d parcels", sid, result.n_parcels)
             return sid, result
         except PROGRAMMING_ERRORS:
             raise
         except Exception as exc:
-            logger.error("✗ %s: %s", sid, exc)
+            logger.error("FAILED %s: %s", sid, exc)
             return sid, f"{type(exc).__name__}: {exc}"
 
     if n_jobs == 1:
         pairs = [_one(sid) for sid in subject_ids]
     else:
-        from spectralbrain.backends.cpu import parallel_map
+        from spectralbrain.runtime import parallel_map
 
         pairs = parallel_map(_one, subject_ids, n_jobs=n_jobs, description="Parcellating")
 

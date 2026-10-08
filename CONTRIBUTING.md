@@ -10,7 +10,7 @@ By participating you agree to abide by our
 ## Ways to contribute
 
 - **Report bugs** by opening an issue with a minimal reproducible example
-  (mesh/point-cloud size, function called, traceback, package versions).
+  (mesh size, function called, traceback, package versions).
 - **Suggest features** or new spectral descriptors, ideally with a
   reference to the method in the literature.
 - **Improve documentation**, examples, or docstrings.
@@ -63,7 +63,7 @@ make typecheck # mypy (optional but encouraged)
   the surrounding module.
 - Scientific notation in docstrings (λ, φ, ×, ≈, …) is welcome and is
   explicitly allowed by the linter configuration.
-- Keep heavy or optional dependencies (torch, pymc, vedo, open3d, …)
+- Keep heavy or optional dependencies (torch, pymc, vedo, fury, …)
   **lazily imported** inside the functions that need them, so that
   `import spectralbrain` stays light. Use the `_require_*` helper pattern
   for clear "please install X" errors.

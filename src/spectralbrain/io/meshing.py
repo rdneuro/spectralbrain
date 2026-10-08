@@ -1,34 +1,34 @@
-"""Deterministic volume → surface meshing for well-conditioned LBO analysis.
+"""Deterministic volume -> surface meshing for well-conditioned LBO analysis.
 
-The Laplace–Beltrami operator (and the descriptors built on it — ShapeDNA,
-HKS, WKS, …) is sensitive to **triangle quality**, not to vertex count. A mesh
+The Laplace-Beltrami operator (and the descriptors built on it -- ShapeDNA,
+HKS, WKS, ...) is sensitive to **triangle quality**, not to vertex count. A mesh
 extracted directly from a binary label volume by plain marching cubes carries
 artefacts that corrupt the spectrum: the voxel *staircase*, *sliver* triangles
 (whose vanishing angles make cotangent weights blow up or turn negative),
-non-uniform sampling, and — for multi-label sources — non-manifold, multi-part,
+non-uniform sampling, and -- for multi-label sources -- non-manifold, multi-part,
 high-genus surfaces.
 
 This module turns a volume into an **LBO-ready** mesh through deterministic,
 shape-agnostic geometry processing (no learned prior, so it never regularises
 pathological anatomy toward a "normal" shape):
 
-    1. label → scalar field   : binary mask → signed distance field (SDF)
+    1. label -> scalar field   : binary mask -> signed distance field (SDF)
                                  (or Gaussian-smoothed occupancy)
     2. Gaussian smoothing      : band-limit the boundary, topology preserved
     3. marching cubes          : sub-voxel, staircase-free iso-surface
     4. topology cleanup        : largest connected component, manifold repair,
                                  watertight (closed structures only)
-    5. Taubin smoothing (λ/μ)  : volume-preserving denoise
-    6. isotropic remeshing     : ACVD → uniform, well-shaped triangles
+    5. Taubin smoothing (lambda/mu)  : volume-preserving denoise
+    6. isotropic remeshing     : ACVD -> uniform, well-shaped triangles
 
 Public API
 ----------
 volume_to_mesh
-    Volume (or label volume) → ``(vertices, faces)``. ``raw=True`` reproduces
+    Volume (or label volume) -> ``(vertices, faces)``. ``raw=True`` reproduces
     the legacy plain-marching-cubes path exactly; ``raw=False`` (default)
     applies the improvement pipeline.
 refine_mesh
-    Apply steps 4–6 to an *existing* mesh (e.g. a surface that is already
+    Apply steps 4-6 to an *existing* mesh (e.g. a surface that is already
     triangulated but poorly conditioned for the LBO).
 
 Both are re-exported at :mod:`spectralbrain.io` and the package top level;
@@ -70,7 +70,7 @@ __all__ = ["refine_mesh", "volume_to_mesh"]
 
 
 # ======================================================================
-# §0  Optional-dependency guards (lazy, with install hints)
+# S0  Optional-dependency guards (lazy, with install hints)
 # ======================================================================
 def _require_trimesh() -> Any:
     """Import ``trimesh`` or raise with an install hint."""
@@ -113,7 +113,7 @@ def _require_pymeshfix() -> Any:
 
 
 # ======================================================================
-# §1  Volume → scalar field
+# S1  Volume -> scalar field
 # ======================================================================
 def _binarize(volume: np.ndarray, label: int | Sequence[int] | None, level: float) -> np.ndarray:
     """Return a boolean mask from a label volume or an intensity threshold."""
@@ -146,14 +146,14 @@ def _mask_to_field(
     ----------
     mask : ndarray of bool, shape (X, Y, Z)
     mode : {"sdf", "gaussian"}
-        ``"sdf"`` — signed distance field (inside negative), iso-level 0.
-        Robust for thin, curved structures. ``"gaussian"`` — Gaussian-smoothed
+        ``"sdf"`` -- signed distance field (inside negative), iso-level 0.
+        Robust for thin, curved structures. ``"gaussian"`` -- Gaussian-smoothed
         occupancy in [0, 1], iso-level 0.5.
     presmooth_vox : float
-        Gaussian σ on the binary occupancy before the SDF/occupancy step, in
+        Gaussian sigma on the binary occupancy before the SDF/occupancy step, in
         units of the *finest* voxel edge. ``0`` disables.
     sigma_vox : float
-        Gaussian σ applied to the field itself, in units of the finest voxel
+        Gaussian sigma applied to the field itself, in units of the finest voxel
         edge. ``0`` disables.
     pad : int
         Zero-padding (voxels) on every side so the surface closes even when the
@@ -185,7 +185,7 @@ def _mask_to_field(
         rel = vs / vs.min()  # voxel edge in units of the finest edge
 
     def _sig(s: float) -> np.ndarray:
-        return float(s) / rel  # per-axis σ (voxels) for an isotropic mm σ
+        return float(s) / rel  # per-axis sigma (voxels) for an isotropic mm sigma
 
     occ = mask.astype(np.float64)
     if presmooth_vox and presmooth_vox > 0:
@@ -218,8 +218,8 @@ def _orient_faces_outward(
 ) -> np.ndarray:
     """Return *faces* wound so normals point out of the object (voxel space).
 
-    The outward direction is read from the field itself (``+∇f`` when the
-    inside has the low values, as in an SDF; ``-∇f`` when the inside is high,
+    The outward direction is read from the field itself (``+grad f`` when the
+    inside has the low values, as in an SDF; ``-grad f`` when the inside is high,
     as in an occupancy map). A majority vote over faces makes the decision
     robust to noise and works for open (non-watertight) surfaces too.
     """
@@ -245,10 +245,10 @@ def _marching_cubes_field(
     *,
     inside_low: bool | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Marching cubes on a scalar field → world-space ``(vertices, faces)``.
+    """Marching cubes on a scalar field -> world-space ``(vertices, faces)``.
 
     Runs in voxel space (spacing 1), removes the padding offset, then maps to
-    world coordinates through the affine — mirroring the native path so that
+    world coordinates through the affine -- mirroring the native path so that
     anisotropic voxels and orientation are handled identically.
 
     Faces are wound so that normals point **outward** in world space,
@@ -261,7 +261,7 @@ def _marching_cubes_field(
     inside_low : bool, optional
         ``True`` if the object has field values *below* ``level`` (SDF),
         ``False`` if above (occupancy). Default: inferred from ``level``
-        (``level == 0`` → SDF convention).
+        (``level == 0`` -> SDF convention).
     """
     from skimage.measure import marching_cubes as _mc
 
@@ -283,7 +283,7 @@ def _marching_cubes_field(
 
 
 # ======================================================================
-# §2  Mesh cleanup / smoothing / remeshing (private "improvement" steps)
+# S2  Mesh cleanup / smoothing / remeshing (private "improvement" steps)
 # ======================================================================
 def _to_trimesh(verts: np.ndarray, faces: np.ndarray) -> _trimesh_t.Trimesh:
     trimesh = _require_trimesh()
@@ -341,7 +341,7 @@ def _taubin(
 def _target_n_points(area_mm2: float, edge_mm: float) -> int:
     """Vertex count for a desired mean edge length on a closed triangulation.
 
-    ``n_faces ≈ Area / ((√3/4)·edge²)`` and ``n_verts ≈ n_faces / 2``.
+    ``n_faces ~ Area / ((sqrt 3/4)*edge^2)`` and ``n_verts ~ n_faces / 2``.
     """
     tri_area = (np.sqrt(3.0) / 4.0) * edge_mm**2
     n_faces = area_mm2 / max(tri_area, 1e-9)
@@ -369,7 +369,7 @@ def _isotropic_remesh(
 
 
 # ======================================================================
-# §3  Public API
+# S3  Public API
 # ======================================================================
 def refine_mesh(
     vertices: Vertices,
@@ -386,7 +386,7 @@ def refine_mesh(
     n_points: int | None = None,
     return_info: bool = False,
 ) -> tuple[np.ndarray, np.ndarray] | tuple[np.ndarray, np.ndarray, dict[str, Any]]:
-    """Improve an existing triangle mesh for Laplace–Beltrami analysis (steps 4–6).
+    """Improve an existing triangle mesh for Laplace-Beltrami analysis (steps 4-6).
 
     Applies topology cleanup, Taubin smoothing and isotropic remeshing to an
     already-triangulated surface. Use this when a mesh is available but poorly
@@ -406,7 +406,7 @@ def refine_mesh(
     watertight : bool, optional
         Repair to a watertight 2-manifold. Default: ``closed``.
     taubin_iterations : int
-        Number of (λ, μ) Taubin cycles. ``0`` disables smoothing.
+        Number of (lambda, mu) Taubin cycles. ``0`` disables smoothing.
     taubin_lambda, taubin_nu : float
         Taubin factors (shrink-free requires ``nu > lambda``; trimesh uses the
         magnitude of the negative step as ``nu``).
@@ -527,7 +527,7 @@ def volume_to_mesh(
         to open sheets).
     presmooth_vox, sigma_vox, pad :
         Field-construction parameters (see :func:`_mask_to_field`). The two
-        σ values are in units of the finest voxel edge and are applied
+        sigma values are in units of the finest voxel edge and are applied
         isotropically in millimetres (voxel sizes are read from *affine*).
     return_info : bool
         If True, also return a provenance dict.

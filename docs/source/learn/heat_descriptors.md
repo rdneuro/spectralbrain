@@ -41,7 +41,7 @@ long axis of the hippocampus. It is built on an
 {func}`~spectralbrain.anisotropic_laplacian` rather than the isotropic LBO.
 
 ```python
-from spectralbrain.spectral.anisotropic import compute_anisotropic_hks
+from spectralbrain.spectral.lbo.anisotropic import compute_anisotropic_hks
 a_hks = compute_anisotropic_hks(mesh, ...)
 ```
 

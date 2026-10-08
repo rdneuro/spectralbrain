@@ -33,7 +33,7 @@ from spectralbrain.statistics import normative
 ```
 
 :::{seealso}
-Tutorials `08_cohorts_and_vertexwise_stats` and
-`09_effectsizes_classification_harmonization` show the cohort, statistics, and
+Tutorials `07_cohorts_and_vertexwise_stats` and
+`08_effectsizes_classification_harmonization` show the cohort, statistics, and
 harmonization pieces end to end. See also the {doc}`How-to guides <../howto/index>`.
 :::

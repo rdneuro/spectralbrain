@@ -11,7 +11,8 @@ import matplotlib
 matplotlib.use("Agg")
 
 import spectralbrain as sb
-from spectralbrain.viz.hipp3d import SIXVIEWS, plot_hippocampus_sixview, plot_surface_sixview
+from spectralbrain.viz.hipp import plot_hippocampus_sixview
+from spectralbrain.viz.render3d import SIXVIEWS, plot_surface_sixview
 
 
 def _blob_mesh():
@@ -33,7 +34,7 @@ def test_sixviews_constant():
 def test_sixview_geometry_only_returns_figure():
     v, f = _blob_mesh()
     fig = plot_hippocampus_sixview((v, f), None, window=(180, 170))
-    # 6 view axes present (a 2×3 grid).
+    # 6 view axes present (a 2x3 grid).
     drawn = [ax for ax in fig.axes if ax.images]
     assert len(drawn) == 6
     import matplotlib.pyplot as plt

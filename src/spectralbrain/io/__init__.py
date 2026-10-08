@@ -1,4 +1,4 @@
-"""SpectralBrain I/O — loaders, exporters, preprocessing, parcellation, and GPU pipeline."""
+"""SpectralBrain I/O -- loaders, exporters, preprocessing, parcellation, and GPU pipeline."""
 
 from spectralbrain.io.export import (  # noqa: F401
     load_hdf5,
@@ -47,7 +47,6 @@ from spectralbrain.io.loaders import (  # noqa: F401
     apply_parcellation,
     detect_format,
     extract_submesh,
-    labels_to_pointcloud,
     load,
     load_freesurfer_annot,
     load_freesurfer_morph,
@@ -73,7 +72,7 @@ from spectralbrain.io.parcellate import (  # noqa: F401
 )
 from spectralbrain.io.preprocess import (  # noqa: F401
     clean,
-    raw_to_pointcloud,
+    raw_to_mesh,
     status,
 )
 from spectralbrain.io.preprocess import (  # noqa: F401

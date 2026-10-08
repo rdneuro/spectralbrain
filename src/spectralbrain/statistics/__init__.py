@@ -1,19 +1,52 @@
-"""SpectralBrain statistics — EDA, frequentist, Bayesian, normative, surrogates, clustering."""
+"""SpectralBrain statistics -- analysis, EDA/QC, Bayesian, normative, surrogates, clustering.
 
+- :mod:`.analysis` -- vertex-wise inference, effect sizes, classification,
+  dimension collapsing, RSA/Mantel, network metrics, asymmetry, embeddings,
+  exploratory QC (spectral QC, optimal k, ICC, batch effects) and the
+  descriptor recommendation engine.
+- :mod:`.bayesian` -- Bayesian models and their MCMC samplers.
+- :mod:`.normative` -- harmonisation and normative modelling.
+- :mod:`.surrogates` -- bootstrap, null models, synthetic generators.
+- :mod:`.clustering` -- clustering and partition statistics (subpackage).
+"""
+
+from spectralbrain.statistics import clustering  # noqa: F401
 from spectralbrain.statistics.analysis import (  # noqa: F401
     ClassificationResult,
+    DescriptorRecommendation,
+    OptimalKResult,
+    SpectralQCReport,
     VertexWiseResult,
+    asymmetry_test,
     bag_of_spectral_words,
+    batch_effect_scan,
     classify,
     cohens_d_map,
+    compute_icc,
+    descriptor_correlation,
+    descriptor_profile,
+    eigenvalue_stability,
     emd_distance,
     energy_distance,
     fisher_vector,
     fit_gmm_codebook,
     hedges_g_map,
+    intra_inter_ratio,
     js_divergence,
     kernel_mean_embedding,
     kl_divergence,
+    lateralisation_index,
+    mantel_test,
+    modularity,
+    optimal_k,
+    participation_coefficient,
+    rdm,
+    recommend_descriptor,
+    rsa_compare,
+    spectral_mds,
+    spectral_pca,
+    spectral_qc,
+    spectral_umap,
     surprise_map,
     surprise_map_percentile,
     tfce,
@@ -22,13 +55,68 @@ from spectralbrain.statistics.analysis import (  # noqa: F401
     vertexwise_permutation,
     vertexwise_ttest,
 )
-
-# ── atlas_stats.py (cluster-vs-atlas comparison, ported from brainmosaic) ──
-from spectralbrain.statistics.atlas_stats import (  # noqa: F401
+from spectralbrain.statistics.bayesian import (  # noqa: F401
+    BayesianConnectome,
+    BayesianGroupComparison,
+    BayesianModel,
+    BayesianSpatialModel,
+    BlackjaxSampler,
+    GaussianProcessNormative,
+    HierarchicalLinearModel,
+    HorseshoeRegression,
+    NumPyroSampler,
+    NutpieSampler,
+    PyMCSampler,
+    SamplerConfig,
+    get_bayesian_sampler,
+    get_gpu_bayesian_sampler,
+)
+from spectralbrain.statistics.clustering import (  # noqa: F401
+    BayesianClusterConfirmation,
+    ClusterResult,
+    DDCRPTuningResult,
+    FusionResult,
+    MapperResult,
+    ScaleSpaceBlobResult,
+    TemporalClusterResult,
+    TensorDecompositionResult,
+    VineyardResult,
     adjusted_rand_index,
     aggregate_across_subjects,
+    auto_cluster,
+    autotune_ddcrp,
+    build_descriptor_distance,
+    build_hks_affinity_graph,
+    build_hybrid_distance,
     cluster_atlas_concordance,
+    cluster_comparison,
+    cluster_consensus,
+    cluster_ddcrp,
+    cluster_ddcrp_functional,
+    cluster_dpmm,
+    cluster_gnmf,
+    cluster_hdbscan,
+    cluster_joint_spectral,
+    cluster_leiden,
+    cluster_mapper,
+    cluster_multiview,
+    cluster_persistence,
+    cluster_quality,
+    cluster_scalespace_blobs,
+    cluster_spatiotemporal_gnmf,
+    cluster_spatiotemporal_stdbscan,
+    cluster_spectral_coclustering,
+    cluster_temporal_dtw,
+    cluster_temporal_fpca,
+    cluster_tensor_decomposition,
+    cluster_vineyards,
+    cluster_wavelet_coefficients,
     compare_partitions,
+    confirm_clusters_bayesian,
+    denoise_joint_timevertex,
+    fuse_concatenate,
+    fuse_joint_nmf,
+    fuse_multi_kernel,
     homogeneity_vs_null,
     normalized_mutual_info,
     parcel_overlap,
@@ -37,99 +125,6 @@ from spectralbrain.statistics.atlas_stats import (  # noqa: F401
     spectral_homogeneity,
     variation_of_information,
 )
-from spectralbrain.statistics.bayesian import (  # noqa: F401
-    BayesianConnectome,
-    BayesianGroupComparison,
-    BayesianModel,
-    BayesianSpatialModel,
-    GaussianProcessNormative,
-    HierarchicalLinearModel,
-    HorseshoeRegression,
-)
-from spectralbrain.statistics.clustering import (  # noqa: F401
-    BayesianClusterConfirmation,
-    # Result containers
-    ClusterResult,
-    FusionResult,
-    MapperResult,
-    ScaleSpaceBlobResult,
-    TemporalClusterResult,
-    TensorDecompositionResult,
-    VineyardResult,
-    # Convenience
-    auto_cluster,
-    # Distance / affinity construction
-    build_descriptor_distance,
-    build_hks_affinity_graph,
-    build_hybrid_distance,
-    cluster_comparison,
-    cluster_dpmm,
-    cluster_gnmf,
-    # Spatial clustering
-    cluster_hdbscan,
-    cluster_joint_spectral,
-    cluster_leiden,
-    # Mapper TDA
-    cluster_mapper,
-    # Multi-view clustering
-    cluster_multiview,
-    cluster_persistence,
-    # Quality metrics
-    cluster_quality,
-    # Scale-space blob tracking
-    cluster_scalespace_blobs,
-    # Spatio-temporal joint clustering
-    cluster_spatiotemporal_gnmf,
-    cluster_spatiotemporal_stdbscan,
-    cluster_spectral_coclustering,
-    cluster_temporal_dtw,
-    # Temporal / scale clustering
-    cluster_temporal_fpca,
-    # Tensor decomposition
-    cluster_tensor_decomposition,
-    # Persistence vineyards
-    cluster_vineyards,
-    # Wavelet clustering
-    cluster_wavelet_coefficients,
-    # Bayesian cluster confirmation
-    confirm_clusters_bayesian,
-    # Joint time-vertex GSP
-    denoise_joint_timevertex,
-    # HKS + WKS descriptor fusion
-    fuse_concatenate,
-    fuse_joint_nmf,
-    fuse_multi_kernel,
-)
-
-# ── ddcrp.py (ported from brainmosaic, harmonised) ──
-from spectralbrain.statistics.ddcrp import (  # noqa: F401
-    DDCRPTuningResult,
-    autotune_ddcrp,
-    cluster_consensus,
-    cluster_ddcrp,
-    cluster_ddcrp_functional,
-)
-from spectralbrain.statistics.eda import (  # noqa: F401
-    DescriptorRecommendation,
-    OptimalKResult,
-    SpectralQCReport,
-    batch_effect_scan,
-    compute_icc,
-    descriptor_correlation,
-    descriptor_profile,
-    eigenvalue_stability,
-    optimal_k,
-    recommend_descriptor,
-    spectral_qc,
-)
-
-# ── landmarking.py (M-GP active-learning landmarking; SIWKS + HFE) ──
-from spectralbrain.statistics.landmarking import (  # noqa: F401
-    MGPLandmarkResult,
-    compute_si_wks,
-    heat_flow_entropy,
-    mgp_landmarks,
-)
 from spectralbrain.statistics.normative import (  # noqa: F401
     HarmonizationResult,
     MethodComparisonResult,
@@ -137,6 +132,7 @@ from spectralbrain.statistics.normative import (  # noqa: F401
     NormativeModel,
     auc_comparison_delong,
     centile_curves,
+    combat_apply,
     compare_methods,
     equivalence_test_tost,
     extreme_value_map,
@@ -149,7 +145,6 @@ from spectralbrain.statistics.normative import (  # noqa: F401
 from spectralbrain.statistics.surrogates import (  # noqa: F401
     SyntheticDescriptors,
     SyntheticMesh,
-    SyntheticPointCloud,
     bootstrap_ci,
     bootstrap_paired_difference,
     null_brainsmash,

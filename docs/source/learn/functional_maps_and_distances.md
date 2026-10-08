@@ -29,7 +29,7 @@ related by functional maps, exposing how band-pass geometry varies through the
 collection rather than within a single surface.
 
 ```python
-from spectralbrain.spectral.collections import compute_dwks, compute_dwks_collection
+from spectralbrain.spectral.lbo.collections import compute_dwks, compute_dwks_collection
 ```
 
 ## Spectral distances
@@ -56,7 +56,7 @@ conn = sb.build_geometric_connectome(decomp)  # intrinsic connectome
 ```
 
 :::{seealso}
-Tutorial `07_functional_maps_and_distances`. Point-cloud distances
+Tutorial `06_functional_maps_and_distances`. Coordinate-based distances
 (`chamfer_distance`, `hausdorff_distance`, `procrustes_align`) are documented in
 the {doc}`API <../api/index>` under the core module.
 :::

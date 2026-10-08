@@ -19,7 +19,7 @@
 
 **SpectralBrain** computes, analyzes, and visualizes spectral shape descriptors
 of brain structures — cortical surfaces, subcortical meshes, hippocampal
-subfields, white-matter tracts, and point clouds from volumetric segmentations.
+subfields and white-matter tract surfaces, all as triangle meshes.
 It connects spectral geometry (the Laplace–Beltrami operator) to clinical
 neuroimaging, with one pipeline from FreeSurfer / HippUnfold output through
 statistically rigorous analysis to publication-ready figures.
@@ -30,7 +30,7 @@ statistically rigorous analysis to publication-ready figures.
 
 <p align="center">
   <em>The core idea: any input geometry — cortical surface, subcortical/hippocampal
-  mesh, tract, or point cloud — is passed through the Laplace–Beltrami operator to
+  mesh, or tract surface — is passed through the Laplace–Beltrami operator to
   obtain its eigenpairs {λ, φ}, from which pose- and mesh-free spectral descriptors
   (ShapeDNA, HKS, SI-HKS, WKS, GPS, BKS, functional maps, wavelets) are read out.</em>
 </p>
@@ -47,22 +47,27 @@ research code, rarely packaged with the I/O, multi-site harmonization,
 correct multiple-comparison statistics, and rendering that a neuroimaging study
 needs end to end. SpectralBrain fills that gap as a single, tested library, with
 a primary focus on the hippocampus in mesial temporal lobe epilepsy, while
-remaining general to any brain surface or point cloud.
+remaining general to any brain surface mesh.
 
 ## Key capabilities
 
 - **Spectral descriptors** — ShapeDNA, Heat Kernel Signature (HKS),
   Scale-Invariant HKS, Wave Kernel Signature (WKS), Global Point Signature
   (GPS), Bates–Kornfeld Signature (BKS) and its inverse, functional maps, and
-  more — all from the LBO eigenpairs of a mesh *or* point cloud.
+  more — all from the LBO eigenpairs of a triangle mesh.
+- **Beyond the LBO** — a family of complementary operators that produce the same
+  `SpectralDecomposition` (Dirac, Steklov, Hamiltonian, Hodge, magnetic,
+  connection and sheaf Laplacians, Finsler, biharmonic, persistent Laplacian,
+  graph spectra, classical morphometric spectra) in `spectralbrain.spectral.operators`.
 - **Input-agnostic I/O** — FreeSurfer surfaces and morphometry, GIfTI
   (`.surf.gii` / `.func.gii` / `.shape.gii`), NIfTI / MGZ volumes and labels,
-  HippUnfold v1 & v2 outputs, `.ply / .obj / .stl / .vtk`, HDF5, and point
-  clouds, with automatic format detection.
+  HippUnfold v1 & v2 outputs, `.ply / .obj / .stl / .vtk` and HDF5, with
+  automatic format detection; volumes and label maps become LBO-ready meshes
+  (`volume_to_mesh`, `raw_to_mesh`).
 - **Cohort loading** — BIDS / derivatives, FreeSurfer `SUBJECTS_DIR`, or an
   explicit list, loaded in parallel and stacked for group analysis; FreeSurfer
   measures can be resampled onto a common template; TractSeg bundle masks import
-  directly as point clouds or isosurface meshes.
+  directly as isosurface meshes.
 - **Statistics done right** — vertex-wise tests with genuine family-wise error
   control (max-statistic permutation), FDR, partial correlations with correct
   degrees of freedom, TFCE, the analytic DeLong AUC test, BCa bootstrap, ComBat /
@@ -93,6 +98,7 @@ pip install "spectralbrain[bayesian]"   # PyMC, nutpie, NumPyro, BlackJAX, ArviZ
 pip install "spectralbrain[viz]"        # vedo, fury, trimesh, cmcrameri, …
 pip install "spectralbrain[gpu]"        # torch, CuPy, JAX (CUDA)
 pip install "spectralbrain[neuro]"      # nilearn, dipy, pybids, templateflow, …
+pip install "spectralbrain[operators]"  # gudhi, ripser, POT, networkx, … (non-LBO operators)
 pip install "spectralbrain[tuning]"     # optuna (ddCRP autotuning; random fallback)
 pip install "spectralbrain[full]"       # everything above
 ```
@@ -127,7 +133,9 @@ wks = sb.compute_wks(decomp, n_energies=50)                 # (N, 50)
 dna = sb.compute_shapedna(decomp)                           # (k-1,) global
 ```
 
-Point clouds work identically — `sb.BrainPointCloud(points).decompose(k=...)`.
+SpectralBrain is mesh-only. Point clouds live in the sibling library
+**pointsbrain**, which builds a point-cloud `SpectralDecomposition` and then reuses
+every descriptor, statistic and figure of this library unchanged.
 
 ### 2 — Compare two shapes
 
@@ -265,7 +273,7 @@ optional GPU `backend=`); `mode="maps"` stacks vertex-corresponded fields.
 Eigen-decomposition and Bayesian sampling run on pluggable backends:
 
 ```python
-from spectralbrain.backends import TorchBackend       # or CupyBackend, JaxBackend
+from spectralbrain.core.backends import TorchBackend       # or CupyBackend, JaxBackend
 decomp = mesh.decompose(k=200, backend=TorchBackend())  # GPU eigsolve
 ```
 
@@ -287,7 +295,8 @@ independently usable subpackages.
   <em>(a) inputs — geometry, operator, cohort, atlas, spectral descriptors, and
   inference; (b) the five-step main workflow, ending in a lateralization
   effect-size read-out; (c) the modular structure —
-  <code>core · spectral · io · statistics · viz · backends</code>.</em>
+  <code>core · spectral · io · statistics · viz</code> (compute backends now live in
+  <code>core</code>).</em>
 </p>
 
 ## The pipeline in practice
@@ -318,13 +327,35 @@ Bayesian ones (hierarchical models, horseshoe priors, HDI + ROPE, LOO).
 
 ## Documentation map
 
+```
+spectralbrain/
+├── runtime.py            types, logging, seeds, progress, containers, joblib, RAM/VRAM guards
+├── core/                 BrainMesh, SpectralDecomposition, GeometricObject, compute backends
+├── io/                   loaders/savers, meshing, parcellation, cohorts, TractSeg, preprocessing
+├── spectral/
+│   ├── lbo/              descriptors, distances, wavelets, collections, anisotropic, eigenmodes
+│   └── operators/        Dirac/Steklov, Hamiltonian, Hodge/Ricci/sheaf, persistent, Finsler, graphs, …
+├── statistics/
+│   ├── analysis.py       vertex-wise inference, effect sizes, RSA, networks, EDA/QC, recommendations
+│   ├── bayesian.py       Bayesian models + MCMC samplers
+│   ├── normative.py      harmonisation, normative models, method comparison
+│   ├── surrogates.py     bootstrap, null models, synthetic data
+│   └── clustering/       clustering methods, ddCRP, cluster-vs-atlas statistics
+├── utils/                atlases, example data, helpers
+└── viz/                  graphics · bayes · clusters · spectral · hipp · render3d
+```
+
 | Subpackage | What it provides |
 |---|---|
-| `spectralbrain` (top level) | `BrainMesh`, `BrainPointCloud`, `decompose`, all `compute_*` descriptors, distances, I/O, cohort loading |
-| `spectralbrain.io` | loaders/savers, BIDS & FreeSurfer discovery, `load_group`, template resampling, TractSeg import, parcellation |
-| `spectralbrain.statistics` | vertex-wise tests, TFCE, effect sizes, RSA, classification, ComBat(-GAM), normative models, bootstrap & null models, six Bayesian models |
-| `spectralbrain.backends` | CPU / Torch / CuPy / JAX eigensolvers; PyMC / nutpie / NumPyro / BlackJAX samplers |
-| `spectralbrain.viz` | six-view 3D renderer, unfolded flat-maps, cluster overlays, Bayesian-posterior and general scientific plots |
+| `spectralbrain` (top level) | `BrainMesh`, `decompose`, all `compute_*` LBO descriptors, distances, I/O, cohort loading |
+| `spectralbrain.core` | `BrainMesh`, `SpectralDecomposition`, the `GeometricObject` protocol, CPU / Torch / CuPy / JAX eigensolvers |
+| `spectralbrain.io` | loaders/savers, BIDS & FreeSurfer discovery, `load_group`, template resampling, volume → mesh, TractSeg import, parcellation |
+| `spectralbrain.spectral.lbo` | Laplace–Beltrami descriptors, distances, wavelets, functional maps, spectral deformation, eigenmodes |
+| `spectralbrain.spectral.operators` | non-LBO spectral operators (lazy-loaded; extra `[operators]`) |
+| `spectralbrain.statistics` | vertex-wise tests, TFCE, effect sizes, RSA, classification, EDA/QC, ComBat(-GAM), normative models, bootstrap & null models, Bayesian models and samplers, clustering |
+| `spectralbrain.viz` | one module per analysis module (`graphics`, `bayes`, `clusters`, `spectral`, `hipp`) on a shared 3D engine (`render3d`) |
+
+Upgrading from 0.0.x? The old → new import table is in [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Validation
 

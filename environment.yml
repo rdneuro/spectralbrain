@@ -1,7 +1,7 @@
 # environment.yml — SpectralBrain + computational neuroscience workbench
 #
 # A single, robust conda environment pinned to Python 3.11 (required by
-# yabplot and open3d).  Uses conda-forge exclusively — do NOT mix with
+# yabplot).  Uses conda-forge exclusively — do NOT mix with
 # the 'defaults' or 'pytorch' channels to avoid ABI conflicts.
 #
 # Create:   conda env create -f environment.yml
@@ -20,7 +20,7 @@ channels:
 
 dependencies:
   # ────────────────────────────────────────────────────────────────────
-  # Python — pinned to 3.11 (yabplot / open3d / hippunfold-plot ceiling)
+  # Python — pinned to 3.11 (yabplot / hippunfold-plot ceiling)
   # ────────────────────────────────────────────────────────────────────
   - python=3.11
 
@@ -134,8 +134,6 @@ dependencies:
   - pip:
     # Isotropic remeshing (ACVD) for the io.meshing improvement pipeline
     - pyacvd>=0.2.11
-    # 3D point cloud analysis
-    - open3d>=0.19
     - meshplot
 
     # Brain-specific visualization

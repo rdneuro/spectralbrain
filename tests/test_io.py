@@ -2,7 +2,7 @@
 
 These guard the input pathways that a default install must support. In
 particular, generic meshes (.ply / .obj / .stl / .vtk / .vtp) are read
-through PyVista — a *core* dependency — so every listed format must work
+through PyVista -- a *core* dependency -- so every listed format must work
 without any optional extra. The VTK/VTP cases are explicit regression
 guards: an earlier version routed them through an optional package that
 could not actually read VTK, leaving the declared format broken.

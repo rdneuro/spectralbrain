@@ -1,9 +1,9 @@
 """Bayesian posterior visualisation for spectral morphometry.
 
-Directly linked to :mod:`spectralbrain.statistics.bayesian` — every
+Directly linked to :mod:`spectralbrain.statistics.bayesian` -- every
 model class has a matching figure function.  Also includes general
 Bayesian visualisation tools (ridgeline plots, ROPE decision diagrams,
-forest plots, prior–posterior overlays).
+forest plots, prior-posterior overlays).
 
 Figure types
 ------------
@@ -34,7 +34,7 @@ logger = get_logger(__name__)
 
 DPI: int = 600
 
-# ── SpectralBrain palette subset for Bayesian plots ───────────────────
+# -- SpectralBrain palette subset for Bayesian plots -------------------
 
 _BLUE = "#4477AA"
 _RED = "#EE6677"
@@ -74,7 +74,7 @@ def _save(fig, path, formats=None):
 
 
 # ======================================================================
-# §1  POSTERIOR DISTRIBUTION + HDI + ROPE
+# S1  POSTERIOR DISTRIBUTION + HDI + ROPE
 # ======================================================================
 
 
@@ -98,7 +98,7 @@ def plot_posterior(
     hdi_prob : float
         Highest Density Interval probability mass.
     rope : (lo, hi), optional
-        Region Of Practical Equivalence — shaded in grey.
+        Region Of Practical Equivalence -- shaded in grey.
     ref_val : float, optional
         Reference value (vertical dashed line, e.g. 0).
     """
@@ -184,7 +184,7 @@ def _hdi(samples: np.ndarray, prob: float) -> tuple[float, float]:
 
 
 # ======================================================================
-# §2  FOREST PLOT
+# S2  FOREST PLOT
 # ======================================================================
 
 
@@ -200,7 +200,7 @@ def plot_forest(
     ax: Axes | None = None,
     save: PathLike | None = None,
 ) -> tuple[Figure, Axes]:
-    """Forest plot — coefficients + credible intervals.
+    """Forest plot -- coefficients + credible intervals.
 
     Parameters
     ----------
@@ -252,7 +252,7 @@ def plot_forest(
 
 
 # ======================================================================
-# §3  PRIOR vs POSTERIOR
+# S3  PRIOR vs POSTERIOR
 # ======================================================================
 
 
@@ -261,7 +261,7 @@ def plot_prior_posterior(
     posterior_samples: np.ndarray,
     *,
     xlabel: str = "Parameter",
-    title: str = "Prior → Posterior",
+    title: str = "Prior -> Posterior",
     ax: Axes | None = None,
     save: PathLike | None = None,
 ) -> tuple[Figure, Axes]:
@@ -295,7 +295,7 @@ def plot_prior_posterior(
 
 
 # ======================================================================
-# §4  ROPE DECISION DIAGRAM
+# S4  ROPE DECISION DIAGRAM
 # ======================================================================
 
 
@@ -308,7 +308,7 @@ def plot_rope_decision(
     ax: Axes | None = None,
     save: PathLike | None = None,
 ) -> tuple[Figure, Axes]:
-    """Stacked horizontal bar — P(below) | P(ROPE) | P(above).
+    """Stacked horizontal bar -- P(below) | P(ROPE) | P(above).
 
     Parameters
     ----------
@@ -384,7 +384,7 @@ def plot_rope_decision(
 
 
 # ======================================================================
-# §5  RIDGELINE PLOT (the showpiece)
+# S5  RIDGELINE PLOT (the showpiece)
 # ======================================================================
 
 
@@ -519,7 +519,7 @@ def plot_ridgeline(
 
 
 # ======================================================================
-# §6  HORSESHOE SHRINKAGE (HorseshoeRegression)
+# S6  HORSESHOE SHRINKAGE (HorseshoeRegression)
 # ======================================================================
 
 
@@ -528,15 +528,15 @@ def plot_horseshoe_coefficients(
     *,
     var_names: list[str] | None = None,
     hdi_prob: float = 0.94,
-    title: str = "Horseshoe Regression — Feature Selection",
+    title: str = "Horseshoe Regression -- Feature Selection",
     save: PathLike | None = None,
 ) -> tuple[Figure, tuple[Axes, Axes]]:
     """Horseshoe coefficient plot: forest + shrinkage heatmap.
 
-    Left panel: forest plot of β posteriors.
-    Right panel: shrinkage factor κ_j = E[1/(1 + τ²λ_j²)] (posterior mean
-    over draws, with the global scale τ from the trace; the model is
-    β_j ~ N(0, τλ_j)) — darker = more shrunk.
+    Left panel: forest plot of beta posteriors.
+    Right panel: shrinkage factor kappa_j = E[1/(1 + tau^2lambda_j^2)] (posterior mean
+    over draws, with the global scale tau from the trace; the model is
+    beta_j ~ N(0, tau lambda_j)) -- darker = more shrunk.
 
     Parameters
     ----------
@@ -556,16 +556,16 @@ def plot_horseshoe_coefficients(
     d = beta.shape[1]
 
     if var_names is None:
-        var_names = [f"β_{i}" for i in range(d)]
+        var_names = [rf"$\beta_{{{i}}}$" for i in range(d)]
     if len(var_names) != d:
         raise ValueError(f"var_names has {len(var_names)} entries but beta has {d} coefficients")
 
-    # Shrinkage factor per draw: κ = 1/(1 + τ²λ²) — the effective prior scale
-    # of β_j is τ·λ_j, so the global τ must be included.
+    # Shrinkage factor per draw: kappa = 1/(1 + tau^2lambda^2) -- the effective prior scale
+    # of beta_j is tau*lambda_j, so the global tau must be included.
     try:
         tau = np.asarray(trace.posterior["tau"].values, dtype=np.float64).reshape(-1, 1)
     except (KeyError, AttributeError):
-        logger.warning("trace has no 'tau'; shrinkage κ computed from λ alone (τ = 1).")
+        logger.warning("trace has no 'tau'; shrinkage kappa computed from lambda alone (tau = 1).")
         tau = np.ones((lam.shape[0], 1))
     kappa = 1.0 / (1.0 + (tau * lam) ** 2)
     kappa_mean = kappa.mean(axis=0)
@@ -597,7 +597,7 @@ def plot_horseshoe_coefficients(
         ref_val=0.0,
         colors=colors,
         title="",
-        xlabel="β",
+        xlabel=r"$\beta$",
         ax=ax_forest,
     )
     ax_forest.set_title("Coefficient posteriors", fontsize=9)
@@ -613,12 +613,12 @@ def plot_horseshoe_coefficients(
         interpolation="nearest",
     )
     ax_shrink.set_xticks([0])
-    ax_shrink.set_xticklabels(["κ"], fontsize=7)
+    ax_shrink.set_xticklabels([r"$\kappa$"], fontsize=7)
     ax_shrink.set_yticks(range(d))
     ax_shrink.set_yticklabels(["" for _ in range(d)])
     ax_shrink.set_title("Shrinkage", fontsize=8)
 
-    # Annotate κ values.
+    # Annotate kappa values.
     for i, k in enumerate(kappa_mean):
         ax_shrink.text(
             0,
@@ -638,7 +638,7 @@ def plot_horseshoe_coefficients(
 
 
 # ======================================================================
-# §7  BEST EFFECT SIZE (BayesianGroupComparison)
+# S7  BEST EFFECT SIZE (BayesianGroupComparison)
 # ======================================================================
 
 
@@ -646,10 +646,10 @@ def plot_best_posterior(
     trace,
     *,
     rope: tuple[float, float] = (-0.1, 0.1),
-    title: str = "BEST — Bayesian Group Comparison",
+    title: str = "BEST -- Bayesian Group Comparison",
     save: PathLike | None = None,
 ) -> tuple[Figure, list[Axes]]:
-    """Three-panel BEST visualisation: Δμ, Δσ, effect size.
+    """Three-panel BEST visualisation: Delta mu, Delta sigma, effect size.
 
     Parameters
     ----------
@@ -662,8 +662,8 @@ def plot_best_posterior(
     fig, axes = plt.subplots(1, 3, figsize=(12, 3.5), dpi=DPI)
 
     panels = [
-        ("diff_means", "Δμ (A − B)", _BLUE),
-        ("diff_stds", "Δσ (A − B)", _TEAL),
+        ("diff_means", r"$\Delta\mu$ (A - B)", _BLUE),
+        ("diff_stds", r"$\Delta\sigma$ (A - B)", _TEAL),
         ("effect_size", "Effect size (Cohen's d)", _PURPLE),
     ]
 
@@ -688,7 +688,7 @@ def plot_best_posterior(
 
 
 # ======================================================================
-# §8  SITE EFFECTS (HierarchicalLinearModel)
+# S8  SITE EFFECTS (HierarchicalLinearModel)
 # ======================================================================
 
 
@@ -696,7 +696,7 @@ def plot_site_effects(
     trace,
     *,
     site_names: list[str] | None = None,
-    title: str = "Hierarchical Model — Site Random Effects",
+    title: str = "Hierarchical Model -- Site Random Effects",
     save: PathLike | None = None,
 ) -> tuple[Figure, Axes]:
     """Caterpillar plot of random intercepts per site.
@@ -743,7 +743,7 @@ def plot_site_effects(
 
 
 # ======================================================================
-# §9  GP NORMATIVE TRAJECTORY (GaussianProcessNormative)
+# S9  GP NORMATIVE TRAJECTORY (GaussianProcessNormative)
 # ======================================================================
 
 
@@ -855,7 +855,7 @@ def plot_gp_trajectory(
 
 
 # ======================================================================
-# §10  CONNECTOME DIFFERENCE (BayesianConnectome)
+# S10  CONNECTOME DIFFERENCE (BayesianConnectome)
 # ======================================================================
 
 
@@ -866,7 +866,7 @@ def plot_connectome_posterior(
     network_boundaries: list[int] | None = None,
     cmap: str = "RdBu_r",
     vmax: float | None = None,
-    title: str = "Bayesian Connectome — Edge Differences",
+    title: str = "Bayesian Connectome -- Edge Differences",
     ax: Axes | None = None,
     save: PathLike | None = None,
 ) -> tuple[Figure, Axes]:
@@ -892,7 +892,7 @@ def plot_connectome_posterior(
     im = ax.imshow(
         edge_diff_matrix, cmap=cmap, aspect="auto", vmin=-vmax, vmax=vmax, interpolation="nearest"
     )
-    plt.colorbar(im, ax=ax, shrink=0.8, label="Posterior Δ (A − B)")
+    plt.colorbar(im, ax=ax, shrink=0.8, label=r"Posterior $\Delta$ (A - B)")
 
     if network_boundaries:
         for b in network_boundaries:

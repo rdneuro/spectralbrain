@@ -1,4 +1,4 @@
-"""Clustering visualisation — 3D mesh renders and 2D statistical plots.
+"""Clustering visualisation -- 3D mesh renders and 2D statistical plots.
 
 Provides publication-quality figures for every output of
 :mod:`spectralbrain.statistics.clustering`: spatial cluster maps,
@@ -10,34 +10,42 @@ Figure types
 ------------
 **3D mesh renders (vedo)**
 
-1. Cluster map — mesh coloured by integer labels, 3-pose panel
-2. Cluster boundaries — wireframe with coloured boundary edges
-3. Multi-method comparison — side-by-side cluster maps
-4. GNMF spatial components — one panel per W column
-5. Soft membership — mesh coloured by posterior probability
-6. Exploded clusters — spatially separated cluster fragments
-7. HKS + clusters progression — scalar + labels across t
-8. Persistence basins — mesh coloured by persistence-based partition
-9. Fusion panel — HKS / WKS / Fused side by side
+1. Cluster map -- mesh coloured by integer labels, 3-pose panel
+2. Cluster boundaries -- wireframe with coloured boundary edges
+3. Multi-method comparison -- side-by-side cluster maps
+4. GNMF spatial components -- one panel per W column
+5. Soft membership -- mesh coloured by posterior probability
+6. Exploded clusters -- spatially separated cluster fragments
+7. HKS + clusters progression -- scalar + labels across t
+8. Persistence basins -- mesh coloured by persistence-based partition
+9. Fusion panel -- HKS / WKS / Fused side by side
 
 **2D statistical plots (matplotlib)**
 
-10. Cluster HKS time-profiles — mean ± SEM per cluster
-11. Silhouette diagram — per-sample silhouette ordered by cluster
-12. Cluster quality comparison — bar chart across methods
-13. Method agreement heatmap — ARI / NMI matrix
-14. Persistence diagram — birth vs death scatter
-15. GNMF temporal factors — F matrix as line profiles
-16. Bayesian confirmation — posterior probabilities + credible intervals
-17. Cluster size distribution — bar chart
-18. UMAP / PCA scatter — embedding coloured by clusters
-19. Co-clustering checkerboard — vertex × time block structure
+10. Cluster HKS time-profiles -- mean +/- SEM per cluster
+11. Silhouette diagram -- per-sample silhouette ordered by cluster
+12. Cluster quality comparison -- bar chart across methods
+13. Method agreement heatmap -- ARI / NMI matrix
+14. Persistence diagram -- birth vs death scatter
+15. GNMF temporal factors -- F matrix as line profiles
+16. Bayesian confirmation -- posterior probabilities + credible intervals
+17. Cluster size distribution -- bar chart
+18. UMAP / PCA scatter -- embedding coloured by clusters
+19. Co-clustering checkerboard -- vertex x time block structure
+
+**Parcellation vs clustering grid (vedo, PyVista fallback)**
+
+20. Grid with one column per anatomical view and one row per labeling --
+    a reference parcellation on top and data-driven clusterings below
+    (:func:`plot_parcellation_cluster_grid`,
+    :func:`plot_parcellation_vs_clusters`); works for hippocampi, whole
+    brains and bundle surfaces
 
 Architecture
 ------------
-* **vedo** for all 3D renders (offscreen VTK → PNG).
+* **vedo** for all 3D renders (offscreen VTK -> PNG).
 * **matplotlib** for all 2D plots (publication style via graphics.py).
-* 3D functions return ``(Path, dict)`` — PNG path + metadata.
+* 3D functions return ``(Path, dict)`` -- PNG path + metadata.
 * 2D functions return ``(Figure, Axes)`` for customisation.
 * Every function accepts ``save`` for auto-export.
 """
@@ -46,6 +54,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Literal
 
@@ -60,16 +69,16 @@ from spectralbrain.viz import _camera as _cam
 
 logger = get_logger(__name__)
 
-# ──────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------
 # Constants
-# ──────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------
 
 _DEFAULT_SIZE: tuple[int, int] = (1600, 1200)
 _DEFAULT_SCALE: int = 2
 _DEFAULT_BG: str = "white"
 DPI: int = 600
 
-# Qualitative palette for cluster labels — optimised for
+# Qualitative palette for cluster labels -- optimised for
 # colorblind safety (Paul Tol's muted scheme + extensions)
 CLUSTER_COLORS: list[str] = [
     "#4477AA",  # blue
@@ -91,9 +100,9 @@ CLUSTER_COLORS: list[str] = [
 # Standard 3-pose views for brain structures
 VIEWS_3POSE: list[str] = ["left_lateral", "anterior", "superior"]
 
-# Camera presets — identical to geometry/meshes.py for consistency.
+# Camera presets -- identical to geometry/meshes.py for consistency.
 # RAS convention (see :mod:`spectralbrain.viz._camera`): azimuth measured from
-# +x towards +y, elevation towards +z.  Left lateral camera at −x, anterior at
+# +x towards +y, elevation towards +z.  Left lateral camera at -x, anterior at
 # +y, superior at +z.  Cameras are built as explicit dicts from these angles.
 CAMERA_PRESETS: dict[str, dict[str, Any]] = _cam.presets(
     [
@@ -118,9 +127,9 @@ def _view_camera(view: str, points: np.ndarray) -> dict[str, Any]:
     return _cam.camera_for_view(view, points, angles=CAMERA_PRESETS)
 
 
-# ──────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------
 # Lazy imports & helpers
-# ──────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------
 
 
 def _ensure_offscreen() -> None:
@@ -163,7 +172,7 @@ def _save_screenshot(plotter, save, *, scale=_DEFAULT_SCALE):
     save.parent.mkdir(parents=True, exist_ok=True)
     plotter.screenshot(str(save), scale=scale)
     plotter.close()
-    logger.info("Saved cluster render → %s", save)
+    logger.info("Saved cluster render -> %s", save)
     return save
 
 
@@ -206,7 +215,7 @@ def _savefig(fig: Figure, save: PathLike | None) -> None:
         # also save PDF if extension is png
         if p.suffix.lower() == ".png":
             fig.savefig(str(p.with_suffix(".pdf")), bbox_inches="tight", facecolor="white")
-        logger.info("Saved figure → %s", p)
+        logger.info("Saved figure -> %s", p)
 
 
 def _check_vertex_count(H: np.ndarray, coords: np.ndarray) -> None:
@@ -242,7 +251,7 @@ def _robust_norm(values: np.ndarray, log_norm: bool):
 
 
 # ======================================================================
-# §1  3D CLUSTER MAP — mesh coloured by labels, 3-pose panel
+# S1  3D CLUSTER MAP -- mesh coloured by labels, 3-pose panel
 # ======================================================================
 
 
@@ -273,7 +282,7 @@ def plot_cluster_map(
     labels : (V,) int array
         Cluster labels.  -1 = noise / unassigned.
     views : list of str or None
-        Camera preset names.  None → 3-pose (lateral, anterior, superior).
+        Camera preset names.  None -> 3-pose (lateral, anterior, superior).
     noise_color : str
         Colour for noise vertices.
     lighting : str
@@ -345,7 +354,7 @@ def plot_cluster_map(
 
 
 # ======================================================================
-# §2  CLUSTER BOUNDARIES — mesh with highlighted boundary edges
+# S2  CLUSTER BOUNDARIES -- mesh with highlighted boundary edges
 # ======================================================================
 
 
@@ -452,7 +461,7 @@ def plot_cluster_boundaries(
 
 
 # ======================================================================
-# §3  MULTI-METHOD COMPARISON — side-by-side cluster maps
+# S3  MULTI-METHOD COMPARISON -- side-by-side cluster maps
 # ======================================================================
 
 
@@ -478,7 +487,7 @@ def plot_method_comparison_3d(
     vertices : (V, 3) array
     faces : (F, 3) array
     results : dict[str, ndarray]
-        Method name → (V,) label array.
+        Method name -> (V,) label array.
     view : str
         Camera preset for all panels.
     noise_color, lighting, bg, size, scale, save
@@ -527,7 +536,7 @@ def plot_method_comparison_3d(
 
 
 # ======================================================================
-# §4  GNMF SPATIAL COMPONENTS — one panel per W column
+# S4  GNMF SPATIAL COMPONENTS -- one panel per W column
 # ======================================================================
 
 
@@ -608,7 +617,7 @@ def plot_gnmf_components(
 
 
 # ======================================================================
-# §5  SOFT MEMBERSHIP — mesh coloured by probability
+# S5  SOFT MEMBERSHIP -- mesh coloured by probability
 # ======================================================================
 
 
@@ -675,7 +684,7 @@ def plot_soft_membership(
 
 
 # ======================================================================
-# §6  EXPLODED CLUSTERS — spatially separated fragments
+# S6  EXPLODED CLUSTERS -- spatially separated fragments
 # ======================================================================
 
 
@@ -692,7 +701,7 @@ def plot_cluster_exploded(
     scale: int = _DEFAULT_SCALE,
     save: PathLike | None = None,
 ) -> tuple[Path, dict[str, Any]]:
-    """Exploded view — each cluster is displaced outward from centroid.
+    """Exploded view -- each cluster is displaced outward from centroid.
 
     Useful for inspecting cluster topology on convoluted structures
     like the hippocampus where clusters may overlap visually.
@@ -774,7 +783,7 @@ def plot_cluster_exploded(
 
 
 # ======================================================================
-# §7  HKS + CLUSTERS PROGRESSION — scalar + labels across t
+# S7  HKS + CLUSTERS PROGRESSION -- scalar + labels across t
 # ======================================================================
 
 
@@ -806,7 +815,7 @@ def plot_hks_cluster_progression(
         HKS matrix.
     labels : (V,) int array
     t_indices : list of int or None
-        Column indices into H to show.  None → linearly spaced.
+        Column indices into H to show.  None -> linearly spaced.
     n_panels : int
         Number of time-scale panels.
     view, cmap_hks, lighting, bg, size, scale, save
@@ -886,7 +895,7 @@ def plot_hks_cluster_progression(
 
 
 # ======================================================================
-# §8  FUSION PANEL — HKS / WKS / Fused side by side
+# S8  FUSION PANEL -- HKS / WKS / Fused side by side
 # ======================================================================
 
 
@@ -955,7 +964,7 @@ def plot_fusion_panel(
 
 
 # ======================================================================
-# §10  CLUSTER HKS TIME-PROFILES — mean ± SEM per cluster
+# S10  CLUSTER HKS TIME-PROFILES -- mean +/- SEM per cluster
 # ======================================================================
 
 
@@ -972,7 +981,7 @@ def plot_cluster_profiles(
     figsize: tuple[float, float] = (7, 4),
     save: PathLike | None = None,
 ) -> tuple[Figure, Axes]:
-    """Mean ± SEM HKS profiles per cluster.
+    """Mean +/- SEM HKS profiles per cluster.
 
     Parameters
     ----------
@@ -1032,7 +1041,7 @@ def plot_cluster_profiles(
 
 
 # ======================================================================
-# §11  SILHOUETTE DIAGRAM
+# S11  SILHOUETTE DIAGRAM
 # ======================================================================
 
 
@@ -1106,7 +1115,7 @@ def plot_silhouette_diagram(
 
 
 # ======================================================================
-# §12  CLUSTER QUALITY COMPARISON — bar chart across methods
+# S12  CLUSTER QUALITY COMPARISON -- bar chart across methods
 # ======================================================================
 
 
@@ -1123,10 +1132,10 @@ def plot_quality_comparison(
     Parameters
     ----------
     quality_dict : dict[str, dict[str, float]]
-        Outer key = method name, inner dict = metric → value.
+        Outer key = method name, inner dict = metric -> value.
         Example: ``{"hdbscan": {"silhouette": 0.42}, ...}``
     metrics : list of str or None
-        Which metrics to plot.  None → all common metrics.
+        Which metrics to plot.  None -> all common metrics.
     title, figsize, save
 
     Returns
@@ -1165,7 +1174,7 @@ def plot_quality_comparison(
 
 
 # ======================================================================
-# §13  METHOD AGREEMENT HEATMAP — ARI / NMI matrix
+# S13  METHOD AGREEMENT HEATMAP -- ARI / NMI matrix
 # ======================================================================
 
 
@@ -1225,7 +1234,7 @@ def plot_agreement_heatmap(
 
 
 # ======================================================================
-# §14  PERSISTENCE DIAGRAM — birth vs death scatter
+# S14  PERSISTENCE DIAGRAM -- birth vs death scatter
 # ======================================================================
 
 
@@ -1286,7 +1295,7 @@ def plot_persistence_diagram(
 
 
 # ======================================================================
-# §15  GNMF TEMPORAL FACTORS — F matrix profiles
+# S15  GNMF TEMPORAL FACTORS -- F matrix profiles
 # ======================================================================
 
 
@@ -1339,7 +1348,7 @@ def plot_gnmf_temporal_factors(
 
 
 # ======================================================================
-# §16  BAYESIAN CONFIRMATION — posteriors + credible intervals
+# S16  BAYESIAN CONFIRMATION -- posteriors + credible intervals
 # ======================================================================
 
 
@@ -1428,7 +1437,7 @@ def plot_bayesian_confirmation(
 
     ax2.set_yticks(y_pos)
     ax2.set_yticklabels([f"Cluster {k}" for k in clusters], fontsize=8)
-    ax2.set_xlabel("‖μ_k‖ (centroid norm)")
+    ax2.set_xlabel(r"$\|\mu_k\|$ (centroid norm)")
     ax2.set_title("94% Credible Intervals")
     ax2.invert_yaxis()
 
@@ -1445,7 +1454,7 @@ def _centroid_norm_interval(ci: dict[str, Any]) -> tuple[float, float, float]:
     interval is the 3rd/97th percentile of the per-draw norms. Otherwise the
     per-dimension bounds ``[hdi_3, hdi_97]`` define a box, and the interval is
     the exact range of ``||x||`` over that box (a conservative bound that always
-    contains ``||mean||``) — the norm of a bound vector is *not* a bound.
+    contains ``||mean||``) -- the norm of a bound vector is *not* a bound.
     """
     if "samples" in ci and ci["samples"] is not None:
         draws = np.linalg.norm(np.atleast_2d(np.asarray(ci["samples"], float)), axis=1)
@@ -1466,7 +1475,7 @@ def _centroid_norm_interval(ci: dict[str, Any]) -> tuple[float, float, float]:
 
 
 # ======================================================================
-# §17  CLUSTER SIZE DISTRIBUTION
+# S17  CLUSTER SIZE DISTRIBUTION
 # ======================================================================
 
 
@@ -1518,7 +1527,7 @@ def plot_cluster_sizes(
 
 
 # ======================================================================
-# §18  UMAP / PCA SCATTER — embedding coloured by clusters
+# S18  UMAP / PCA SCATTER -- embedding coloured by clusters
 # ======================================================================
 
 
@@ -1593,7 +1602,7 @@ def plot_cluster_scatter(
 
 
 # ======================================================================
-# §19  CO-CLUSTERING CHECKERBOARD — vertex × time block structure
+# S19  CO-CLUSTERING CHECKERBOARD -- vertex x time block structure
 # ======================================================================
 
 
@@ -1607,7 +1616,7 @@ def plot_coclustering_heatmap(
     figsize: tuple[float, float] = (8, 6),
     save: PathLike | None = None,
 ) -> tuple[Figure, Axes]:
-    """Reordered heatmap revealing vertex × time co-cluster blocks.
+    """Reordered heatmap revealing vertex x time co-cluster blocks.
 
     Sorts rows and columns by their cluster labels so that the
     checkerboard block structure of the co-clustering is visible.
@@ -1663,7 +1672,7 @@ def plot_coclustering_heatmap(
 
 
 # ======================================================================
-# §20  SUMMARY PANEL — comprehensive overview figure
+# S20  SUMMARY PANEL -- comprehensive overview figure
 # ======================================================================
 
 
@@ -1678,7 +1687,7 @@ def plot_cluster_summary(
     figsize: tuple[float, float] = (14, 10),
     save: PathLike | None = None,
 ) -> tuple[Figure, np.ndarray]:
-    """Comprehensive 2×3 summary panel for a clustering result.
+    """Comprehensive 2x3 summary panel for a clustering result.
 
     Layout:
         [0,0] 3D cluster map (embedded PNG)
@@ -1847,14 +1856,14 @@ def plot_cluster_summary(
     )
     axes[1, 2].axis("off")
 
-    fig.suptitle(f"Clustering Summary — {method_name}", fontsize=13, y=1.01)
+    fig.suptitle(f"Clustering Summary -- {method_name}", fontsize=13, y=1.01)
     fig.tight_layout()
     _savefig(fig, save)
     return fig, axes
 
 
 # ======================================================================
-# §21  SPATIO-TEMPORAL FIELD — small multiples on unfolded coordinates
+# S21  SPATIO-TEMPORAL FIELD -- small multiples on unfolded coordinates
 # ======================================================================
 
 
@@ -1883,12 +1892,12 @@ def plot_spatiotemporal_field(
     """Small-multiples grid of a descriptor field on unfolded surface.
 
     Renders per-vertex spectral descriptor values (HKS, WKS) on the
-    2D unfolded coordinate system (e.g., HippUnfold's AP × PD sheet)
+    2D unfolded coordinate system (e.g., HippUnfold's AP x PD sheet)
     at log-spaced diffusion times, producing a publication-ready
     panel that shows the local-to-global progression of HKS.
 
     Each panel is rendered with ``tripcolor`` directly on the mesh
-    triangulation — no interpolation to a regular grid is needed,
+    triangulation -- no interpolation to a regular grid is needed,
     preserving vertex-exact values.
 
     Parameters
@@ -1901,17 +1910,17 @@ def plot_spatiotemporal_field(
     H : (V, T) array
         Per-vertex descriptor matrix across T scales.
     t_values : (T,) array or None
-        Scale parameter values for axis labels. None → integer indices.
+        Scale parameter values for axis labels. None -> integer indices.
     n_panels : int
         Number of panels to show (overridden by t_indices).
     t_indices : list of int or None
-        Specific column indices into H. None → geometrically spaced.
+        Specific column indices into H. None -> geometrically spaced.
     cmap : str
         Colourmap for the descriptor field.
     log_norm : bool
         Use ``LogNorm`` for colour scaling (recommended for HKS).
     vmin, vmax : float or None
-        Colour range. None → robust 2nd/98th percentiles of full H.
+        Colour range. None -> robust 2nd/98th percentiles of full H.
     subfield_labels : (V,) int array or None
         If provided, overlay subfield boundaries via ``tricontour``.
     boundary_color : str
@@ -1925,7 +1934,7 @@ def plot_spatiotemporal_field(
     n_cols : int
         Number of columns in the panel grid.
     figsize : tuple or None
-        Figure size. None → auto from n_panels.
+        Figure size. None -> auto from n_panels.
     save : PathLike or None
 
     Returns
@@ -1972,7 +1981,7 @@ def plot_spatiotemporal_field(
     # --- layout ---
     n_rows = (n_panels + n_cols - 1) // n_cols
     if figsize is None:
-        # 2:1 aspect ratio per panel (AP is typically ~2× PD)
+        # 2:1 aspect ratio per panel (AP is typically ~2x PD)
         figsize = (4.0 * n_cols, 2.5 * n_rows)
 
     fig, axes = plt.subplots(
@@ -2047,7 +2056,7 @@ def plot_spatiotemporal_field(
 
 
 # ======================================================================
-# §22  SPATIO-TEMPORAL ANIMATION — GIF / MP4 across scales
+# S22  SPATIO-TEMPORAL ANIMATION -- GIF / MP4 across scales
 # ======================================================================
 
 
@@ -2092,7 +2101,7 @@ def plot_spatiotemporal_animation(
     figsize : tuple
     save : PathLike or None
         Output path. Extension determines format:
-        ``.gif`` → Pillow writer, ``.mp4`` → ffmpeg writer.
+        ``.gif`` -> Pillow writer, ``.mp4`` -> ffmpeg writer.
 
     Returns
     -------
@@ -2164,7 +2173,7 @@ def plot_spatiotemporal_animation(
     def _update(frame_idx):
         """Update the interactive plot state."""
         # tripcolor stores face-averaged values for flat shading
-        # and vertex values for gouraud — set_array on the collection
+        # and vertex values for gouraud -- set_array on the collection
         tpc.set_array(H[:, frame_idx])
         title_text.set_text(f"{descriptor_name}  t = {t_values[frame_idx]:.2g}")
         return (tpc, title_text)
@@ -2187,13 +2196,13 @@ def plot_spatiotemporal_animation(
             ani.save(str(save), writer="ffmpeg", fps=fps, dpi=200)
         else:
             ani.save(str(save), fps=fps, dpi=200)
-        logger.info("Saved animation → %s", save)
+        logger.info("Saved animation -> %s", save)
 
     return ani
 
 
 # ======================================================================
-# §23  HOVMÖLLER DIAGRAM — position × scale 2D heatmap
+# S23  HOVMOLLER DIAGRAM -- position x scale 2D heatmap
 # ======================================================================
 
 
@@ -2212,10 +2221,10 @@ def plot_hovmoller(
     figsize: tuple[float, float] = (8, 4),
     save: PathLike | None = None,
 ) -> tuple[Figure, Axes]:
-    """Hovmöller diagram: averaged descriptor along one spatial axis × scale.
+    """Hovmoller diagram: averaged descriptor along one spatial axis x scale.
 
     Collapses the orthogonal spatial axis by averaging, producing a
-    2D heatmap of (position along AP or PD) × (diffusion scale t).
+    2D heatmap of (position along AP or PD) x (diffusion scale t).
     Reveals how the multi-scale spectral signature varies along the
     hippocampal long axis (AP) or proximal-distal axis (PD).
 
@@ -2265,8 +2274,8 @@ def plot_hovmoller(
     digitized = np.digitize(pos, bin_edges) - 1
     digitized = np.clip(digitized, 0, n_bins - 1)
 
-    # nan-aware average of H within each spatial bin → (n_bins, T).
-    # Empty bins (and bins with no finite value) stay NaN — never a fake 0.
+    # nan-aware average of H within each spatial bin -> (n_bins, T).
+    # Empty bins (and bins with no finite value) stay NaN -- never a fake 0.
     finite = np.isfinite(H) & np.isfinite(pos)[:, None]
     sums = np.zeros((n_bins, T), dtype=np.float64)
     counts = np.zeros((n_bins, T), dtype=np.float64)
@@ -2295,7 +2304,7 @@ def plot_hovmoller(
 
     ax.set_xlabel("Diffusion scale t (log)" if log_t else "Scale t")
     ax.set_ylabel(f"{axis} coordinate")
-    ax.set_title(title or f"Hovmöller — {descriptor_name} along {axis}")
+    ax.set_title(title or f"Hovmoller -- {descriptor_name} along {axis}")
 
     cbar = fig.colorbar(mesh_plot, ax=ax, pad=0.02)
     cbar.set_label(descriptor_name)
@@ -2306,7 +2315,7 @@ def plot_hovmoller(
 
 
 # ======================================================================
-# §24  KYMOGRAPH — 1D line through the surface × scale
+# S24  KYMOGRAPH -- 1D line through the surface x scale
 # ======================================================================
 
 
@@ -2327,11 +2336,11 @@ def plot_kymograph(
     figsize: tuple[float, float] = (8, 4),
     save: PathLike | None = None,
 ) -> tuple[Figure, Axes]:
-    """Kymograph: descriptor values along a 1D line × scale.
+    """Kymograph: descriptor values along a 1D line x scale.
 
-    Unlike the Hovmöller diagram (which averages over the orthogonal
+    Unlike the Hovmoller diagram (which averages over the orthogonal
     axis), the kymograph traces a single line through the unfolded
-    surface — e.g. the midline of PD — and plots the descriptor
+    surface -- e.g. the midline of PD -- and plots the descriptor
     along that line for each scale t.
 
     Parameters
@@ -2341,11 +2350,11 @@ def plot_kymograph(
     H : (V, T) array
     t_values : (T,) array or None
     line_axis : str
-        Axis along which the line runs. ``"AP"`` → horizontal line
-        at fixed PD = ``line_position``; ``"PD"`` → vertical line
+        Axis along which the line runs. ``"AP"`` -> horizontal line
+        at fixed PD = ``line_position``; ``"PD"`` -> vertical line
         at fixed AP.
     line_position : float
-        Position on the orthogonal axis (0–1 in normalised coords).
+        Position on the orthogonal axis (0-1 in normalised coords).
     n_samples : int
         Number of sample points along the line.
     cmap, log_norm, log_t : str, bool, bool
@@ -2417,7 +2426,7 @@ def plot_kymograph(
     ax.set_ylabel(spatial_label)
     ax.set_title(
         title
-        or f"Kymograph — {descriptor_name} along {line_axis} at {ortho_name}={line_position:.2f}"
+        or f"Kymograph -- {descriptor_name} along {line_axis} at {ortho_name}={line_position:.2f}"
     )
 
     cbar = fig.colorbar(mesh_plot, ax=ax, pad=0.02)
@@ -2429,7 +2438,7 @@ def plot_kymograph(
 
 
 # ======================================================================
-# §25  WARPED SURFACE — 3D with height = descriptor value (vedo)
+# S25  WARPED SURFACE -- 3D with height = descriptor value (vedo)
 # ======================================================================
 
 
@@ -2452,7 +2461,7 @@ def plot_warped_surface(
 ) -> tuple[Path, dict[str, Any]]:
     """3D warped surface: unfolded (u, v) + height from descriptor.
 
-    Creates a 3D surface where x = AP, y = PD, and z = warp_factor ×
+    Creates a 3D surface where x = AP, y = PD, and z = warp_factor x
     descriptor_value. The surface is coloured by the same descriptor.
     Useful as a "hero figure" showing the spatial distribution of
     a spectral descriptor.
@@ -2469,7 +2478,7 @@ def plot_warped_surface(
     vmin, vmax : float or None
     descriptor_name : str
     views : list of str or None
-        Camera presets. None → ``["oblique_left"]``.
+        Camera presets. None -> ``["oblique_left"]``.
     lighting, bg, size, scale, save
 
     Returns
@@ -2543,7 +2552,7 @@ def plot_warped_surface(
 
 
 # ======================================================================
-# §26  DESCRIPTOR EVOLUTION COMPARISON — HKS vs WKS on unfolded
+# S26  DESCRIPTOR EVOLUTION COMPARISON -- HKS vs WKS on unfolded
 # ======================================================================
 
 
@@ -2688,3 +2697,259 @@ def plot_descriptor_evolution_comparison(
 
     _savefig(fig, save)
     return fig, axes
+
+
+# ======================================================================
+# PARCELLATION-VS-CLUSTERING GRID
+# ======================================================================
+
+
+# ----------------------------------------------------------------------
+# Single-cell renderers
+# ----------------------------------------------------------------------
+def _label_rgba(labels: np.ndarray, *, noise_color: str, categorical: bool):
+    """Per-vertex RGBA (uint8) for a categorical labeling or continuous scalar."""
+    import matplotlib.colors as mcolors
+    import matplotlib.pyplot as plt
+
+    from spectralbrain.viz.clusters import _cluster_cmap
+
+    lab = np.asarray(labels)
+    noise_rgba = np.array(mcolors.to_rgba(noise_color), dtype=np.float64)
+    if categorical:
+        labf = np.asarray(lab, dtype=np.float64)
+        valid = np.isfinite(labf) & (labf >= 0)
+        unique = sorted(set(labf[valid].tolist()))
+        cmap = _cluster_cmap(max(len(unique), 1))
+        idx = {lv: j for j, lv in enumerate(unique)}
+        rgba = np.tile(noise_rgba, (lab.shape[0], 1))
+        for i in np.flatnonzero(valid):
+            rgba[i] = cmap(idx[labf[i]])
+    else:
+        v = np.asarray(lab, float)
+        finite = np.isfinite(v)
+        rgba = np.tile(noise_rgba, (v.shape[0], 1))  # NaN -> noise/NaN colour
+        if finite.any():
+            lo, hi = np.min(v[finite]), np.max(v[finite])
+            span = hi - lo
+            norm = (v[finite] - lo) / (span if span else 1.0)
+            rgba[finite] = plt.get_cmap("viridis")(norm)
+    return (rgba * 255).astype(np.uint8)
+
+
+def _render_cell_vedo(
+    vertices, faces, labels, view, *, noise_color, bg, size, scale, categorical
+) -> str:
+    """Render one (labeling, view) cell with vedo offscreen; return PNG path."""
+    from spectralbrain.viz.clusters import _build_vedo_mesh, _get_vedo, _view_camera
+
+    vedo = _get_vedo()
+    rgba_u8 = _label_rgba(labels, noise_color=noise_color, categorical=categorical)
+    mesh = _build_vedo_mesh(vertices, faces, vedo)
+    mesh.pointdata["RGBA"] = rgba_u8
+    mesh.pointdata.select("RGBA")
+    mesh.lighting("default")
+    cam = _view_camera(view, vertices)  # explicit RAS camera; raises on unknown
+    plotter = vedo.Plotter(offscreen=True, size=size, bg=bg)
+    plotter.show(mesh, camera=cam, zoom=1.1)
+    fd, png = tempfile.mkstemp(suffix=".png")
+    os.close(fd)
+    plotter.screenshot(png, scale=scale)
+    plotter.close()
+    return png
+
+
+def _render_cell_pyvista(
+    vertices, faces, labels, view, *, noise_color, bg, size, scale, categorical
+) -> str:
+    """PyVista fallback single-cell renderer; return PNG path."""
+    from spectralbrain.viz.render3d import _require_pyvista, _set_pv_camera
+
+    pv = _require_pyvista()
+    V = np.asarray(vertices, float)
+    F = np.asarray(faces, np.int64)
+    rgba = _label_rgba(labels, noise_color=noise_color, categorical=categorical)
+    mesh = pv.PolyData(V, np.column_stack([np.full(len(F), 3), F]).ravel())
+    mesh.point_data["RGBA"] = rgba
+    plotter = pv.Plotter(off_screen=True, window_size=[size[0] * scale, size[1] * scale])
+    plotter.set_background(bg)
+    plotter.add_mesh(mesh, scalars="RGBA", rgb=True, smooth_shading=True)
+    # same RAS camera convention as the vedo renderer (raises on unknown view)
+    _set_pv_camera(plotter, V, view)
+    fd, png = tempfile.mkstemp(suffix=".png")
+    os.close(fd)
+    plotter.screenshot(png)
+    plotter.close()
+    return png
+
+
+# ----------------------------------------------------------------------
+# The grid composer
+# ----------------------------------------------------------------------
+def plot_parcellation_cluster_grid(
+    vertices: np.ndarray,
+    faces: np.ndarray,
+    labelings: Mapping[str, np.ndarray],
+    *,
+    views: Sequence[str] | None = None,
+    engine: str = "vedo",
+    continuous: Sequence[str] | None = None,
+    noise_color: str = "lightgray",
+    bg: str = "white",
+    cell_size: tuple[int, int] = (600, 600),
+    scale: int = 2,
+    panel_letters: bool = True,
+    title: str | None = None,
+    save: PathLike | None = None,
+    dpi: int = 300,
+):
+    """3D grid comparing parcellations and clusterings side by side.
+
+    Rows are the entries of ``labelings`` (insertion order: put the reference
+    parcellation first, then each clustering); columns are anatomical ``views``.
+    Every cell is a 3D surface render coloured by that row's labeling, from that
+    column's camera. Suitable for hippocampi, brains, and bundle surfaces.
+
+    Parameters
+    ----------
+    vertices : (V, 3) array
+    faces : (F, 3) array
+    labelings : ordered mapping ``{name -> (V,) labels}``
+        e.g. ``{"Schaefer-200": atlas, "ddCRP": r1.labels, "Leiden": r2.labels}``.
+        Categorical by default; -1 is rendered as ``noise_color``.
+    views : sequence of str, optional
+        Camera presets (columns). Defaults to ``["left_lateral", "anterior",
+        "superior"]``. Valid names: see
+        :data:`spectralbrain.viz.clusters.CAMERA_PRESETS`.
+    engine : {"vedo", "pyvista"}
+        3D rendering backend.
+    continuous : sequence of str, optional
+        Names of labelings to render as continuous scalar maps (viridis) rather
+        than categorical colours (e.g. a thickness/HKS overlay row).
+    cell_size : (w, h)
+        Per-cell render size in pixels (before ``scale``).
+    save : path-like, optional
+        Output figure path (PNG/PDF). A sibling ``.png`` is also written for
+        non-PNG outputs.
+
+    Returns
+    -------
+    (matplotlib.figure.Figure, dict)
+        The composited figure and metadata (rendered cell paths, grid shape).
+    """
+    import matplotlib.image as mpimg
+    import matplotlib.pyplot as plt
+
+    from spectralbrain.viz._camera import validate_views
+    from spectralbrain.viz.clusters import CAMERA_PRESETS, VIEWS_3POSE
+
+    if views is None:
+        views = list(VIEWS_3POSE)
+    views = validate_views(views, CAMERA_PRESETS)
+    row_names = list(labelings.keys())
+    continuous = set(continuous or [])
+    n_rows, n_cols = len(row_names), len(views)
+    if n_rows == 0 or n_cols == 0:
+        raise ValueError("Need at least one labeling and one view.")
+
+    render = _render_cell_vedo if engine == "vedo" else _render_cell_pyvista
+
+    cell_paths: dict[tuple[str, str], str] = {}
+    for rname in row_names:
+        labels = np.asarray(labelings[rname])
+        if labels.shape[0] != vertices.shape[0]:
+            raise ValueError(
+                f"labeling '{rname}' has {labels.shape[0]} entries but the mesh "
+                f"has {vertices.shape[0]} vertices."
+            )
+        cat = rname not in continuous
+        for view in views:
+            png = render(
+                vertices,
+                faces,
+                labels,
+                view,
+                noise_color=noise_color,
+                bg=bg,
+                size=cell_size,
+                scale=scale,
+                categorical=cat,
+            )
+            cell_paths[(rname, view)] = png
+
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(3.0 * n_cols, 3.0 * n_rows), squeeze=False)
+    letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    k = 0
+    for i, rname in enumerate(row_names):
+        for j, view in enumerate(views):
+            ax = axes[i][j]
+            ax.imshow(mpimg.imread(cell_paths[(rname, view)]))
+            ax.set_xticks([])
+            ax.set_yticks([])
+            for spine in ax.spines.values():
+                spine.set_visible(False)
+            if i == 0:
+                ax.set_title(view.replace("_", " ").title(), fontsize=11)
+            if j == 0:
+                labf = np.asarray(labelings[rname], dtype=float)
+                n_k = int(np.unique(labf[np.isfinite(labf) & (labf >= 0)]).size)
+                ax.set_ylabel(f"{rname}\n(k={n_k})", fontsize=11, rotation=90, labelpad=10)
+            if panel_letters:
+                ax.text(
+                    0.03,
+                    0.97,
+                    letters[k % len(letters)],
+                    transform=ax.transAxes,
+                    fontsize=12,
+                    fontweight="bold",
+                    va="top",
+                    ha="left",
+                )
+            k += 1
+
+    if title:
+        fig.suptitle(title, fontsize=14, fontweight="bold")
+    fig.tight_layout()
+
+    meta = {
+        "cell_paths": cell_paths,
+        "shape": (n_rows, n_cols),
+        "rows": row_names,
+        "views": views,
+        "engine": engine,
+    }
+    if save is not None:
+        save = Path(save)
+        save.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(str(save), dpi=dpi, bbox_inches="tight")
+        if save.suffix.lower() != ".png":
+            fig.savefig(str(save.with_suffix(".png")), dpi=dpi, bbox_inches="tight")
+        logger.info("Saved parcellation/cluster grid -> %s", save)
+    return fig, meta
+
+
+def plot_parcellation_vs_clusters(
+    vertices: np.ndarray,
+    faces: np.ndarray,
+    parcellation: np.ndarray,
+    clusterings: Mapping[str, np.ndarray],
+    *,
+    parcellation_name: str = "Parcellation",
+    **kwargs,
+):
+    """Convenience wrapper: reference parcellation on top, clusterings below.
+
+    ``clusterings`` may map names to label arrays or to
+    :class:`~spectralbrain.statistics.clustering.ClusterResult` objects (their
+    ``.labels`` are used).
+    """
+    labelings: dict[str, np.ndarray] = {parcellation_name: np.asarray(parcellation)}
+    for name, val in clusterings.items():
+        labelings[name] = np.asarray(getattr(val, "labels", val))
+    return plot_parcellation_cluster_grid(vertices, faces, labelings, **kwargs)
+
+
+__all__: list[str] = [
+    "plot_parcellation_cluster_grid",
+    "plot_parcellation_vs_clusters",
+]

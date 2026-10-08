@@ -1,7 +1,7 @@
 # Foundations: the Laplace–Beltrami operator
 
 Everything in SpectralBrain is built on one object: the spectral decomposition of
-the **Laplace–Beltrami operator** (LBO) of a surface or point cloud. Understand
+the **Laplace–Beltrami operator** (LBO) of a surface mesh. Understand
 this page and the rest of the library is just a matter of which descriptor you
 read off the same basis.
 

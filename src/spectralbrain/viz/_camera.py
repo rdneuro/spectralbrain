@@ -3,17 +3,17 @@
 Every 3D renderer in :mod:`spectralbrain.viz` (vedo, PyVista, FURY) uses the
 same **RAS** convention, so a view name always means the same thing:
 
-* ``x`` = right (+) / left (−), ``y`` = anterior (+) / posterior (−),
-  ``z`` = superior (+) / inferior (−).
+* ``x`` = right (+) / left (-), ``y`` = anterior (+) / posterior (-),
+  ``z`` = superior (+) / inferior (-).
 * ``azimuth`` is measured in the axial plane from +x towards +y and
   ``elevation`` towards +z; the camera sits at
-  ``center + d · (cos el · cos az, cos el · sin az, sin el)``.
+  ``center + d * (cos el * cos az, cos el * sin az, sin el)``.
 
-So the *left lateral* camera sits at −x, *anterior* at +y and *superior* at +z.
+So the *left lateral* camera sits at -x, *anterior* at +y and *superior* at +z.
 Medial views assume a single hemisphere (``left_medial`` looks from +x).
 
 Cameras are always built as explicit ``position``/``focal_point``/``viewup``
-dicts — never as relative ``azimuth``/``elevation`` rotations, which several
+dicts -- never as relative ``azimuth``/``elevation`` rotations, which several
 backends silently override (vedo's ``viewup="z"`` resets the camera).
 """
 

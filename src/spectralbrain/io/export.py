@@ -50,7 +50,7 @@ def _require_nibabel():
 
 
 # ======================================================================
-# §1  HDF5 CACHE  (SpectralDecomposition persistence)
+# S1  HDF5 CACHE  (SpectralDecomposition persistence)
 # ======================================================================
 
 
@@ -84,11 +84,11 @@ def save_hdf5(
         Named descriptor arrays (e.g. ``{"hks": hks_matrix}``).
     metadata : dict, optional
         Scalar metadata stored as HDF5 attributes (version, atlas,
-        subject ID, structure name, backend used, …).
+        subject ID, structure name, backend used, ...).
     compression : str
         HDF5 compression filter.
     compression_opts : int
-        Compression level (1–9).
+        Compression level (1-9).
 
     Returns
     -------
@@ -139,7 +139,7 @@ def save_hdf5(
 
         f.attrs["spectralbrain_version"] = __version__
 
-    logger.info("Saved HDF5 → %s", out)
+    logger.info("Saved HDF5 -> %s", out)
     return out
 
 
@@ -168,7 +168,7 @@ def load_hdf5(path: PathLike) -> dict[str, Any]:
 
 
 # ======================================================================
-# §2  MESH EXPORT
+# S2  MESH EXPORT
 # ======================================================================
 
 
@@ -188,12 +188,12 @@ def save_mesh(
     Parameters
     ----------
     path : PathLike
-        Output file — format inferred from extension.
+        Output file -- format inferred from extension.
     vertices : ndarray, shape (N, 3)
     faces : ndarray, shape (F, 3)
     allow_vertex_reorder : bool, optional
         STL stores an unindexed triangle soup, so reading it back merges and
-        **reorders** vertices — any per-vertex data (descriptors, labels,
+        **reorders** vertices -- any per-vertex data (descriptors, labels,
         eigenvectors) no longer lines up with the reloaded mesh. ``None``
         (default) writes STL but logs a loud warning; ``False`` refuses to
         write STL; ``True`` writes it silently. Use ``.vtp``/``.vtk``/``.obj``
@@ -231,12 +231,12 @@ def save_mesh(
     faces_pv = np.hstack([np.full((len(f), 1), 3, dtype=np.int64), f]).ravel()
     mesh = pv.PolyData(v, faces_pv)
     mesh.save(str(out))
-    logger.info("Saved mesh → %s", out)
+    logger.info("Saved mesh -> %s", out)
     return out
 
 
 # ======================================================================
-# §3  GIFTI SCALAR OVERLAY EXPORT
+# S3  GIFTI SCALAR OVERLAY EXPORT
 # ======================================================================
 
 
@@ -275,12 +275,12 @@ def save_gifti_func(
 
     img = nib.gifti.GiftiImage(darrays=darrays)
     nib.save(img, str(out))
-    logger.info("Saved GIfTI func → %s", out)
+    logger.info("Saved GIfTI func -> %s", out)
     return out
 
 
 # ======================================================================
-# §4  NUMPY ARCHIVE EXPORT
+# S4  NUMPY ARCHIVE EXPORT
 # ======================================================================
 
 
@@ -295,7 +295,7 @@ def save_npz(
     path : PathLike
         Output ``.npz``.
     **arrays
-        Keyword → ndarray pairs.
+        Keyword -> ndarray pairs.
 
     Returns
     -------
@@ -304,12 +304,12 @@ def save_npz(
     out = Path(path)
     out.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(str(out), **arrays)
-    logger.info("Saved npz → %s", out)
+    logger.info("Saved npz -> %s", out)
     return out
 
 
 # ======================================================================
-# §5  CONNECTOME MATRIX EXPORT
+# S5  CONNECTOME MATRIX EXPORT
 # ======================================================================
 
 
@@ -328,7 +328,7 @@ def save_connectome(
         Output ``.tsv``.
     matrix : ndarray, shape (R, R)
     labels : list of str, optional
-        Region names for the header row/column. Defaults to ``0 … R-1``.
+        Region names for the header row/column. Defaults to ``0 ... R-1``.
         A header row is always written, so the file reads back with
         ``pandas.read_csv(path, sep="\t", index_col=0)`` without losing a row.
     float_format : str
@@ -363,7 +363,7 @@ def save_connectome(
             row_vals = "\t".join(float_format % v for v in matrix[i])
             fh.write(f"{row_labels[i]}\t{row_vals}\n")
 
-    logger.info("Saved connectome → %s", out)
+    logger.info("Saved connectome -> %s", out)
     return out
 
 

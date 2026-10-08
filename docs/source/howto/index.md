@@ -53,5 +53,5 @@ lateralizing left vs. right. Tutorials 06–10 assemble this end to end.
 
 :::{seealso}
 {doc}`../learn/normative_modeling`, and tutorials
-`08_cohorts_and_vertexwise_stats` through `10_bayesian_and_visualization`.
+`07_cohorts_and_vertexwise_stats` through `09_bayesian_and_visualization`.
 :::

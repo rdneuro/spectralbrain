@@ -1,7 +1,8 @@
-"""SpectralBrain — spectral shape analysis for brain structures.
+"""SpectralBrain -- spectral shape analysis for brain structures.
 
 SpectralBrain provides spectral shape descriptors (ShapeDNA, HKS, WKS,
-GPS, BKS, spectral graph wavelets) for brain surfaces and point clouds.
+GPS, BKS, spectral graph wavelets) for brain surface meshes, plus a family
+of non-LBO spectral operators (:mod:`spectralbrain.spectral.operators`).
 It supports multiple input modalities (T1, FreeSurfer, HippUnfold,
 TractSeg), Bayesian statistical models, and publication-quality
 visualizations.
@@ -28,14 +29,10 @@ Quick start::
 
 from __future__ import annotations
 
-# ── Runtime configuration ──
-# ── Backends (lazy — heavy imports deferred) ──
-from spectralbrain.backends import NumpyBackend
-
-# ── Core geometric objects ──
+# -- Core geometric objects and the default compute backend --
 from spectralbrain.core import (
     BrainMesh,
-    BrainPointCloud,
+    NumpyBackend,
     SpectralDecomposition,
     align_to_pca,
     center_points,
@@ -43,7 +40,6 @@ from spectralbrain.core import (
     compute_bounding_box,
     compute_centroid,
     compute_pca_axes,
-    farthest_point_sampling,
     hausdorff_distance,
     knn_search,
     normalize_scale,
@@ -51,7 +47,7 @@ from spectralbrain.core import (
     radius_search,
 )
 
-# ── I/O ──
+# -- I/O --
 from spectralbrain.io import (
     ATLAS_REGISTRY,
     DESIKAN_LOBE_MAP,
@@ -67,7 +63,6 @@ from spectralbrain.io import (
     discover_tractseg_subjects,
     extract_submesh,
     group_comparison,
-    labels_to_pointcloud,
     list_atlases,
     load,
     load_freesurfer_annot,
@@ -98,8 +93,8 @@ from spectralbrain.io import (
     volume_to_mesh,
 )
 
-# Version: resolved once in ``runtime`` (hatch-vcs ``_version`` file →
-# installed metadata → static fallback) so that ``sb.__version__`` and the
+# Version: resolved once in ``runtime`` (hatch-vcs ``_version`` file ->
+# installed metadata -> static fallback) so that ``sb.__version__`` and the
 # provenance written by the library always agree.
 from spectralbrain.runtime import (  # noqa: F401
     AnalysisObjective,
@@ -114,7 +109,7 @@ from spectralbrain.runtime import (  # noqa: F401
     set_log_level,
 )
 
-# ── Spectral analysis (the core value of the library) ──
+# -- Spectral analysis (the core value of the library) --
 from spectralbrain.spectral import (
     anisotropic_laplacian,
     biharmonic_distance,
@@ -140,7 +135,7 @@ from spectralbrain.spectral import (
     wesd_matrix,
 )
 
-# ── Utilities ──
+# -- Utilities --
 from spectralbrain.utils import (
     ASEG_LABELS,
     HIPPOCAMPAL_SUBFIELDS,
@@ -168,11 +163,9 @@ __all__ = [
     "AtlasScheme",
     "BackendName",
     "BrainMesh",
-    "BrainPointCloud",
     "DescriptorType",
     "GeometryFormat",
     "GroupData",
-    # Backends
     "NumpyBackend",
     "ParcellationResult",
     # Core
@@ -211,10 +204,7 @@ __all__ = [
     "discover_freesurfer",
     "discover_tractseg_bundles",
     "discover_tractseg_subjects",
-    # Expanded (non-LBO operators; lazy subpackage)
-    "expanded",
     "extract_submesh",
-    "farthest_point_sampling",
     "get_label_id",
     "get_label_name",
     # Runtime
@@ -223,7 +213,6 @@ __all__ = [
     "group_comparison",
     "hausdorff_distance",
     "knn_search",
-    "labels_to_pointcloud",
     "list_atlases",
     "list_labels",
     "load",
@@ -266,26 +255,3 @@ __all__ = [
     "wesd",
     "wesd_matrix",
 ]
-
-
-# ── Lazy access to the optional `expanded` subpackage ──
-# `spectralbrain.expanded` (non-LBO operators) pulls optional, heavy
-# scientific dependencies only when its descriptors are *used*.  We expose
-# it lazily so that `import spectralbrain` stays light: the subpackage is
-# imported on first attribute access (`sb.expanded....`).
-import importlib as _importlib
-from typing import Any as _Any
-
-
-def __getattr__(name: str) -> _Any:
-    """PEP 562 lazy attribute hook for optional subpackages."""
-    if name == "expanded":
-        mod = _importlib.import_module("spectralbrain.expanded")
-        globals()["expanded"] = mod
-        return mod
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
-def __dir__() -> list[str]:
-    """Include lazily-exposed names in dir()/tab-completion."""
-    return sorted(set(globals()) | {"expanded"})

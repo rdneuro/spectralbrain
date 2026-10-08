@@ -48,7 +48,7 @@ case "${1:-}" in
         echo "  --notebooks  Core + viz + notebook extras"
         echo "  --gpu        Core + PyTorch/CuPy/JAX"
         echo "  --bayesian   Core + PyMC/ArviZ/Bambi"
-        echo "  --viz        Core + vedo/open3d/yabplot/scienceplots"
+        echo "  --viz        Core + vedo/yabplot/scienceplots"
         echo "  --neuro      Core + nilearn/MNE/DiPy/ANTsPy"
         exit 0
         ;;
@@ -106,7 +106,7 @@ info "Verifying SpectralBrain installation..."
 .venv/bin/python -c "
 import spectralbrain as sb
 print(f'  SpectralBrain {sb.__version__}')
-print(f'  Modules: runtime, core, io, spectral, statistics, backends, utils, viz')
+print(f'  Modules: runtime, core, io, spectral, statistics, utils, viz')
 " 2>/dev/null && ok "SpectralBrain imported successfully!" || warn "Import check failed — some optional deps may be missing (this is OK for core-only installs)."
 
 # ── Step 7: Print activation instructions ──

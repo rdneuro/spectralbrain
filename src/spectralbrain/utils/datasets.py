@@ -19,7 +19,7 @@ _CACHE_DIR = Path.home() / ".cache" / "spectralbrain" / "datasets"
 
 
 # ======================================================================
-# §1  SYNTHETIC EXAMPLE DATASETS
+# S1  SYNTHETIC EXAMPLE DATASETS
 # ======================================================================
 
 
@@ -217,7 +217,7 @@ def make_laterality_example(
 
 
 # ======================================================================
-# §2  TEMPLATE LOADERS
+# S2  TEMPLATE LOADERS
 # ======================================================================
 
 
@@ -297,7 +297,7 @@ def fetch_fsaverage(
 
 
 # ======================================================================
-# §3  EXAMPLE MESH/POINTCLOUD
+# S3  EXAMPLE MESH
 # ======================================================================
 
 
@@ -311,7 +311,7 @@ def example_sphere(
     The UV-sphere is *welded*: duplicated seam/pole vertices are merged and
     the zero-area pole triangles removed, so the result is a closed
     manifold whose cotangent-LBO spectrum matches the analytic sphere
-    (λ·r² ≈ 0, 2, 2, 2, 6, …).
+    (lambda*r^2 ~ 0, 2, 2, 2, 6, ...).
 
     Returns
     -------
@@ -324,40 +324,7 @@ def example_sphere(
     return weld_mesh(v, f)
 
 
-def example_point_cloud(
-    n_points: int = 1000,
-    shape: str = "sphere",
-    seed: int = 0,
-) -> np.ndarray:
-    """Quick point cloud for testing.
-
-    Parameters
-    ----------
-    n_points : int
-    shape : str
-        ``"sphere"``, ``"ellipsoid"``, ``"blob"``, ``"multi_cluster"``.
-    seed : int
-
-    Returns
-    -------
-    ndarray, shape (n_points, 3)
-    """
-    from spectralbrain.statistics.surrogates import SyntheticPointCloud
-
-    gen = SyntheticPointCloud(seed=seed)
-    if shape == "sphere":
-        return gen.sphere(n_points)
-    elif shape == "ellipsoid":
-        return gen.ellipsoid(n_points)
-    elif shape == "blob":
-        return gen.blob(n_points)
-    elif shape == "multi_cluster":
-        return gen.multi_cluster(n_points)
-    raise ValueError(f"Unknown shape: {shape!r}")
-
-
 __all__ = [
-    "example_point_cloud",
     "example_sphere",
     "fetch_fsaverage",
     "make_connectome_example",

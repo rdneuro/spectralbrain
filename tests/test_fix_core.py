@@ -1,4 +1,4 @@
-"""Regression tests for bugs fixed in core/, backends/, runtime and utils/."""
+"""Regression tests for bugs fixed in core/ (incl. backends), runtime and utils/."""
 
 from __future__ import annotations
 
@@ -14,16 +14,10 @@ from scipy.spatial import ConvexHull
 
 import spectralbrain as sb
 from spectralbrain.core import meshes as meshes_mod
-from spectralbrain.core.base import (
-    compute_adjacency_from_knn,
-    estimate_point_density,
-    farthest_point_sampling,
-    marching_cubes,
-)
+from spectralbrain.core.base import marching_cubes
 from spectralbrain.core.meshes import BrainMesh, _voronoi_areas, weld_mesh
-from spectralbrain.core.pointclouds import BrainPointCloud
 
-# ── fixtures ───────────────────────────────────────────────────────────
+# -- fixtures -----------------------------------------------------------
 
 
 def _fib_sphere(n: int = 1500, r: float = 1.0) -> np.ndarray:
@@ -48,41 +42,7 @@ def _signed_volume(v: np.ndarray, f: np.ndarray) -> float:
     return float(np.einsum("ij,ij->i", v[f[:, 0]], np.cross(v[f[:, 1]], v[f[:, 2]])).sum() / 6)
 
 
-# ── #1 point-cloud Laplacian cache / sigma leak ────────────────────────
-
-
-def test_pointcloud_sigma_never_leaks_into_eigsh():
-    pc = BrainPointCloud(_fib_sphere(600))
-    with pytest.warns(DeprecationWarning):
-        a = pc.decompose(k=6, laplacian_method="knn", sigma=0.3)
-    with pytest.warns(DeprecationWarning):
-        b = pc.decompose(k=6, laplacian_method="knn", sigma=0.3)
-    np.testing.assert_allclose(a.eigenvalues, b.eigenvalues, atol=1e-10)
-    assert a.eigenvalues[0] < 1e-8  # smallest eigenvalues, not ones near a shift
-
-
-def test_pointcloud_cache_keyed_on_method_and_params():
-    pc = BrainPointCloud(_fib_sphere(600))
-    knn = pc.decompose(k=5, laplacian_method="knn")
-    bn = pc.decompose(k=5, laplacian_method="belkin_niyogi")
-    assert bn.metadata["laplacian_method"] == "belkin_niyogi"
-    assert not np.allclose(knn.eigenvalues, bn.eigenvalues)
-    narrow = pc.decompose(k=5, laplacian_method="knn", kernel_sigma=0.05)
-    assert not np.allclose(knn.eigenvalues, narrow.eigenvalues)
-    # explicitly built Laplacian is reused by a bare decompose()
-    pc.compute_laplacian("knn", k=12)
-    d = pc.decompose(k=5)
-    assert d.metadata["laplacian_method"] == "knn"
-    assert dict(d.metadata["laplacian_params"])["k"] == 12
-
-
-def test_pointcloud_eigsh_sigma_alias():
-    pc = BrainPointCloud(_fib_sphere(400))
-    d = pc.decompose(k=4, laplacian_method="knn", eigsh_sigma=-0.05)
-    assert d.eigenvalues[0] < 1e-8
-
-
-# ── #2 mesh Laplacian cache ────────────────────────────────────────────
+# -- #2 mesh Laplacian cache --------------------------------------------
 
 
 def test_mesh_decompose_rebuilds_on_method_change(monkeypatch):
@@ -112,7 +72,7 @@ def test_mesh_vertex_assignment_invalidates_cache():
     assert lam == pytest.approx(2.0 / 4.0, rel=0.05)
 
 
-# ── #3 / #4 shape index range and signed mean curvature ───────────────
+# -- #3 / #4 shape index range and signed mean curvature ---------------
 
 
 def test_shape_index_in_range_and_mean_curvature_signed():
@@ -129,7 +89,7 @@ def test_shape_index_in_range_and_mean_curvature_signed():
     assert np.median(flipped.shape_index()) == pytest.approx(-1.0, abs=0.05)
 
 
-# ── #5 degenerate triangles ────────────────────────────────────────────
+# -- #5 degenerate triangles --------------------------------------------
 
 
 def test_degenerate_faces_do_not_corrupt_spectrum():
@@ -157,7 +117,7 @@ def test_weld_mesh_merges_duplicates():
     assert len(vw) == 3 and len(fw) == 1
 
 
-# ── #10 curvature / areas ──────────────────────────────────────────────
+# -- #10 curvature / areas ----------------------------------------------
 
 
 def test_mixed_voronoi_areas_sum_to_area_and_differ_from_barycentric():
@@ -200,32 +160,7 @@ def test_smoothing_does_not_alias_metadata():
     assert m.metadata["structure"] == "x"
 
 
-# ── #11 Belkin–Niyogi scale ────────────────────────────────────────────
-
-
-def test_belkin_niyogi_approximates_sphere_spectrum():
-    pc = BrainPointCloud(_fib_sphere(2000))
-    lam = pc.decompose(k=5, laplacian_method="belkin_niyogi", area=4 * np.pi).eigenvalues
-    np.testing.assert_allclose(lam[1:4], 2.0, rtol=0.05)
-
-
-# ── #12 kNN self-inclusion ─────────────────────────────────────────────
-
-
-def test_knn_adjacency_has_no_self_loops():
-    p = np.random.default_rng(0).normal(size=(100, 3))
-    A = compute_adjacency_from_knn(p, k=5)
-    assert A.diagonal().sum() == 0
-    assert (np.asarray((A > 0).sum(axis=1)).ravel() >= 5).all()
-
-
-def test_point_density_uses_kth_other_neighbour():
-    p = np.array([[0.0, 0, 0], [1, 0, 0], [3, 0, 0]])
-    dens = estimate_point_density(p, k=1)
-    assert dens[0] == pytest.approx(1 / ((4 / 3) * np.pi * 1.0**3))
-
-
-# ── #17 marching cubes ─────────────────────────────────────────────────
+# -- #17 marching cubes -------------------------------------------------
 
 
 def _ball(label: int = 1) -> np.ndarray:
@@ -254,7 +189,7 @@ def test_marching_cubes_binarises_labels():
     np.testing.assert_array_equal(f1, f17)
 
 
-# ── #6 / #21 atlas ─────────────────────────────────────────────────────
+# -- #6 / #21 atlas -----------------------------------------------------
 
 
 def test_schaefer_to_yeo_exact_with_names_and_warns_without():
@@ -276,7 +211,7 @@ def test_get_label_id_exact_and_ambiguous():
     assert all(i < 1000 for i in right)
 
 
-# ── #9 logging ─────────────────────────────────────────────────────────
+# -- #9 logging ---------------------------------------------------------
 
 
 def test_set_log_level_controls_module_loggers():
@@ -292,18 +227,18 @@ def test_set_log_level_controls_module_loggers():
         set_log_level("INFO")
 
 
-# ── #13 / #16 reproducibility ──────────────────────────────────────────
+# -- #13 / #16 reproducibility ------------------------------------------
 
 
 def test_seed_everything_makes_library_rngs_deterministic():
-    from spectralbrain.runtime import set_global_seed
+    from spectralbrain.runtime import resolve_seed, set_global_seed
 
-    p = np.random.default_rng(1).normal(size=(200, 3))
     try:
         sb.seed_everything(7)
-        a = farthest_point_sampling(p, 10)[1]
+        a = np.random.default_rng(resolve_seed(None)).integers(0, 10**9, size=10)
         sb.seed_everything(7)
-        b = farthest_point_sampling(p, 10)[1]
+        b = np.random.default_rng(resolve_seed(None)).integers(0, 10**9, size=10)
+        assert resolve_seed(None) == 7
         np.testing.assert_array_equal(a, b)
     finally:
         set_global_seed(None)
@@ -313,7 +248,7 @@ def test_reproducibility_version_matches_package():
     assert sb.get_reproducibility_info()["spectralbrain"] == sb.__version__
 
 
-# ── #15 container integrity ────────────────────────────────────────────
+# -- #15 container integrity --------------------------------------------
 
 
 def test_container_placeholder_digest_warns(tmp_path):
@@ -336,11 +271,11 @@ def test_container_cached_digest_mismatch_raises(tmp_path):
         cm.ensure("fake")
 
 
-# ── #7 GPU fallback helpers (no GPU deps needed) ───────────────────────
+# -- #7 GPU fallback helpers (no GPU deps needed) -----------------------
 
 
 def test_gpu_fallback_reason_and_diagonal_check():
-    from spectralbrain.backends.gpu import _cpu_fallback_reason, _is_diagonal
+    from spectralbrain.core.backends import _cpu_fallback_reason, _is_diagonal
 
     D = sp.diags(np.ones(5))
     assert _is_diagonal(D)
@@ -350,11 +285,11 @@ def test_gpu_fallback_reason_and_diagonal_check():
     assert "not diagonal" in _cpu_fallback_reason(10, D + sp.eye(5, k=1), 20000)
 
 
-# ── #18 / #19 / #20 small utilities ────────────────────────────────────
+# -- #18 / #19 / #20 small utilities ------------------------------------
 
 
 def test_nutpie_sampler_forwards_config_and_overrides(monkeypatch):
-    from spectralbrain.backends import cpu
+    from spectralbrain.statistics import bayesian as cpu
 
     seen: dict = {}
     fake = types.SimpleNamespace(
@@ -368,7 +303,7 @@ def test_nutpie_sampler_forwards_config_and_overrides(monkeypatch):
 
 
 def test_memoryinfo_repr_has_no_docstring_text():
-    from spectralbrain.backends.cpu import MemoryInfo
+    from spectralbrain.runtime import MemoryInfo
 
     r = repr(MemoryInfo(16.0, 8.0, 8.0, 50.0))
     assert "Return" not in r and "50% used" in r

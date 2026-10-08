@@ -3,7 +3,7 @@
 This module provides high-level functions that orchestrate
 Singularity/Apptainer containers for skull-stripping, tissue
 segmentation, and structure extraction.  **No DL dependencies are
-installed on the host** — each tool runs inside its own immutable
+installed on the host** -- each tool runs inside its own immutable
 ``.sif`` container, downloaded once on first use.
 
 All functions delegate to :class:`spectralbrain.runtime.ContainerManager`.
@@ -23,6 +23,7 @@ Examples
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -47,7 +48,7 @@ def _get_manager() -> ContainerManager:
 
 
 # ======================================================================
-# §1  HIGH-LEVEL PREPROCESSING FUNCTIONS
+# S1  HIGH-LEVEL PREPROCESSING FUNCTIONS
 # ======================================================================
 
 
@@ -94,7 +95,7 @@ def skull_strip(
 
     cm = _get_manager()
     cm.run("hdbet", input_path=inp, output_path=out, gpu=gpu)
-    logger.info("Skull-stripped → %s", out)
+    logger.info("Skull-stripped -> %s", out)
     return out
 
 
@@ -107,13 +108,13 @@ def segment(
     """Segment a T1w (or T2w/FLAIR) image using SynthSeg.
 
     Produces a volumetric label map compatible with FreeSurfer's
-    ``aseg`` conventions.  Works on **any MRI contrast** — SynthSeg
+    ``aseg`` conventions.  Works on **any MRI contrast** -- SynthSeg
     is contrast-agnostic.
 
     Parameters
     ----------
     input_path : PathLike
-        Anatomical NIfTI (skull-stripped or not — SynthSeg handles both).
+        Anatomical NIfTI (skull-stripped or not -- SynthSeg handles both).
     output_path : PathLike, optional
         Output segmentation NIfTI.  Defaults to
         ``<input_stem>_synthseg.nii.gz``.
@@ -138,7 +139,7 @@ def segment(
 
     cm = _get_manager()
     cm.run("synthseg", input_path=inp, output_path=out, gpu=gpu)
-    logger.info("Segmented → %s", out)
+    logger.info("Segmented -> %s", out)
     return out
 
 
@@ -176,65 +177,69 @@ def run_fastsurfer(
 
     cm = _get_manager()
     cm.run("fastsurfer", input_path=inp, output_path=out, gpu=gpu)
-    logger.info("FastSurfer output → %s", out)
+    logger.info("FastSurfer output -> %s", out)
     return out
 
 
 # ======================================================================
-# §2  PIPELINE: RAW → GEOMETRY
+# S2  PIPELINE: RAW -> GEOMETRY
 # ======================================================================
 
 
-def raw_to_pointcloud(
+def raw_to_mesh(
     input_path: PathLike,
-    label_id: int,
+    label_id: int | list[int],
     *,
     output_dir: PathLike | None = None,
     gpu: bool | None = None,
-    jitter: bool = True,
-    jitter_scale: float = 0.25,
-    seed: int | None = None,
-) -> np.ndarray:
-    """End-to-end: raw T1w → skull-strip → segment → point cloud.
+    raw: bool = False,
+    closed: bool = True,
+    **mesh_kwargs: Any,
+) -> Any:
+    """End-to-end: raw T1w -> skull-strip -> segment -> LBO-ready mesh.
 
-    Chains :func:`skull_strip`, :func:`segment`, and
-    :func:`spectralbrain.io.labels_to_pointcloud` into a single call.
+    Chains :func:`skull_strip`, :func:`segment` and
+    :func:`spectralbrain.io.meshing.volume_to_mesh` into a single call.
 
     Parameters
     ----------
     input_path : PathLike
         Raw T1w NIfTI.
-    label_id : int
-        Target structure label (e.g. 17 for left hippocampus).
+    label_id : int or list of int
+        Target structure label(s) (e.g. 17 for the left hippocampus).
     output_dir : PathLike, optional
         Working directory for intermediate files.
     gpu : bool or None
         GPU passthrough.
-    jitter : bool
-        Add sub-voxel jitter to the point cloud.
-    jitter_scale : float
-        Jitter magnitude in voxel units.
-    seed : int, optional
-        RNG seed.
+    raw : bool
+        If ``True``, plain marching cubes (legacy path); otherwise the
+        improved, LBO-ready surface (default).
+    closed : bool
+        Treat the structure as a closed 2-manifold (see
+        :func:`spectralbrain.io.meshing.refine_mesh`).
+    **mesh_kwargs
+        Forwarded to :func:`spectralbrain.io.meshing.volume_to_mesh`.
 
     Returns
     -------
-    points : ndarray, shape (N, 3)
-        World-space point cloud for the target structure.
+    BrainMesh
+        World-space surface of the target structure, with the meshing
+        report and the source paths in ``metadata``.
 
     Examples
     --------
-    >>> hippo = raw_to_pointcloud("sub-01_T1w.nii.gz", label_id=17)
-    >>> hippo.shape
-    (4231, 3)
+    >>> hippo = raw_to_mesh("sub-01_T1w.nii.gz", label_id=17)
+    >>> decomp = hippo.decompose(k=100)
     """
-    from spectralbrain.io.loaders import labels_to_pointcloud, load_nifti
+    from spectralbrain.core.meshes import BrainMesh
+    from spectralbrain.io.loaders import load_nifti
+    from spectralbrain.io.meshing import volume_to_mesh
 
     inp = Path(input_path)
     wdir = Path(output_dir) if output_dir else inp.parent
     wdir.mkdir(parents=True, exist_ok=True)
 
-    stem = inp.name.split(".")[0]  # "sub-01_T1w.nii.gz" → "sub-01_T1w"
+    stem = inp.name.split(".")[0]  # "sub-01_T1w.nii.gz" -> "sub-01_T1w"
 
     # Step 1: skull-strip
     brain = skull_strip(inp, wdir / f"{stem}_brain.nii.gz", gpu=gpu)
@@ -242,21 +247,23 @@ def raw_to_pointcloud(
     # Step 2: segment
     seg = segment(brain, wdir / f"{stem}_synthseg.nii.gz", gpu=gpu)
 
-    # Step 3: extract point cloud
+    # Step 3: label volume -> mesh
     data, affine = load_nifti(seg)
-    points = labels_to_pointcloud(
-        data,
+    verts, faces, info = volume_to_mesh(
+        np.asarray(data),
         affine,
-        label_id,
-        jitter=jitter,
-        jitter_scale=jitter_scale,
-        seed=seed,
+        label=label_id,
+        raw=raw,
+        closed=closed,
+        return_info=True,
+        **mesh_kwargs,
     )
-    return points
+    meta = {**info, "source": str(inp), "segmentation": str(seg), "label_id": label_id}
+    return BrainMesh(verts, faces, metadata=meta)
 
 
 # ======================================================================
-# §3  CONTAINER STATUS / MANAGEMENT
+# S3  CONTAINER STATUS / MANAGEMENT
 # ======================================================================
 
 
@@ -280,7 +287,7 @@ def clean(tool: str | None = None) -> None:
 
 __all__ = [
     "clean",
-    "raw_to_pointcloud",
+    "raw_to_mesh",
     "run_fastsurfer",
     "segment",
     "skull_strip",

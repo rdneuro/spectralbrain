@@ -45,7 +45,7 @@ def test_mannwhitney_vectorized_matches_loop():
 
 
 # ----------------------------------------------------------------------
-# Permutation FWER (max-statistic) — the headline correctness fix
+# Permutation FWER (max-statistic) -- the headline correctness fix
 # ----------------------------------------------------------------------
 def test_permutation_max_dominates_pervertex():
     """FWER max-stat p-value is >= the per-vertex p at every vertex.
@@ -163,8 +163,8 @@ def test_bootstrap_bca_brackets_estimate():
 
 
 def test_compute_icc_recovers_high_reliability():
-    """ICC ≈ 1 when retest closely tracks test, ≈ 0 when independent."""
-    import spectralbrain.statistics.eda as E
+    """ICC ~ 1 when retest closely tracks test, ~ 0 when independent."""
+    import spectralbrain.statistics.analysis as E
 
     rng = np.random.default_rng(11)
     subj = rng.normal(0, 1, 50)

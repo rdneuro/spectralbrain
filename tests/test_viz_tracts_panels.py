@@ -8,12 +8,13 @@ import os
 import tempfile
 
 import matplotlib
+
 matplotlib.use("Agg")
 import numpy as np
 import pytest
 
-from spectralbrain.viz import panels as pn
-from spectralbrain.viz import tracts3d as nt
+from spectralbrain.viz import clusters as pn
+from spectralbrain.viz import render3d as nt
 
 skimage = pytest.importorskip("skimage")
 trimesh = pytest.importorskip("trimesh")

@@ -1,4 +1,4 @@
-"""Regression tests for the spectral / expanded bug-fix pass.
+"""Regression tests for the spectral (lbo + operators) bug-fix pass.
 
 Each test pins one previously verified bug (numbering follows the audit
 report) so that it cannot silently come back.
@@ -95,12 +95,12 @@ def _flip_sign(decomp: SpectralDecomposition, col: int) -> SpectralDecomposition
 
 
 # ----------------------------------------------------------------------
-# spectral/anisotropic.py  (#1, #2, #3)
+# spectral/lbo/anisotropic.py  (#1, #2, #3)
 # ----------------------------------------------------------------------
 
 
 def test_anisotropic_laplacian_symmetric_zero_rowsum() -> None:
-    from spectralbrain.spectral.anisotropic import anisotropic_laplacian
+    from spectralbrain.spectral.lbo.anisotropic import anisotropic_laplacian
 
     V, F = _icosphere(3)
     L, _ = anisotropic_laplacian(V, F, anisotropy=0.5)
@@ -108,13 +108,13 @@ def test_anisotropic_laplacian_symmetric_zero_rowsum() -> None:
     assert np.abs(np.asarray(L.sum(axis=1))).max() < 1e-10
     offdiag = np.asarray(L.sum(axis=1)).ravel() - L.diagonal()
     np.testing.assert_allclose(L.diagonal(), -offdiag, atol=1e-10)
-    # PSD (smallest eigenvalue ≈ 0)
+    # PSD (smallest eigenvalue ~ 0)
     w = np.linalg.eigvalsh(L.toarray())
     assert w.min() > -1e-9
 
 
 def test_min_curvature_direction_is_tangent() -> None:
-    from spectralbrain.spectral.anisotropic import _estimate_curvature_directions
+    from spectralbrain.spectral.lbo.anisotropic import _estimate_curvature_directions
 
     V, F = _icosphere(2)
     d = _estimate_curvature_directions(V, F, "min")
@@ -123,18 +123,18 @@ def test_min_curvature_direction_is_tangent() -> None:
 
 
 # ----------------------------------------------------------------------
-# expanded/anisotropic.py  (#4)
+# spectral/operators/finsler.py  (#4)
 # ----------------------------------------------------------------------
 
 
 def test_finsler_conductivity_along_direction() -> None:
-    from spectralbrain.expanded.anisotropic import finsler_laplacian
+    from spectralbrain.spectral.operators.finsler import finsler_laplacian
 
     P, F = _grid(21)
     cd = np.tile([1.0, 0.0, 0.0], (P.shape[0], 1))
     L, M = finsler_laplacian(P, F, anisotropy_ratio=4.0, custom_directions=cd)
     w, U = sla.eigh(L.toarray(), M.toarray())
-    # first non-trivial mode should vary along y (slow direction, λ≈π²)
+    # first non-trivial mode should vary along y (slow direction, lambda~pi^2)
     u = U[:, 1]
     assert abs(np.corrcoef(u, np.cos(np.pi * P[:, 1]))[0, 1]) > 0.99
     assert w[1] == pytest.approx(np.pi**2, rel=0.05)
@@ -148,12 +148,12 @@ def test_finsler_conductivity_along_direction() -> None:
 
 
 # ----------------------------------------------------------------------
-# expanded/operators.py  (#5, #14, #26)
+# spectral/operators/hamiltonian.py  (#5, #14, #26)
 # ----------------------------------------------------------------------
 
 
 def test_hamiltonian_signed_potential_not_clamped() -> None:
-    from spectralbrain.expanded.operators import hamiltonian_decompose
+    from spectralbrain.spectral.operators.hamiltonian import hamiltonian_decompose
 
     V, F = _icosphere(3)
     lbo = BrainMesh(V, F).decompose(k=10).eigenvalues
@@ -162,20 +162,20 @@ def test_hamiltonian_signed_potential_not_clamped() -> None:
 
 
 def test_compressed_modes_differ_from_lbo() -> None:
-    from spectralbrain.expanded.operators import compute_compressed_modes
+    from spectralbrain.spectral.operators.hamiltonian import compute_compressed_modes
 
     V, F = _bumped(3)
     V = V * 50.0  # mm-like scale
     lbo = BrainMesh(V, F).decompose(k=6)
     cm = compute_compressed_modes(V, F, k=6, n_iter=2, mu=5.0, backend="numpy")
-    # potential is commensurate with the spectrum, not a constant ~μ² shift
+    # potential is commensurate with the spectrum, not a constant ~mu^2 shift
     assert cm.eigenvalues.max() < 50 * lbo.eigenvalues.max()
     overlap = np.abs(cm.eigenvectors.T @ (lbo.mass @ lbo.eigenvectors))
     assert overlap.max(axis=1).min() < 0.99
 
 
 def test_siwks_scale_invariant() -> None:
-    from spectralbrain.expanded.operators import compute_siwks
+    from spectralbrain.spectral.operators.hamiltonian import compute_siwks
 
     V, F = _bumped(2)
     a = compute_siwks(V, F, k=20, n_energies=10, potential="zero", backend="numpy")
@@ -184,12 +184,12 @@ def test_siwks_scale_invariant() -> None:
 
 
 # ----------------------------------------------------------------------
-# spectral/collections.py  (#6, #7, #20)
+# spectral/lbo/collections.py  (#6, #7, #20)
 # ----------------------------------------------------------------------
 
 
 def test_functional_self_map_is_identity() -> None:
-    from spectralbrain.spectral.collections import compute_functional_map
+    from spectralbrain.spectral.lbo.collections import compute_functional_map
 
     V, F = _bumped(3)
     d = BrainMesh(V, F).decompose(k=30)
@@ -198,7 +198,7 @@ def test_functional_self_map_is_identity() -> None:
 
 
 def test_conformal_shape_difference_formula() -> None:
-    from spectralbrain.spectral.collections import shape_difference_operator
+    from spectralbrain.spectral.lbo.collections import shape_difference_operator
 
     rng = np.random.default_rng(0)
     C = rng.normal(size=(5, 5))
@@ -214,7 +214,7 @@ def test_conformal_shape_difference_formula() -> None:
 @pytest.mark.parametrize("diff_type", ["area", "conformal"])
 @pytest.mark.parametrize("n_energies", [5, 50])
 def test_dwks_finite(diff_type: str, n_energies: int) -> None:
-    from spectralbrain.spectral.collections import compute_dwks
+    from spectralbrain.spectral.lbo.collections import compute_dwks
 
     V, F = _bumped(2)
     a = BrainMesh(V, F).decompose(k=20)
@@ -225,12 +225,12 @@ def test_dwks_finite(diff_type: str, n_energies: int) -> None:
 
 
 # ----------------------------------------------------------------------
-# spectral/descriptors.py, wavelets.py, distances.py  (#8, #9, #15, #16, #17, #26b)
+# spectral/lbo/descriptors.py, wavelets.py, distances.py  (#8, #9, #15, #16, #17, #26b)
 # ----------------------------------------------------------------------
 
 
 def test_bates_sign_invariant(ellipsoid_decomp: SpectralDecomposition) -> None:
-    from spectralbrain.spectral.descriptors import compute_bates_signatures, compute_hks
+    from spectralbrain.spectral.lbo.descriptors import compute_bates_signatures, compute_hks
 
     t = np.array([0.1, 0.5, 1.0])
     b1 = compute_bates_signatures(ellipsoid_decomp, t_values=t, order=3)
@@ -242,7 +242,7 @@ def test_bates_sign_invariant(ellipsoid_decomp: SpectralDecomposition) -> None:
 
 
 def test_sgw_descriptor_sign_invariant(ellipsoid_decomp: SpectralDecomposition) -> None:
-    from spectralbrain.spectral.wavelets import sgw_descriptor
+    from spectralbrain.spectral.lbo.wavelets import sgw_descriptor
 
     s1 = sgw_descriptor(ellipsoid_decomp)
     s2 = sgw_descriptor(_flip_sign(ellipsoid_decomp, 3))
@@ -250,7 +250,7 @@ def test_sgw_descriptor_sign_invariant(ellipsoid_decomp: SpectralDecomposition) 
 
 
 def test_gps_skip_zero_false_no_blowup(ellipsoid_decomp: SpectralDecomposition) -> None:
-    from spectralbrain.spectral.descriptors import compute_gps
+    from spectralbrain.spectral.lbo.descriptors import compute_gps
 
     g = compute_gps(ellipsoid_decomp, skip_zero=False)
     assert g.shape[1] == ellipsoid_decomp.n_eigenvalues
@@ -259,7 +259,7 @@ def test_gps_skip_zero_false_no_blowup(ellipsoid_decomp: SpectralDecomposition) 
 
 
 def test_shapedna_fiedler_skip_zero_false(ellipsoid_decomp: SpectralDecomposition) -> None:
-    from spectralbrain.spectral.descriptors import compute_shapedna
+    from spectralbrain.spectral.lbo.descriptors import compute_shapedna
 
     dna = compute_shapedna(ellipsoid_decomp, normalize="fiedler", skip_zero=False)
     assert dna[1] == pytest.approx(1.0)
@@ -267,7 +267,7 @@ def test_shapedna_fiedler_skip_zero_false(ellipsoid_decomp: SpectralDecompositio
 
 
 def test_shared_hks_times(ellipsoid_decomp: SpectralDecomposition) -> None:
-    from spectralbrain.spectral.descriptors import compute_hks, shared_hks_times
+    from spectralbrain.spectral.lbo.descriptors import compute_hks, shared_hks_times
 
     V, F = _icosphere(3)
     other = BrainMesh(2.0 * V, F).decompose(k=20)
@@ -277,17 +277,17 @@ def test_shared_hks_times(ellipsoid_decomp: SpectralDecomposition) -> None:
 
 
 def test_correlation_distance_scalar_raises() -> None:
-    from spectralbrain.spectral.distances import descriptor_distance
+    from spectralbrain.spectral.lbo.distances import descriptor_distance
 
     with pytest.raises(ValueError):
         descriptor_distance(np.arange(5.0), np.arange(7.0), method="correlation")
 
 
 def test_sgw_transform_uses_mass(ellipsoid_decomp: SpectralDecomposition) -> None:
-    from spectralbrain.spectral.wavelets import heat_kernel, sgw_transform
+    from spectralbrain.spectral.lbo.wavelets import heat_kernel, sgw_transform
 
     d = ellipsoid_decomp
-    f = d.eigenvectors[:, 4].copy()  # an exact eigenfunction of M⁻¹L
+    f = d.eigenvectors[:, 4].copy()  # an exact eigenfunction of M^-1L
     out = sgw_transform(
         d.stiffness, np.array([0.3]), signal=f, kernel=heat_kernel,
         chebyshev_order=40, mass=d.mass,
@@ -296,14 +296,14 @@ def test_sgw_transform_uses_mass(ellipsoid_decomp: SpectralDecomposition) -> Non
 
 
 # ----------------------------------------------------------------------
-# expanded/persistent.py  (#10, #11, #12)
+# spectral/operators/persistent.py  (#10, #11, #12)
 # ----------------------------------------------------------------------
 
 
 def test_persistent_laplacian_schur_complement() -> None:
-    from spectralbrain.expanded.persistent import persistent_laplacian
+    from spectralbrain.spectral.operators.persistent import persistent_laplacian
 
-    # path a – c – b, K = {a, b}: one persistent component
+    # path a - c - b, K = {a, b}: one persistent component
     A = np.array([[0, 0, 1], [0, 0, 1], [1, 1, 0]], float)
     L = persistent_laplacian(A, subset=np.array([0, 1])).toarray()
     np.testing.assert_allclose(L, [[0.5, -0.5], [-0.5, 0.5]], atol=1e-12)
@@ -317,33 +317,33 @@ def test_persistent_laplacian_schur_complement() -> None:
 
 
 def test_betti_curve_counts_essential_bars() -> None:
-    from spectralbrain.expanded.persistent import betti_curve, graph_persistence_h0
+    from spectralbrain.spectral.operators.persistent import betti_curve, graph_persistence_h0
 
     dg = graph_persistence_h0(3, np.array([[0, 1], [1, 2]]), np.array([1.0, 2.0]))
     curve = betti_curve(dg, n_bins=5, value_range=(0.0, 2.5))
-    # t = 0, 0.625 → 3 comps; 1.25, 1.875 → 2; 2.5 → 1
+    # t = 0, 0.625 -> 3 comps; 1.25, 1.875 -> 2; 2.5 -> 1
     np.testing.assert_allclose(curve, [3, 3, 2, 2, 1])
 
 
 def test_persistence_image_ranges_and_pixels() -> None:
-    from spectralbrain.expanded.persistent import persistence_image
+    from spectralbrain.spectral.operators.persistent import persistence_image
 
     dg = np.array([[10.0, 30.0], [20.0, 50.0], [0.0, np.inf]])
     img = persistence_image(dg, pixels=(12, 8), spread=2.0)
     assert img.shape == (12, 8)
-    # total mass ≈ Σ persistence (bars well inside the fitted range)
+    # total mass ~ Sigma persistence (bars well inside the fitted range)
     assert img.sum() == pytest.approx(20.0 + 30.0, rel=0.05)
     fixed = persistence_image(dg, pixels=(10, 10), birth_range=(0, 40), pers_range=(0, 40))
     assert fixed.shape == (10, 10) and fixed.sum() > 0
 
 
 # ----------------------------------------------------------------------
-# expanded/graphs.py  (#13, #19, #25)
+# spectral/operators/graphs.py  (#13, #19, #25)
 # ----------------------------------------------------------------------
 
 
 def test_netlsd_complete_normalisation() -> None:
-    from spectralbrain.expanded.graphs import netlsd
+    from spectralbrain.spectral.operators.graphs import netlsd
 
     n = 6
     A = np.ones((n, n)) - np.eye(n)
@@ -355,7 +355,7 @@ def test_netlsd_complete_normalisation() -> None:
 
 
 def test_normalized_laplacian_isolated_node() -> None:
-    from spectralbrain.expanded.graphs import _laplacian_spectrum, netlsd
+    from spectralbrain.spectral.operators.graphs import _laplacian_spectrum, netlsd
 
     A = sp.csr_matrix(np.array([[0, 1, 0], [1, 0, 0], [0, 0, 0]], float))
     np.testing.assert_allclose(_laplacian_spectrum(A, normalized=True, k=None), [0, 0, 2], atol=1e-12)
@@ -364,7 +364,7 @@ def test_normalized_laplacian_isolated_node() -> None:
 
 
 def test_fgsd_biharmonic_filter() -> None:
-    from spectralbrain.expanded.graphs import fgsd
+    from spectralbrain.spectral.operators.graphs import fgsd
 
     # path graph on 3 nodes
     A = np.array([[0, 1, 0], [1, 0, 1], [0, 1, 0]], float)
@@ -380,12 +380,12 @@ def test_fgsd_biharmonic_filter() -> None:
 
 
 # ----------------------------------------------------------------------
-# expanded/_base.py, extrinsic.py  (#21, #22, #23)
+# spectral/operators/_base.py, extrinsic.py  (#21, #22, #23)
 # ----------------------------------------------------------------------
 
 
 def test_rotate_coord_sys_perpendicular() -> None:
-    from spectralbrain.expanded._base import _rotate_coord_sys
+    from spectralbrain.spectral.operators._base import _rotate_coord_sys
 
     up = np.array([[1.0, 0, 0]])
     vp = np.array([[0, 1.0, 0]])
@@ -396,18 +396,18 @@ def test_rotate_coord_sys_perpendicular() -> None:
 
 
 def test_shape_index_umbilic_sphere() -> None:
-    from spectralbrain.expanded._base import _shape_index_from_k, shape_index
+    from spectralbrain.spectral.operators._base import _shape_index_from_k, shape_index
 
     V, F = _icosphere(3)
     s = shape_index(V, F)
-    assert s.min() > 0.9  # convex sphere → ≈ +1 everywhere
+    assert s.min() > 0.9  # convex sphere -> ~ +1 everywhere
     np.testing.assert_allclose(
         _shape_index_from_k(np.array([1.0, -1.0, 0.0]), np.array([1.0, -1.0, 0.0])), [1, -1, 0]
     )
 
 
 def test_dks_uses_squared_dirac_spectrum() -> None:
-    from spectralbrain.expanded.extrinsic import compute_dks, dirac_decompose
+    from spectralbrain.spectral.operators.extrinsic import compute_dks, dirac_decompose
 
     V, F = _icosphere(2)
     d = dirac_decompose(V, F, k=12, backend="numpy")
@@ -421,13 +421,16 @@ def test_dks_uses_squared_dirac_spectrum() -> None:
 
 
 # ----------------------------------------------------------------------
-# expanded/topologic.py  (#24)
+# spectral/operators/topologic.py  (#24)
 # ----------------------------------------------------------------------
 
 
 def test_ricci_warns_when_weights_ignored(caplog: pytest.LogCaptureFixture) -> None:
     pytest.importorskip("networkx")
-    from spectralbrain.expanded.topologic import forman_ricci_curvature, ollivier_ricci_curvature
+    from spectralbrain.spectral.operators.topologic import (
+        forman_ricci_curvature,
+        ollivier_ricci_curvature,
+    )
 
     A = np.array([[0, 2.0, 1.0], [2.0, 0, 0.5], [1.0, 0.5, 0]])
     with caplog.at_level("WARNING"):
@@ -438,7 +441,7 @@ def test_ricci_warns_when_weights_ignored(caplog: pytest.LogCaptureFixture) -> N
 
 def test_cotangent_reference_unchanged() -> None:
     """Sanity: the isotropic path of anisotropic_laplacian is the cotan L."""
-    from spectralbrain.spectral.anisotropic import anisotropic_laplacian
+    from spectralbrain.spectral.lbo.anisotropic import anisotropic_laplacian
 
     V, F = _icosphere(2)
     L0, _ = _cotangent_laplacian(V, F)

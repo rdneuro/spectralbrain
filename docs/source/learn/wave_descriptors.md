@@ -31,7 +31,7 @@ curvature-aligned {func}`~spectralbrain.anisotropic_laplacian`, so the band-pass
 response becomes direction-sensitive.
 
 ```python
-from spectralbrain.spectral.anisotropic import compute_anisotropic_wks
+from spectralbrain.spectral.lbo.anisotropic import compute_anisotropic_wks
 a_wks = compute_anisotropic_wks(mesh, ...)
 ```
 

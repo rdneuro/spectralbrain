@@ -1,9 +1,9 @@
-"""Hippocampal surface visualisation — 3D multi-view + unfolded flatmaps.
+"""Hippocampal surface visualisation -- 3D multi-view + unfolded flatmaps.
 
 Combines two rendering engines:
-- **hippunfold_plot** (nilearn/matplotlib backend) — for 2D unfolded
+- **hippunfold_plot** (nilearn/matplotlib backend) -- for 2D unfolded
   flatmap views and standard 3D views via ``plot_hipp_surf()``.
-- **hippomaps** (BrainSpace/VTK backend) — for high-quality 3D
+- **hippomaps** (BrainSpace/VTK backend) -- for high-quality 3D
   folded renders via ``surfplot_sub_foldunfold()``.
 
 HippUnfold version compatibility
@@ -14,8 +14,8 @@ default changed from ``"0p5mm"`` to **``"8k"``** to match HippUnfold
 v2's vertex-count-based naming convention.
 
 - v1 labels still work but emit a ``DeprecationWarning``.
-- ``"8k"`` ≈ v1 ``"0p5mm"`` (~8,000 combined hipp + dentate vertices).
-- v2 merges ``label-hipp`` + ``label-dentate`` → ``label-hippdentate``;
+- ``"8k"`` ~ v1 ``"0p5mm"`` (~8,000 combined hipp + dentate vertices).
+- v2 merges ``label-hipp`` + ``label-dentate`` -> ``label-hippdentate``;
   all label variants are accepted.
 
 See :data:`DENSITIES` for the full mapping and :data:`HIPP_LABELS`
@@ -31,8 +31,12 @@ Figure types
 1. Single metric on one hippocampus (3D views + flatmap)
 2. Bilateral panel (L + R side by side)
 3. Group comparison (control vs patient vs difference)
-4. Spectral descriptor gallery (HKS, WKS, BKS, … stacked)
+4. Spectral descriptor gallery (HKS, WKS, BKS, ... stacked)
 5. Multi-subject normative deviation panel
+6. Template-free six-view render of any hippocampal mesh
+   (:func:`plot_hippocampus_sixview`) -- works on HippUnfold v2 ``den-8k``
+   meshes and separate ``hipp``/``dentate`` surfaces whose vertex count does
+   not match a bundled template (engine: :mod:`spectralbrain.viz.render3d`)
 """
 
 from __future__ import annotations
@@ -47,6 +51,7 @@ from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 
 from spectralbrain.runtime import PathLike, get_logger
+from spectralbrain.viz.render3d import SIXVIEWS, _load_surface, _sixview_figure
 
 logger = get_logger(__name__)
 
@@ -74,13 +79,13 @@ DENSITIES: dict[str, str] = {
     "8k": "8k",  # ~8,000 combined vertices (default)
     "18k": "18k",  # ~18,000 combined vertices
     # HippUnfold v1 backward-compatible aliases
-    "0p5mm": "0p5mm",  # v1 default — 7,262 hipp + 1,788 dentate
-    "1mm": "1mm",  # v1 — 2,004 hipp + 449 dentate
-    "2mm": "2mm",  # v1 — 419 hipp + 64 dentate
+    "0p5mm": "0p5mm",  # v1 default -- 7,262 hipp + 1,788 dentate
+    "1mm": "1mm",  # v1 -- 2,004 hipp + 449 dentate
+    "2mm": "2mm",  # v1 -- 419 hipp + 64 dentate
 }
 """Recognised HippUnfold density labels (v1 and v2)."""
 
-# v1 → v2 approximate equivalence (for docs/migration only).
+# v1 -> v2 approximate equivalence (for docs/migration only).
 _DENSITY_V1_TO_V2: dict[str, str] = {
     "0p5mm": "8k",
     "1mm": "2k",
@@ -187,7 +192,7 @@ def _load_map(surf_map: Any) -> np.ndarray | None:
             import nibabel as nib
 
             return np.asarray(nib.load(str(surf_map)).agg_data(), dtype=np.float64).ravel()
-        except Exception as exc:  # unreadable path → cannot compute shared range
+        except Exception as exc:  # unreadable path -> cannot compute shared range
             logger.warning("Could not read %s for colour scaling: %s", surf_map, exc)
             return None
     try:
@@ -214,7 +219,7 @@ def _shared_range(
 
 
 # ======================================================================
-# §0  LAZY IMPORTS
+# S0  LAZY IMPORTS
 # ======================================================================
 
 
@@ -237,7 +242,7 @@ def _require_hippomaps():
 
         return hippomaps
     except ImportError:
-        logger.debug("hippomaps not installed — using hippunfold_plot only.")
+        logger.debug("hippomaps not installed -- using hippunfold_plot only.")
         return None
 
 
@@ -262,7 +267,7 @@ def _save_figure(fig, path, formats=None):
 
 
 # ======================================================================
-# §1  CORE RENDERING
+# S1  CORE RENDERING
 # ======================================================================
 
 
@@ -368,7 +373,7 @@ def _fig_to_image(fig: Figure) -> np.ndarray:
 
 
 # ======================================================================
-# §2  SINGLE HIPPOCAMPUS — 3D + FLATMAP
+# S2  SINGLE HIPPOCAMPUS -- 3D + FLATMAP
 # ======================================================================
 
 
@@ -499,7 +504,7 @@ def plot_hippocampus(
 
 
 # ======================================================================
-# §3  BILATERAL PANEL
+# S3  BILATERAL PANEL
 # ======================================================================
 
 
@@ -612,7 +617,7 @@ def plot_hippocampus_bilateral(
 
 
 # ======================================================================
-# §4  GROUP COMPARISON
+# S4  GROUP COMPARISON
 # ======================================================================
 
 
@@ -640,17 +645,17 @@ def plot_hippocampus_comparison(
     formats: str | list[str] | None = None,
     shared_scale: bool = True,
 ) -> tuple[Figure, np.ndarray]:
-    """2–3 row group comparison: A, B, [A−B].
+    """2-3 row group comparison: A, B, [A-B].
 
     Parameters
     ----------
     group_a_map, group_b_map : str or ndarray
         Mean descriptor map per group.
     diff_map : str or ndarray, optional
-        A − B difference (or t-map / z-map).
+        A - B difference (or t-map / z-map).
     shared_scale : bool
         If True (default) and ``vmin``/``vmax`` are not given, groups A and B
-        share one colour range (pooled min/max).  False → each rendered map
+        share one colour range (pooled min/max).  False -> each rendered map
         auto-scales on its own (not comparable).
     """
     _warn_ignored(nan_color, style, display_type)
@@ -744,7 +749,7 @@ def plot_hippocampus_comparison(
 
 
 # ======================================================================
-# §5  DESCRIPTOR GALLERY
+# S5  DESCRIPTOR GALLERY
 # ======================================================================
 
 
@@ -763,7 +768,7 @@ def plot_hippocampus_gallery(
     formats: str | list[str] | None = None,
     styles: dict[str, dict[str, Any]] | None = None,
 ) -> tuple[Figure, np.ndarray]:
-    """Multi-row descriptor gallery — one row per descriptor.
+    """Multi-row descriptor gallery -- one row per descriptor.
 
     Parameters
     ----------
@@ -892,7 +897,7 @@ def plot_hippocampus_gallery(
 
 
 # ======================================================================
-# §6  NORMATIVE DEVIATION PANEL
+# S6  NORMATIVE DEVIATION PANEL
 # ======================================================================
 
 
@@ -936,7 +941,7 @@ def plot_hippocampus_normative(
         thr_map[~(np.abs(thr_map) > threshold)] = np.nan
     descriptors[f"|Z| > {threshold}"] = thr_map
 
-    # Per-call styles — the module-level HIPP_DESCRIPTOR_STYLES is not mutated.
+    # Per-call styles -- the module-level HIPP_DESCRIPTOR_STYLES is not mutated.
     styles = {
         "Z-score": {"cmap": cmap, "vmin": vmin, "vmax": vmax, "label": "Z-score"},
         f"|Z| > {threshold}": {
@@ -964,7 +969,7 @@ def plot_hippocampus_normative(
 
 
 # ======================================================================
-# §6  SPATIO-TEMPORAL DESCRIPTOR FIELD ON HIPPOCAMPAL UNFOLDED SHEET
+# S6  SPATIO-TEMPORAL DESCRIPTOR FIELD ON HIPPOCAMPAL UNFOLDED SHEET
 # ======================================================================
 
 
@@ -991,13 +996,13 @@ def plot_hippocampus_spatiotemporal(
     Wraps :func:`spectralbrain.viz.clusters.plot_spatiotemporal_field`
     with HippUnfold-aware defaults: loads the canonical unfolded
     mid-thickness surface and subfield labels automatically when paths
-    are provided, applies the AP × PD coordinate convention, and uses
+    are provided, applies the AP x PD coordinate convention, and uses
     neuroimaging-standard axis labels.
 
     This is the hippocampal-specific version of the general
     spatio-temporal small-multiples visualization.  Each panel shows
     how HKS/WKS varies across the unfolded hippocampal sheet at a
-    different diffusion time, revealing the local → global
+    different diffusion time, revealing the local -> global
     progression and how it relates to subfield boundaries.
 
     Parameters
@@ -1036,11 +1041,11 @@ def plot_hippocampus_spatiotemporal(
     Notes
     -----
     The unfolded surface from HippUnfold uses Laplace-solved coordinates
-    (AP × PD), not physical millimetres.  Axes are labelled accordingly
+    (AP x PD), not physical millimetres.  Axes are labelled accordingly
     as "AP coordinate" and "PD coordinate" to avoid misleading the
     reader.  Metric distortion between folded and unfolded spaces does
     not affect the plotted descriptor values (HKS/WKS are isometry-
-    invariant), but it does affect area-based statistics — use folded-
+    invariant), but it does affect area-based statistics -- use folded-
     surface vertex areas for any integration.
     """
     try:
@@ -1056,7 +1061,7 @@ def plot_hippocampus_spatiotemporal(
         surf_gii = nib.load(str(unfolded_surf_path))
         coords = surf_gii.agg_data("pointset")  # (V, 3)
         faces = surf_gii.agg_data("triangle")  # (F, 3)
-        # project 3D → 2D (drop the flat z ≈ 0)
+        # project 3D -> 2D (drop the flat z ~ 0)
         unfolded_2d = coords[:, :2]
     else:
         # attempt to get from hippunfold_plot bundled data
@@ -1143,7 +1148,7 @@ def plot_hippocampus_hovmoller(
     figsize: tuple[float, float] = (8, 4),
     save: PathLike | None = None,
 ) -> tuple[Figure, Axes]:
-    """Hovmöller diagram of descriptor along hippocampal axis × scale.
+    """Hovmoller diagram of descriptor along hippocampal axis x scale.
 
     Wraps :func:`spectralbrain.viz.clusters.plot_hovmoller` with
     HippUnfold-aware coordinate loading.
@@ -1196,32 +1201,117 @@ def plot_hippocampus_hovmoller(
         axis=axis,
         cmap=cmap,
         descriptor_name=descriptor_name,
-        title=f"Hovmöller — {descriptor_name} along {axis} ({hemi})",
+        title=f"Hovmoller -- {descriptor_name} along {axis} ({hemi})",
         figsize=figsize,
         save=save,
     )
 
 
 # ======================================================================
+# TEMPLATE-FREE SIX-VIEW (any hippocampal mesh)
+# ======================================================================
 
-__all__ = [
+
+def plot_hippocampus_sixview(
+    surface: Any,
+    scalars: np.ndarray | None = None,
+    *,
+    hemi: str = "L",
+    cmap: str | None = None,
+    signed: bool = False,
+    clim: tuple[float, float] | None = None,
+    scalar_bar_title: str = "value",
+    title: str | None = None,
+    views: tuple[str, ...] = SIXVIEWS,
+    smooth_iter: int = 10,
+    surface_color: str = "wheat",
+    window: tuple[int, int] = (560, 520),
+    pad: float = 0.05,
+    save: PathLike | None = None,
+    formats: list[str] | None = None,
+    nan_color: str = "lightgray",
+):
+    """Render a hippocampal surface in six canonical anatomical views.
+
+    Template-free: works directly on HippUnfold v2 ``den-8k`` meshes,
+    separate ``hipp``/``dentate`` surfaces, or any ``(coords, faces)`` --
+    vertex<->scalar correspondence is guaranteed because the scalar is
+    rendered on the very mesh it was computed on.
+
+    Parameters
+    ----------
+    surface : BrainMesh, (coords, faces), or path
+        The hippocampal surface (GIFTI ``.surf.gii`` or FreeSurfer
+        geometry paths are accepted).
+    scalars : ndarray, shape (N,), optional
+        Per-vertex field (HKS, thickness, Cohen's d, ...). If ``None`` the
+        bare geometry is rendered in ``surface_color``.
+    hemi : {"L", "R"}
+        Hemisphere label (annotation only; cameras are anatomical).
+    cmap : str, optional
+        Defaults to ``"plasma"`` (unsigned) or ``"RdBu_r"`` (``signed``).
+    signed : bool
+        Symmetric colour limits about zero (for contrasts / t-stats).
+    clim : (lo, hi), optional
+        Manual colour limits; else 2nd-98th percentile.
+    scalar_bar_title : str
+        Colorbar label (include units, e.g. ``"Thickness (mm)"``).
+    title : str, optional
+        Figure suptitle.
+    views : tuple of str
+        Subset / ordering of :data:`spectralbrain.viz.render3d.SIXVIEWS`.
+    smooth_iter : int
+        Laplacian smoothing iterations (10-15 keeps anatomical detail).
+    surface_color : str
+        Mesh colour when ``scalars`` is ``None`` (named/hex; not a gray
+        string).
+    window : (w, h)
+        Per-view render size in pixels (scaled up by anti-aliasing).
+    pad : float
+        Margin fraction around the fitted mesh (0 = tightest framing).
+        The camera auto-fits the bounds per view, so no view is cropped.
+    save : path, optional
+        If given, write the figure (``formats`` controls extensions).
+    nan_color : str
+        Colour for vertices whose scalar is NaN (e.g. medial wall).
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+    """
+    coords, faces = _load_surface(surface)
+    return _sixview_figure(
+        coords,
+        faces,
+        scalars,
+        cmap=cmap,
+        signed=signed,
+        clim=clim,
+        scalar_bar_title=scalar_bar_title,
+        title=title,
+        views=views,
+        smooth_iter=smooth_iter,
+        surface_color=surface_color,
+        window=window,
+        pad=pad,
+        save=save,
+        formats=formats,
+        nan_color=nan_color,
+    )
+
+
+__all__: list[str] = [
     "DENSITIES",
     "HIPP_DESCRIPTOR_STYLES",
     "HIPP_LABELS",
-    # Constants
     "HIPP_VIEWS_3D",
     "HIPP_VIEWS_FULL",
-    # Single hippocampus
     "plot_hippocampus",
-    # Bilateral
     "plot_hippocampus_bilateral",
-    # Group comparison
     "plot_hippocampus_comparison",
-    # Descriptor gallery
     "plot_hippocampus_gallery",
     "plot_hippocampus_hovmoller",
-    # Normative
     "plot_hippocampus_normative",
-    # Spatio-temporal
+    "plot_hippocampus_sixview",
     "plot_hippocampus_spatiotemporal",
 ]

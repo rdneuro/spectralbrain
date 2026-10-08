@@ -12,11 +12,11 @@ import pytest
 import scipy.sparse as sp
 
 import spectralbrain.statistics.analysis as A
-import spectralbrain.statistics.clustering as C
-import spectralbrain.statistics.eda as E
+import spectralbrain.statistics.analysis as E
+import spectralbrain.statistics.clustering.methods as C
 import spectralbrain.statistics.normative as Nm
 import spectralbrain.statistics.surrogates as Su
-from spectralbrain.statistics._clustercore import cluster_stats, consensus, nulls
+from spectralbrain.statistics.clustering._core import consensus, nulls
 
 
 def _path_adjacency(n: int) -> sp.csr_matrix:
@@ -41,8 +41,9 @@ def test_eigenstrapping_surrogates_are_not_copies():
     Q = _orthobasis()
     evals = np.linspace(0, 10, Q.shape[1])  # no degeneracy at all
     data = np.random.default_rng(1).normal(size=Q.shape[0])
-    surr = nulls.eigenstrapping_surrogates(data, evals, Q, np.ones(Q.shape[0]),
-                                           n_surrogates=5, residual="none")
+    surr = nulls.eigenstrapping_surrogates(
+        data, evals, Q, np.ones(Q.shape[0]), n_surrogates=5, residual="none"
+    )
     assert np.abs(surr - surr[0]).max() > 1e-3
     # Power within each Koussis block is preserved; mode 0 is fixed.
     c = Q.T @ data
@@ -56,17 +57,21 @@ def test_eigenstrapping_surrogates_are_not_copies():
 def test_eigenstrapping_residual_permuted_keeps_variance_scale():
     Q = _orthobasis()
     data = np.random.default_rng(2).normal(size=Q.shape[0])
-    surr = Su.null_eigenstrapping(data, np.linspace(0, 10, 30), Q, np.ones(200),
-                                  n_surrogates=3)
+    surr = Su.null_eigenstrapping(data, np.linspace(0, 10, 30), Q, np.ones(200), n_surrogates=3)
     assert np.isclose(np.sum(surr[0] ** 2), np.sum(data**2), rtol=0.5)
 
 
 def test_eigenstrapping_degenerate_grouping_warns():
     Q = _orthobasis()
     with pytest.warns(RuntimeWarning, match="No near-degenerate"):
-        nulls.eigenstrapping_surrogates(np.ones(200), np.linspace(0, 10, 30), Q,
-                                        np.ones(200), n_surrogates=2,
-                                        grouping="degenerate")
+        nulls.eigenstrapping_surrogates(
+            np.ones(200),
+            np.linspace(0, 10, 30),
+            Q,
+            np.ones(200),
+            n_surrogates=2,
+            grouping="degenerate",
+        )
 
 
 def test_edge_rewiring_preserves_degree_without_loops_or_multiedges():
@@ -259,7 +264,7 @@ def test_nadeau_bengio_correction_widens_ci():
 
 
 # ----------------------------------------------------------------------
-# eda.py
+# analysis.py -- EDA / QC section
 # ----------------------------------------------------------------------
 def test_icc_is_per_column():
     rng = np.random.default_rng(0)
@@ -297,8 +302,9 @@ def test_batch_effect_scan_flags_untestable():
 def test_denoise_identity_filter_is_identity():
     n = 40
     H = np.ones((n, 8)) * 5
-    out = C.denoise_joint_timevertex(H, _path_laplacian(n), alpha_graph=0, beta_time=0,
-                                     n_eigenvectors=10)
+    out = C.denoise_joint_timevertex(
+        H, _path_laplacian(n), alpha_graph=0, beta_time=0, n_eigenvectors=10
+    )
     assert np.allclose(out, 5.0)
 
 
@@ -307,8 +313,7 @@ def test_joint_spectral_uses_data():
     rng = np.random.default_rng(0)
     L = _path_laplacian(n)
     r1 = C.cluster_joint_spectral(rng.random((n, 5)), L, n_clusters=3, n_eigenvectors=20)
-    r2 = C.cluster_joint_spectral(rng.random((n, 5)) ** 4, L, n_clusters=3,
-                                  n_eigenvectors=20)
+    r2 = C.cluster_joint_spectral(rng.random((n, 5)) ** 4, L, n_clusters=3, n_eigenvectors=20)
     assert not np.allclose(r1.metadata["spectral_energy"], r2.metadata["spectral_energy"])
 
 
@@ -324,8 +329,12 @@ def test_coclustering_smoothing_uses_laplacian():
     pytest.importorskip("sklearn")
     n = 40
     rng = np.random.default_rng(0)
-    H = np.vstack([rng.random((20, 6)) + np.array([5, 5, 5, 0, 0, 0]),
-                   rng.random((20, 6)) + np.array([0, 0, 0, 5, 5, 5])])
+    H = np.vstack(
+        [
+            rng.random((20, 6)) + np.array([5, 5, 5, 0, 0, 0]),
+            rng.random((20, 6)) + np.array([0, 0, 0, 5, 5, 5]),
+        ]
+    )
     r = C.cluster_spectral_coclustering(H, n_clusters=2, adjacency=_path_adjacency(n))
     # Smoothing on a path keeps two contiguous blocks.
     assert len(np.unique(r.labels[:20])) == 1 and len(np.unique(r.labels[20:])) == 1
@@ -334,8 +343,9 @@ def test_coclustering_smoothing_uses_laplacian():
 def test_spatiotemporal_gnmf_stays_finite_nonnegative():
     rng = np.random.default_rng(0)
     H = rng.random((30, 10))
-    r = C.cluster_spatiotemporal_gnmf(H, _path_adjacency(30), n_components=3,
-                                      lam_temporal=50.0, n_iter=50, backend="cpu")
+    r = C.cluster_spatiotemporal_gnmf(
+        H, _path_adjacency(30), n_components=3, lam_temporal=50.0, n_iter=50, backend="cpu"
+    )
     for k in ("W", "F"):
         assert np.all(np.isfinite(r.metadata[k])) and np.all(r.metadata[k] >= 0)
 
@@ -363,35 +373,43 @@ def test_persistence_fallback_clusters_maxima():
 def test_vineyards_record_representative_vertex():
     rng = np.random.default_rng(0)
     H = rng.random((50, 4))
-    r = C.cluster_vineyards(H, _path_adjacency(50), min_persistence_frac=0.0,
-                            min_life_frac=0.0)
+    r = C.cluster_vineyards(H, _path_adjacency(50), min_persistence_frac=0.0, min_life_frac=0.0)
     assert r.salient_features
     assert all(f["representative_vertex"] >= 0 for f in r.salient_features)
 
 
 def test_dpmm_mrf_not_silently_ignored():
     with pytest.raises(NotImplementedError):
-        C.cluster_dpmm(np.random.default_rng(0).random((30, 4)), adjacency=_path_adjacency(30),
-                       mrf_beta=1.0, dim_reduction=None)
+        C.cluster_dpmm(
+            np.random.default_rng(0).random((30, 4)),
+            adjacency=_path_adjacency(30),
+            mrf_beta=1.0,
+            dim_reduction=None,
+        )
 
 
 # ----------------------------------------------------------------------
-# _clustercore
+# clustering._core
 # ----------------------------------------------------------------------
 def test_mantel_kendall_null_matches_statistic(monkeypatch):
-    calls = []
-    orig = cluster_stats._corr_vec
+    # The permutation null must use the same statistic as the observed value.
+    calls = {"kendall": 0, "spearman": 0, "pearson": 0}
+    orig = {
+        k: getattr(A.sp_stats, f)
+        for k, f in [("kendall", "kendalltau"), ("spearman", "spearmanr"), ("pearson", "pearsonr")]
+    }
+    for k, f in [("kendall", "kendalltau"), ("spearman", "spearmanr"), ("pearson", "pearsonr")]:
 
-    def spy(va, vb, method):
-        calls.append(method)
-        return orig(va, vb, method)
+        def spy(*a, _k=k, **kw):
+            calls[_k] += 1
+            return orig[_k](*a, **kw)
 
-    monkeypatch.setattr(cluster_stats, "_corr_vec", spy)
+        monkeypatch.setattr(A.sp_stats, f, spy)
     rng = np.random.default_rng(0)
     X = rng.normal(size=(8, 3))
     D = np.linalg.norm(X[:, None] - X[None], axis=-1)
-    r, p = cluster_stats.mantel_test(D, D, n_perm=20, method="kendall")
-    assert set(calls) == {"kendall"}
+    r, p = A.mantel_test(D, D, n_permutations=20, method="kendall", seed=0)
+    assert calls == {"kendall": 21, "spearman": 0, "pearson": 0}
     assert 0 < p <= 1 and r == pytest.approx(1.0)
 
 

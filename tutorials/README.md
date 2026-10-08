@@ -1,6 +1,6 @@
 # SpectralBrain tutorials
 
-A ten-notebook, hands-on introduction to spectral shape analysis of brain
+A nine-notebook, hands-on introduction to spectral shape analysis of brain
 structures with SpectralBrain. The series runs end to end on a small bundled
 dataset of five real subjects (no downloads), and is designed to be worked
 through in order: each notebook builds on the previous one, from the
@@ -15,11 +15,10 @@ Laplace-Beltrami operator to a full Bayesian, publication-ready workflow.
 | 03 | `03_shapedna_global_fingerprint.ipynb` | ShapeDNA, heat-trace asymptotics, scale invariance, shape distance | `compute_shapedna`, `shapedna_distance` |
 | 04 | `04_heat_kernel_signature.ipynb` | HKS, multi-scale diffusion, curvature link, SI-HKS | `compute_hks`, `compute_si_hks` |
 | 05 | `05_wave_kernel_and_gps.ipynb` | WKS (band-pass) and the GPS embedding | `compute_wks`, `compute_gps` |
-| 06 | `06_pointclouds_and_tracts.ipynb` | Point clouds, the robust Laplacian, BKS / iBKS, white-matter tracts | `BrainPointCloud`, `compute_bks`, `compute_ibks` |
-| 07 | `07_functional_maps_and_distances.ipynb` | Functional maps and intrinsic / extrinsic distances | `compute_functional_map`, `biharmonic_distance`, `chamfer_distance` |
-| 08 | `08_cohorts_and_vertexwise_stats.ipynb` | Cohorts and vertex-wise statistics with FWE / FDR / TFCE | `load_group`, `vertexwise_permutation`, `tfce`, `cohens_d_map` |
-| 09 | `09_effectsizes_classification_harmonization.ipynb` | AUC / DeLong, bootstrap, ICC, classification, ComBat | `auc_comparison_delong`, `bootstrap_ci`, `classify`, `harmonize_combat` |
-| 10 | `10_bayesian_and_visualization.ipynb` | Bayesian models and the visualization capstone | `HorseshoeRegression`, `BayesianGroupComparison`, `GaussianProcessNormative` |
+| 06 | `06_functional_maps_and_distances.ipynb` | Functional maps and intrinsic / extrinsic distances | `compute_functional_map`, `biharmonic_distance`, `chamfer_distance` |
+| 07 | `07_cohorts_and_vertexwise_stats.ipynb` | Cohorts and vertex-wise statistics with FWE / FDR / TFCE | `load_group`, `vertexwise_permutation`, `tfce`, `cohens_d_map` |
+| 08 | `08_effectsizes_classification_harmonization.ipynb` | AUC / DeLong, bootstrap, ICC, classification, ComBat | `auc_comparison_delong`, `bootstrap_ci`, `classify`, `harmonize_combat` |
+| 09 | `09_bayesian_and_visualization.ipynb` | Bayesian models and the visualization capstone | `HorseshoeRegression`, `BayesianGroupComparison`, `GaussianProcessNormative` |
 
 Each notebook ends with five exercises and a pointer to the next.
 
@@ -32,9 +31,10 @@ pip install -e ".[bayesian,viz,neuro,notebooks]"
 jupyter lab tutorials/
 ```
 
-Point-cloud notebooks (06, and the tract parts of 02) require
+The robust-Laplacian comparison in notebook 02 requires
 [`robust_laplacian`](https://pypi.org/project/robust-laplacian/), which is
-included in the `neuro` and `notebooks` extras above.
+included in the `neuro` and `notebooks` extras above. Point-cloud analyses of the
+same data (the former notebook 06) moved to the sibling library `pointsbrain`.
 
 ## The bundled dataset (`tutorials/data/`)
 
@@ -52,7 +52,7 @@ orientation vectors to a binary mask; notebook 02 shows the conversion.
 ## A note on sample size
 
 Five subjects are enough to demonstrate every function and concept, but far too
-few for real group inference. Notebooks 08–10 therefore use small, **clearly
+few for real group inference. Notebooks 07–09 therefore use small, **clearly
 labelled synthetic cohorts built on the real template geometry** for the
 statistical and Bayesian demonstrations. These illustrate the methods only and
 make no scientific claim. To scale to a real study, swap the single-subject

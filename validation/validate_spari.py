@@ -10,7 +10,7 @@ is a structural reimplementation in the weighted-Rand / chance-corrected family
 This script provides three layers of validation:
 
 1. **Analytical properties** (run anywhere, no R): every correct spatial ARI must
-   satisfy these, and they are exact or near-exact checks —
+   satisfy these, and they are exact or near-exact checks --
    - identity:            spARI(P, P) == 1
    - label invariance:    relabelling either partition does not change spARI
    - symmetry:            spARI(A, B) == spARI(B, A)
@@ -29,7 +29,7 @@ This script provides three layers of validation:
 
 3. **R bridge** (``--with-r``, run on a machine with R + the ``spARI`` package):
    generates random (a, b, coords) cases, computes spARI in Python and in R,
-   writes a CSV of paired values, and reports max |Δ| and correlation. This is
+   writes a CSV of paired values, and reports max |Delta| and correlation. This is
    the cell-for-cell validation that justifies flipping ``validated_against_R``.
 
 Usage
@@ -127,7 +127,7 @@ def test_label_invariance(rng):
     pa = rng.permutation(a.max() + 1); pb = rng.permutation(b.max() + 1)
     r2 = _lib(pa[a], pb[b], coords=coords)["spARI"]
     ok = abs(r1 - r2) < 1e-9
-    return ok, f"relabel Δ={abs(r1 - r2):.2e}"
+    return ok, f"relabel Delta={abs(r1 - r2):.2e}"
 
 
 def test_symmetry(rng):
@@ -139,7 +139,7 @@ def test_symmetry(rng):
     r_ab = _lib(a, b, distance=D, adjusted=False)["spRI"]
     r_ba = _lib(b, a, distance=D, adjusted=False)["spRI"]
     ok = abs(r_ab - r_ba) < 1e-9
-    return ok, f"spRI sym Δ={abs(r_ab - r_ba):.2e}"
+    return ok, f"spRI sym Delta={abs(r_ab - r_ba):.2e}"
 
 
 def test_reduction_to_ari(rng):
@@ -203,8 +203,8 @@ def test_reference_agreement(rng, n_cases):
         deltas.append((abs(lib["spRI"] - ref["spRI"]), abs(lib["spARI"] - ref["spARI"])))
     deltas = np.array(deltas)
     ok = float(deltas[:, 0].max()) < 1e-9 and float(deltas[:, 1].max()) < 0.05
-    return ok, (f"max|ΔspRI|={deltas[:,0].max():.2e} (exact)  "
-                f"max|ΔspARI|={deltas[:,1].max():.4f} (MC tol 0.05)")
+    return ok, (f"max|DeltaspRI|={deltas[:,0].max():.2e} (exact)  "
+                f"max|DeltaspARI|={deltas[:,1].max():.4f} (MC tol 0.05)")
 
 
 # ----------------------------------------------------------------------
@@ -261,8 +261,8 @@ def run_r_bridge(n_cases=50, seed=0, tol=1e-3):
     d_spri = np.abs(rows[:, 1] - rows[:, 2]).max()
     d_spari = np.abs(rows[:, 3] - rows[:, 4]).max()
     corr = float(np.corrcoef(rows[:, 3], rows[:, 4])[0, 1])
-    print(f"  R bridge: {len(rows)} cases | max|ΔspRI|={d_spri:.2e} "
-          f"max|ΔspARI|={d_spari:.2e} corr(spARI)={corr:.5f}")
+    print(f"  R bridge: {len(rows)} cases | max|DeltaspRI|={d_spri:.2e} "
+          f"max|DeltaspARI|={d_spari:.2e} corr(spARI)={corr:.5f}")
     print(f"  paired values written to {csv}")
     agree = d_spari < tol
     print(f"  -> {'MATCH' if agree else 'MISMATCH'} at tol={tol}. "
@@ -287,7 +287,7 @@ def main():
     rng = np.random.default_rng(0)
 
     print("=" * 70)
-    print("spARI validation — analytical properties (no R required)")
+    print("spARI validation -- analytical properties (no R required)")
     print("=" * 70)
     checks = [
         ("identity  spARI(P,P)=1", test_identity(rng)),

@@ -7,7 +7,7 @@ ones whose dependencies are installable on CPU are exercised here. Tests
 than failing.
 
 The reference for every general backend is :class:`NumpyBackend`: on the
-analytic unit sphere the Laplace–Beltrami eigenvalues are ``l*(l+1)``
+analytic unit sphere the Laplace-Beltrami eigenvalues are ``l*(l+1)``
 (``0, 2, 2, 2, 6, 6, ...``), so any backend's ``eigsh`` must reproduce the
 NumPy result to near machine precision.
 """
@@ -16,7 +16,7 @@ import numpy as np
 import pytest
 
 import spectralbrain as sb
-from spectralbrain.backends import NumpyBackend
+from spectralbrain.core.backends import NumpyBackend
 
 
 def _icosphere(subdivisions: int = 3):
@@ -73,14 +73,14 @@ def test_numpy_backend_recovers_sphere_spectrum():
     decomp = sb.BrainMesh(v, f).decompose(k=10, backend=NumpyBackend())
     ev = np.sort(decomp.eigenvalues)
     assert abs(ev[0]) < 1e-6
-    # First non-trivial triplet ≈ 2 (l=1 → l(l+1)=2).
+    # First non-trivial triplet ~ 2 (l=1 -> l(l+1)=2).
     assert np.allclose(ev[1:4], 2.0, atol=0.1)
 
 
 def test_torch_backend_matches_numpy():
     """TorchBackend.eigsh matches NumpyBackend to near machine precision."""
     pytest.importorskip("torch")
-    from spectralbrain.backends import TorchBackend
+    from spectralbrain.core.backends import TorchBackend
 
     v, f = _icosphere(3)
     ref = sb.BrainMesh(v, f).decompose(k=20, backend=NumpyBackend()).eigenvalues
@@ -91,7 +91,7 @@ def test_torch_backend_matches_numpy():
 def test_get_gpu_backend_factory():
     """The factory returns the requested backend type (CPU fallback is fine)."""
     pytest.importorskip("torch")
-    from spectralbrain.backends import TorchBackend, get_gpu_backend
+    from spectralbrain.core.backends import TorchBackend, get_gpu_backend
 
     assert isinstance(get_gpu_backend("torch"), TorchBackend)
     with pytest.raises(ValueError, match="Unknown GPU backend"):
@@ -107,7 +107,7 @@ def test_blackjax_sampler_recovers_mean():
     jax = pytest.importorskip("jax")
     import jax.numpy as jnp
 
-    from spectralbrain.backends import BlackjaxSampler
+    from spectralbrain.statistics.bayesian import BlackjaxSampler
 
     rng = np.random.default_rng(0)
     data = jnp.asarray(rng.normal(3.0, 1.0, size=60))
@@ -132,7 +132,7 @@ def test_blackjax_sampler_multichain_shape():
     jax = pytest.importorskip("jax")
     import jax.numpy as jnp
 
-    from spectralbrain.backends import BlackjaxSampler
+    from spectralbrain.statistics.bayesian import BlackjaxSampler
 
     def logdensity(theta):
         return jax.scipy.stats.norm.logpdf(theta["x"], 0.0, 1.0)
@@ -145,7 +145,7 @@ def test_blackjax_sampler_multichain_shape():
 def test_get_gpu_bayesian_sampler_factory():
     """The Bayesian factory dispatches by backend name."""
     pytest.importorskip("blackjax")
-    from spectralbrain.backends import BlackjaxSampler, get_gpu_bayesian_sampler
+    from spectralbrain.statistics.bayesian import BlackjaxSampler, get_gpu_bayesian_sampler
 
     assert isinstance(get_gpu_bayesian_sampler("blackjax"), BlackjaxSampler)
     with pytest.raises(ValueError, match="Unknown GPU Bayesian backend"):
@@ -162,7 +162,7 @@ def test_parallel_map_with_progress_is_picklable():
     (which holds a thread lock) in the worker closure, breaking the
     process-based ``loky`` backend with a PicklingError.
     """
-    from spectralbrain.backends import parallel_map
+    from spectralbrain.runtime import parallel_map
 
     out = parallel_map(abs, list(range(-5, 5)), n_jobs=2, progress=True, description="abs")
     assert out == [abs(i) for i in range(-5, 5)]

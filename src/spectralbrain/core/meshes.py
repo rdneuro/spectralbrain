@@ -4,14 +4,13 @@ Provides :class:`BrainMesh`, the primary mesh container, which
 implements :class:`~spectralbrain.core.base.GeometricObject` and
 owns the Laplacian construction + eigendecomposition pipeline.
 
-Also provides standalone functions for mesh-specific geometry that
-cannot be computed on unstructured point clouds: cotangent Laplacian,
-angle-defect Gaussian curvature, heat-method geodesics, Euler
+Also provides standalone functions for mesh-specific geometry: cotangent
+Laplacian, angle-defect Gaussian curvature, heat-method geodesics, Euler
 characteristic, etc.
 
 Dependencies
 ------------
-- **robust_laplacian** — optional, for the Sharp–Crane tufted
+- **robust_laplacian** -- optional, for the Sharp-Crane tufted
   Laplacian (recommended on non-manifold meshes).
 """
 
@@ -23,7 +22,7 @@ from typing import Any, Literal
 import numpy as np
 import scipy.sparse as sp
 
-from spectralbrain.backends.cpu import NumpyBackend
+from spectralbrain.core.backends import NumpyBackend
 from spectralbrain.core.base import (
     SpectralDecomposition,
     mesh_surface_area,
@@ -44,7 +43,7 @@ logger = get_logger(__name__)
 
 
 # ======================================================================
-# §1  BRAIN MESH CLASS
+# S1  BRAIN MESH CLASS
 # ======================================================================
 
 
@@ -52,7 +51,7 @@ class BrainMesh:
     """Triangle surface mesh for brain structures.
 
     Implements the :class:`GeometricObject` protocol and provides
-    the Laplacian construction → eigendecomposition → descriptor
+    the Laplacian construction -> eigendecomposition -> descriptor
     pipeline.
 
     Parameters
@@ -62,7 +61,7 @@ class BrainMesh:
     faces : ndarray, shape (F, 3)
         Triangle indices, 0-indexed.
     metadata : dict, optional
-        Provenance (subject, hemisphere, structure, …).
+        Provenance (subject, hemisphere, structure, ...).
 
     Examples
     --------
@@ -83,7 +82,7 @@ class BrainMesh:
         self.faces = faces
         self.metadata = metadata or {}
 
-    # ── Geometry (assignment invalidates every cached quantity) ───────
+    # -- Geometry (assignment invalidates every cached quantity) -------
 
     def _invalidate(self) -> None:
         """Drop all cached geometry-derived quantities."""
@@ -128,7 +127,7 @@ class BrainMesh:
         """Clear cached Laplacian/mass/normals/area (after in-place edits)."""
         self._invalidate()
 
-    # ── Constructors ──────────────────────────────────────────────────
+    # -- Constructors --------------------------------------------------
 
     @classmethod
     def from_volume(
@@ -187,7 +186,7 @@ class BrainMesh:
             meta.update(metadata)
         return cls(verts, faces, metadata=meta)
 
-    # ── GeometricObject protocol ──────────────────────────────────────
+    # -- GeometricObject protocol --------------------------------------
 
     @property
     def coordinates(self) -> Vertices:
@@ -210,12 +209,12 @@ class BrainMesh:
         return self.faces.shape[0]
 
     def surface_area(self) -> float:
-        """Total surface area in mm²."""
+        """Total surface area in mm^2."""
         if self._area is None:
             self._area = mesh_surface_area(self.vertices, self.faces)
         return self._area
 
-    # ── Laplacian construction ────────────────────────────────────────
+    # -- Laplacian construction ----------------------------------------
 
     def compute_laplacian(
         self,
@@ -228,12 +227,12 @@ class BrainMesh:
         Parameters
         ----------
         method : str
-            ``"cotangent"`` — FEM cotangent-weighted Laplacian
-            (Pinkall–Polthier / Meyer–Desbrun–Schröder–Barr weights) with
+            ``"cotangent"`` -- FEM cotangent-weighted Laplacian
+            (Pinkall-Polthier / Meyer-Desbrun-Schroder-Barr weights) with
             the barycentric lumped mass matrix (area/3 per incident
             triangle).  Degenerate (zero-area) triangles are excluded with
             a warning.
-            ``"robust"`` — Sharp & Crane tufted Laplacian via
+            ``"robust"`` -- Sharp & Crane tufted Laplacian via
             ``robust_laplacian`` (handles non-manifold edges).
         robust_mollify_factor : float
             Mollification parameter for the robust method.
@@ -241,7 +240,7 @@ class BrainMesh:
         Returns
         -------
         L : SparseMatrix, shape (N, N)
-            Stiffness (Laplacian) matrix — symmetric positive
+            Stiffness (Laplacian) matrix -- symmetric positive
             semi-definite.
         M : MassMatrix, shape (N, N)
             Diagonal mass matrix.
@@ -268,7 +267,7 @@ class BrainMesh:
         )
         return L, M
 
-    # ── Spectral decomposition ────────────────────────────────────────
+    # -- Spectral decomposition ----------------------------------------
 
     def decompose(
         self,
@@ -320,7 +319,7 @@ class BrainMesh:
             },
         )
 
-    # ── Normals ───────────────────────────────────────────────────────
+    # -- Normals -------------------------------------------------------
 
     def compute_normals(self) -> Normals:
         """Compute area-weighted per-vertex normals from face topology.
@@ -335,27 +334,27 @@ class BrainMesh:
         self._normals = _vertex_normals(self.vertices, self.faces)
         return self._normals
 
-    # ── Curvature ─────────────────────────────────────────────────────
+    # -- Curvature -----------------------------------------------------
 
     def gaussian_curvature(self) -> ScalarMap:
-        """Gaussian curvature via angle defect (Descartes–Euler).
+        """Gaussian curvature via angle defect (Descartes-Euler).
 
-        K(v) = (2π − Σ θ_j) / A(v)   (interior vertices)
-        K(v) = (π − Σ θ_j) / A(v)    (boundary vertices; geodesic curvature
+        K(v) = (2pi - Sigma theta_j) / A(v)   (interior vertices)
+        K(v) = (pi - Sigma theta_j) / A(v)    (boundary vertices; geodesic curvature
         defect, so a flat open patch has K = 0 everywhere)
 
-        where θ_j are the face angles at vertex v and A(v) is the
+        where theta_j are the face angles at vertex v and A(v) is the
         mixed Voronoi area (Meyer et al. 2003).
 
         Returns
         -------
         ndarray, shape (N,)
-            Gaussian curvature in 1/mm².
+            Gaussian curvature in 1/mm^2.
         """
         return _gaussian_curvature(self.vertices, self.faces)
 
     def mean_curvature(self) -> ScalarMap:
-        """Mean curvature via the Laplacian (Hn = ΔX / 2).
+        """Mean curvature via the Laplacian (Hn = DeltaX / 2).
 
         Uses the cotangent Laplacian (built, or reused if already cached)
         and the mass matrix.  The sign is taken relative to the
@@ -374,7 +373,7 @@ class BrainMesh:
             L, M = self.compute_laplacian(method="cotangent")
         else:
             # A non-cotangent Laplacian is cached for decompose(); do not
-            # overwrite it — build a private cotangent operator instead.
+            # overwrite it -- build a private cotangent operator instead.
             L, M = _cotangent_laplacian(self.vertices, self.faces)
         return _mean_curvature_laplacian(
             self.vertices,
@@ -384,9 +383,9 @@ class BrainMesh:
         )
 
     def principal_curvatures(self) -> tuple[ScalarMap, ScalarMap]:
-        """Principal curvatures κ₁ ≥ κ₂ from H and K.
+        """Principal curvatures kappa_1 >= kappa_2 from H and K.
 
-        κ₁ = H + √(H² − K),   κ₂ = H − √(H² − K)
+        kappa_1 = H + sqrt (H^2 - K),   kappa_2 = H - sqrt (H^2 - K)
 
         Returns
         -------
@@ -400,11 +399,11 @@ class BrainMesh:
         return H + sqrt_disc, H - sqrt_disc
 
     def shape_index(self) -> ScalarMap:
-        """Koenderink Shape Index S ∈ [−1, +1].
+        """Koenderink Shape Index S in [-1, +1].
 
-        S = (2/π) · arctan((κ₁ + κ₂) / (κ₁ − κ₂)),  κ₁ ≥ κ₂
+        S = (2/pi) * arctan((kappa_1 + kappa_2) / (kappa_1 - kappa_2)),  kappa_1 >= kappa_2
 
-        Convex caps → +1, concave cups → −1, saddles → 0 (with outward
+        Convex caps -> +1, concave cups -> -1, saddles -> 0 (with outward
         face winding).
 
         Returns
@@ -412,14 +411,14 @@ class BrainMesh:
         ndarray, shape (N,)
         """
         k1, k2 = self.principal_curvatures()
-        # κ₁ ≥ κ₂ ⇒ κ₁ − κ₂ ≥ 0, so arctan2 stays in [−π/2, π/2] (S ∈ [−1, 1])
-        # and umbilics (κ₁ = κ₂) map to ±1 by the sign of κ₁ + κ₂.
+        # kappa_1 >= kappa_2 => kappa_1 - kappa_2 >= 0, so arctan2 stays in [-pi/2, pi/2] (S in [-1, 1])
+        # and umbilics (kappa_1 = kappa_2) map to +/-1 by the sign of kappa_1 + kappa_2.
         return (2.0 / np.pi) * np.arctan2(k1 + k2, k1 - k2)
 
     def curvedness(self) -> ScalarMap:
-        """Koenderink Curvedness C ≥ 0.
+        """Koenderink Curvedness C >= 0.
 
-        C = √((κ₁² + κ₂²) / 2)
+        C = sqrt ((kappa_1^2 + kappa_2^2) / 2)
 
         Returns
         -------
@@ -429,9 +428,9 @@ class BrainMesh:
         return np.sqrt((k1**2 + k2**2) / 2.0)
 
     def casorati_curvature(self) -> ScalarMap:
-        """Casorati curvature — identical to curvedness.
+        """Casorati curvature -- identical to curvedness.
 
-        K_C = √((κ₁² + κ₂²) / 2)
+        K_C = sqrt ((kappa_1^2 + kappa_2^2) / 2)
 
         Preferred over mean/Gaussian curvature for complexity
         quantification (Matsuyama et al. 2023).
@@ -443,9 +442,9 @@ class BrainMesh:
         return self.curvedness()
 
     def willmore_density(self) -> ScalarMap:
-        """Local Willmore energy density H²(v).
+        """Local Willmore energy density H^2(v).
 
-        The integral ∫ H² dA is the Willmore energy — conformally
+        The integral int H^2 dA is the Willmore energy -- conformally
         invariant, measures deviation from a sphere.
 
         Returns
@@ -456,7 +455,7 @@ class BrainMesh:
         return H**2
 
     def willmore_energy(self) -> float:
-        """Total Willmore energy ∫ H² dA.
+        """Total Willmore energy int H^2 dA.
 
         Returns
         -------
@@ -466,7 +465,7 @@ class BrainMesh:
         areas = _voronoi_areas(self.vertices, self.faces)
         return float(np.sum(w * areas))
 
-    # ── Geodesic distances ────────────────────────────────────────────
+    # -- Geodesic distances --------------------------------------------
 
     def geodesic_distance(
         self,
@@ -482,8 +481,8 @@ class BrainMesh:
         source_indices : ndarray
             Indices of source vertices.
         method : str
-            ``"heat"`` — Crane et al. heat method (smooth, O(N)).
-            ``"dijkstra"`` — graph shortest path on edge graph
+            ``"heat"`` -- Crane et al. heat method (smooth, O(N)).
+            ``"dijkstra"`` -- graph shortest path on edge graph
             (exact on graph, O(N log N)).
         t_factor : float
             For the heat method: time-step multiplier relative to
@@ -512,10 +511,10 @@ class BrainMesh:
         else:
             raise ValueError(f"Unknown geodesic method: {method!r}")
 
-    # ── Topology ──────────────────────────────────────────────────────
+    # -- Topology ------------------------------------------------------
 
     def euler_characteristic(self) -> int:
-        """Euler characteristic χ = V − E + F.
+        """Euler characteristic chi = V - E + F.
 
         Returns
         -------
@@ -527,7 +526,7 @@ class BrainMesh:
         return V - E + F
 
     def genus(self) -> int:
-        """Genus g from χ = 2 − 2g (closed surfaces).
+        """Genus g from chi = 2 - 2g (closed surfaces).
 
         Returns
         -------
@@ -550,7 +549,7 @@ class BrainMesh:
         """True if the mesh has no boundary."""
         return len(self.boundary_vertices()) == 0
 
-    # ── Quality metrics ───────────────────────────────────────────────
+    # -- Quality metrics -----------------------------------------------
 
     def edge_lengths(self) -> np.ndarray:
         """All edge lengths.
@@ -601,7 +600,7 @@ class BrainMesh:
             "n_boundary_vertices": len(bv),
         }
 
-    # ── Smoothing ─────────────────────────────────────────────────────
+    # -- Smoothing -----------------------------------------------------
 
     def laplacian_smooth(
         self,
@@ -614,7 +613,7 @@ class BrainMesh:
         ----------
         n_iterations : int
         step_size : float
-            Damping factor (0–1).
+            Damping factor (0-1).
 
         Returns
         -------
@@ -643,7 +642,7 @@ class BrainMesh:
         Parameters
         ----------
         n_iterations : int
-            Number of (λ, μ) cycles.
+            Number of (lambda, mu) cycles.
         lambda_ : float
             Positive smoothing factor.
         mu : float
@@ -662,7 +661,7 @@ class BrainMesh:
                 tick(1)
         return BrainMesh(verts, self.faces.copy(), metadata=dict(self.metadata))
 
-    # ── Vertex areas ──────────────────────────────────────────────────
+    # -- Vertex areas --------------------------------------------------
 
     def vertex_areas(
         self,
@@ -673,8 +672,8 @@ class BrainMesh:
         Parameters
         ----------
         method : str
-            ``"barycentric"`` — A(v) = Σ_{t∈star(v)} area(t) / 3.
-            ``"voronoi"`` — mixed Voronoi–barycentric (Meyer et al.).
+            ``"barycentric"`` -- A(v) = Sigma_{t in star(v)} area(t) / 3.
+            ``"voronoi"`` -- mixed Voronoi-barycentric (Meyer et al.).
 
         Returns
         -------
@@ -686,7 +685,7 @@ class BrainMesh:
             return _voronoi_areas(self.vertices, self.faces)
         raise ValueError(f"Unknown method: {method!r}")
 
-    # ── repr ──────────────────────────────────────────────────────────
+    # -- repr ----------------------------------------------------------
 
     def __repr__(self) -> str:
         """Return a compact mesh summary string."""
@@ -701,7 +700,7 @@ class BrainMesh:
 
 
 # ======================================================================
-# §2  COTANGENT LAPLACIAN
+# S2  COTANGENT LAPLACIAN
 # ======================================================================
 
 
@@ -711,8 +710,8 @@ def _cotangent_laplacian(
 ) -> tuple[SparseMatrix, MassMatrix]:
     """Build the FEM cotangent-weighted Laplacian and lumped mass matrix.
 
-    Implementation follows Meyer, Desbrun, Schröder & Barr (2003).
-    Uses vectorised operations — no Python loops over faces.
+    Implementation follows Meyer, Desbrun, Schroder & Barr (2003).
+    Uses vectorised operations -- no Python loops over faces.
 
     Parameters
     ----------
@@ -743,11 +742,11 @@ def _cotangent_laplacian(
 
     # Areas via cross product (also needed for mass matrix).
     cross_01 = np.cross(e0, e1)
-    area2 = np.linalg.norm(cross_01, axis=1)  # 2 × area (> 0 after filtering)
+    area2 = np.linalg.norm(cross_01, axis=1)  # 2 x area (> 0 after filtering)
 
     # Cotangent weights for each edge.
-    # Edge (i1, i2) is opposite vertex 0 → cot(angle at v0)
-    #   cot(α₀) = dot(e1, e2) / |cross(e1, e2)|
+    # Edge (i1, i2) is opposite vertex 0 -> cot(angle at v0)
+    #   cot(alpha_0) = dot(e1, e2) / |cross(e1, e2)|
     #   but cross(e1, e2) = cross(v0-v2, v1-v0) which has same magnitude
     #   as cross(e0, e1) = cross(v2-v1, v0-v2).
     # Actually, use: cot(angle_at_vi) = dot(ej, ek) / area2
@@ -761,9 +760,9 @@ def _cotangent_laplacian(
     cot2 = np.sum((-e0) * e1, axis=1) / area2
 
     # Build L as COO: edge (i,j) gets weight (cot_opposite / 2).
-    # Edge (i1, i2) → weight cot0 / 2
-    # Edge (i2, i0) → weight cot1 / 2
-    # Edge (i0, i1) → weight cot2 / 2
+    # Edge (i1, i2) -> weight cot0 / 2
+    # Edge (i2, i0) -> weight cot1 / 2
+    # Edge (i0, i1) -> weight cot2 / 2
     rows = np.concatenate([i1, i2, i2, i0, i0, i1])
     cols = np.concatenate([i2, i1, i0, i2, i1, i0])
     vals = np.concatenate([cot0, cot0, cot1, cot1, cot2, cot2]) * 0.5
@@ -771,7 +770,7 @@ def _cotangent_laplacian(
     # Off-diagonal entries (negative in the convention L = D - W).
     L_off = sp.coo_matrix((-vals, (rows, cols)), shape=(N, N))
 
-    # Diagonal: sum of each row → degree.
+    # Diagonal: sum of each row -> degree.
     L = L_off.tocsc()
     diag_vals = -np.asarray(L.sum(axis=1)).ravel()
     L = L + sp.diags(diag_vals, 0, shape=(N, N), format="csc")
@@ -805,10 +804,10 @@ def _drop_degenerate_faces(
 ) -> Faces:
     """Remove zero-area / repeated-index triangles (with a warning).
 
-    Degenerate triangles make the cotangent weights blow up (≈1e21 after
+    Degenerate triangles make the cotangent weights blow up (~1e21 after
     clipping), which silently corrupts the spectrum.  A triangle is
     degenerate if it repeats a vertex index or if twice its area is below
-    ``rel_tol × (longest edge)²``.
+    ``rel_tol x (longest edge)^2``.
     """
     f = np.asarray(faces, dtype=np.int64)
     if f.shape[0] == 0:
@@ -882,7 +881,7 @@ def weld_mesh(
 
 
 # ======================================================================
-# §3  ROBUST LAPLACIAN (Sharp & Crane, SGP 2020)
+# S3  ROBUST LAPLACIAN (Sharp & Crane, SGP 2020)
 # ======================================================================
 
 
@@ -923,7 +922,7 @@ def _robust_laplacian_mesh(
 
 
 # ======================================================================
-# §4  NORMALS
+# S4  NORMALS
 # ======================================================================
 
 
@@ -935,7 +934,7 @@ def _vertex_normals(vertices: Vertices, faces: Faces) -> Normals:
 
     face_normals = np.cross(v1 - v0, v2 - v0)  # (F, 3)
 
-    # Accumulate onto vertices (area-weighted: |cross| ∝ area).
+    # Accumulate onto vertices (area-weighted: |cross| propto area).
     vertex_normals = np.zeros_like(vertices)
     np.add.at(vertex_normals, faces[:, 0], face_normals)
     np.add.at(vertex_normals, faces[:, 1], face_normals)
@@ -948,12 +947,12 @@ def _vertex_normals(vertices: Vertices, faces: Faces) -> Normals:
 
 
 # ======================================================================
-# §5  CURVATURE
+# S5  CURVATURE
 # ======================================================================
 
 
 def _gaussian_curvature(vertices: Vertices, faces: Faces) -> ScalarMap:
-    """Angle-defect Gaussian curvature: K(v) = (2π - Σθ) / A(v)."""
+    """Angle-defect Gaussian curvature: K(v) = (2pi - Sigma theta) / A(v)."""
     N = vertices.shape[0]
     angle_sum = np.zeros(N, dtype=np.float64)
 
@@ -989,10 +988,10 @@ def _mean_curvature_laplacian(
     M: MassMatrix,
     faces: Faces | None = None,
 ) -> ScalarMap:
-    """Signed mean curvature from the Laplacian: Hn = (M⁻¹ L X) / 2.
+    """Signed mean curvature from the Laplacian: Hn = (M^-1 L X) / 2.
 
-    With the PSD stiffness convention (L = −Δ), ``M⁻¹ L X = 2 H n`` where
-    ``n`` is the outward normal.  The sign is ``sign(⟨M⁻¹LX, n_v⟩)`` with
+    With the PSD stiffness convention (L = -Delta), ``M^-1 L X = 2 H n`` where
+    ``n`` is the outward normal.  The sign is ``sign(<M^-1LX, n_v>)`` with
     ``n_v`` the area-weighted vertex normal from *faces*; if *faces* is
     ``None`` the unsigned magnitude is returned.
     """
@@ -1010,12 +1009,12 @@ def _mean_curvature_laplacian(
 
 
 # ======================================================================
-# §6  VERTEX AREAS
+# S6  VERTEX AREAS
 # ======================================================================
 
 
 def _barycentric_vertex_areas(vertices: Vertices, faces: Faces) -> ScalarMap:
-    """Barycentric vertex area: A(v) = Σ area(t)/3 for t in star(v)."""
+    """Barycentric vertex area: A(v) = Sigma area(t)/3 for t in star(v)."""
     N = vertices.shape[0]
     tri_areas = triangle_areas(vertices, faces)
     vert_areas = np.zeros(N, dtype=np.float64)
@@ -1026,10 +1025,10 @@ def _barycentric_vertex_areas(vertices: Vertices, faces: Faces) -> ScalarMap:
 
 
 def _voronoi_areas(vertices: Vertices, faces: Faces) -> ScalarMap:
-    """Mixed Voronoi–barycentric vertex areas (Meyer et al. 2003).
+    """Mixed Voronoi-barycentric vertex areas (Meyer et al. 2003).
 
     For each non-obtuse triangle, vertex *i* receives its Voronoi share
-    ``(|e_ij|² cot θ_k + |e_ik|² cot θ_j) / 8``.  For an obtuse triangle the
+    ``(|e_ij|^2 cot theta_k + |e_ik|^2 cot theta_j) / 8``.  For an obtuse triangle the
     obtuse vertex receives ``area/2`` and the other two ``area/4``.  The
     areas sum exactly to the total surface area.
     """
@@ -1055,7 +1054,7 @@ def _voronoi_areas(vertices: Vertices, faces: Faces) -> ScalarMap:
     vor1 = (l0 * cot0 + l2 * cot2) / 8.0
     vor2 = (l1 * cot1 + l0 * cot0) / 8.0
 
-    # Obtuse checks: angle at vertex i obtuse ⇔ dot of its two edges < 0.
+    # Obtuse checks: angle at vertex i obtuse <=> dot of its two edges < 0.
     obt0 = np.sum(e2 * -e1, axis=1) < 0
     obt1 = np.sum(e0 * -e2, axis=1) < 0
     obt2 = np.sum(e1 * -e0, axis=1) < 0
@@ -1075,7 +1074,7 @@ def _voronoi_areas(vertices: Vertices, faces: Faces) -> ScalarMap:
 
 
 # ======================================================================
-# §7  GEODESIC DISTANCE
+# S7  GEODESIC DISTANCE
 # ======================================================================
 
 
@@ -1101,7 +1100,7 @@ def _geodesic_heat(
     h = float(el.mean())
     t = t_factor * h**2
 
-    # Step 1: solve (M + t·L) u = δ_sources
+    # Step 1: solve (M + t*L) u = delta_sources
     A = sp.csc_matrix(M + t * L)
     rhs = np.zeros(N, dtype=np.float64)
     source_indices = np.atleast_1d(source_indices)
@@ -1112,7 +1111,7 @@ def _geodesic_heat(
     u = spsolve(A, rhs)
 
     # Step 2: compute normalised gradient of u.
-    # For each face, grad_u = Σ_i u_i (N × e_opp_i) / (2·area)
+    # For each face, grad_u = Sigma_i u_i (N x e_opp_i) / (2*area)
     i0, i1, i2 = faces[:, 0], faces[:, 1], faces[:, 2]
     v0, v1, v2 = vertices[i0], vertices[i1], vertices[i2]
 
@@ -1136,8 +1135,8 @@ def _geodesic_heat(
     grad_norm = np.linalg.norm(grad_u, axis=1, keepdims=True)
     X = -grad_u / np.clip(grad_norm, 1e-20, None)
 
-    # Step 3: integrated divergence → solve L φ = div(X).
-    # div_i = Σ_t A_t ⟨∇φ_i, X_t⟩ = ½ Σ_t ⟨X_t, n_t × e_opp(i)⟩.
+    # Step 3: integrated divergence -> solve L phi = div(X).
+    # div_i = Sigma_t A_t <grad phi_i, X_t> = 1/2 Sigma_t <X_t, n_t x e_opp(i)>.
     div = np.zeros(N, dtype=np.float64)
     np.add.at(div, i0, 0.5 * np.sum(X * np.cross(fn_unit, e0), axis=1))
     np.add.at(div, i1, 0.5 * np.sum(X * np.cross(fn_unit, e1), axis=1))
@@ -1178,7 +1177,7 @@ def _geodesic_dijkstra(
 
 
 # ======================================================================
-# §8  EDGE AND TOPOLOGY UTILITIES
+# S8  EDGE AND TOPOLOGY UTILITIES
 # ======================================================================
 
 
@@ -1248,7 +1247,7 @@ def _boundary_vertices(faces: Faces, n_vertices: int) -> np.ndarray:
 
 
 # ======================================================================
-# §9  LAPLACIAN SMOOTHING
+# S9  LAPLACIAN SMOOTHING
 # ======================================================================
 
 
@@ -1270,7 +1269,7 @@ def _laplacian_step(
     degree = np.asarray(adj.sum(axis=1)).ravel()
     degree = np.clip(degree, 1, None)
 
-    # Laplacian displacement: L(v) = (1/deg) Σ_j (v_j - v_i)
+    # Laplacian displacement: L(v) = (1/deg) Sigma_j (v_j - v_i)
     avg = (adj @ vertices) / degree[:, None]
     displacement = avg - vertices
     return vertices + factor * displacement
@@ -1292,7 +1291,7 @@ def _laplacian_smooth(
 
 
 # ======================================================================
-# §10  __all__
+# S10  __all__
 # ======================================================================
 
 __all__: list[str] = [

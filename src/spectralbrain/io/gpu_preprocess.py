@@ -2,23 +2,23 @@
 
 This module replaces the traditional CPU-bound FreeSurfer/ANTs chain
 with a fully GPU-accelerated PyTorch pipeline.  Each step runs as
-a separate model load → inference → VRAM purge cycle to keep peak
+a separate model load -> inference -> VRAM purge cycle to keep peak
 memory within consumer GPU limits (24 GB).
 
 Pipeline stages
 ~~~~~~~~~~~~~~~
 
-1. **Enhancement** — BME-X (Sun et al., 2025, Nat Biomed Eng) or
+1. **Enhancement** -- BME-X (Sun et al., 2025, Nat Biomed Eng) or
    DeepN4 (Kanakaraj et al., 2024) for bias field correction,
    denoising, and optional super-resolution.
-2. **Skull stripping** — HD-BET (Isensee et al., 2019) or
+2. **Skull stripping** -- HD-BET (Isensee et al., 2019) or
    SynthStrip (Hoopes et al., 2022) for brain extraction.
-3. **Registration** — SynthMorph affine (Hoffmann et al., 2024) +
+3. **Registration** -- SynthMorph affine (Hoffmann et al., 2024) +
    uniGradICON deformable (Tian et al., 2024) for MNI
    normalization.
-4. **Tissue segmentation** — SynthSeg+ (Billot et al., 2023) for
+4. **Tissue segmentation** -- SynthSeg+ (Billot et al., 2023) for
    GM/WM/CSF + DKT cortical parcellation in a single pass.
-5. **Parcellation** — OpenMAP-T1 (Nishimaki et al., 2024) for 280
+5. **Parcellation** -- OpenMAP-T1 (Nishimaki et al., 2024) for 280
    regions or BrainParc (Liu et al., 2026) for 106 lifespan
    regions.
 
@@ -65,7 +65,7 @@ logger = get_logger(__name__)
 
 
 # ======================================================================
-# §0  Constants and configuration
+# S0  Constants and configuration
 # ======================================================================
 
 NIFTI_EXTS = (".nii.gz", ".nii")
@@ -98,7 +98,7 @@ class Step(Enum):
     PARCELLATE = auto()
 
 
-# Step name → Step enum mapping for string-based API
+# Step name -> Step enum mapping for string-based API
 _STEP_MAP = {
     "enhance": Step.ENHANCE,
     "skull_strip": Step.SKULL_STRIP,
@@ -117,7 +117,7 @@ DEFAULT_STEPS = [
 
 
 # ======================================================================
-# §1  VRAM management — mirrors gpu_preproc.py + backends/gpu.py
+# S1  VRAM management -- mirrors gpu_preproc.py + spectralbrain.runtime (VRAM guards)
 # ======================================================================
 
 
@@ -180,7 +180,7 @@ def vram_info() -> dict[str, float]:
 
 
 # ======================================================================
-# §2  Template management
+# S2  Template management
 # ======================================================================
 
 
@@ -256,7 +256,7 @@ def _route_kwargs(func, kwargs: dict, label: str) -> dict:
 
 
 def _snapshot(out_dir: Path) -> dict[Path, float]:
-    """Map of existing files → mtime (to detect outputs of a later run)."""
+    """Map of existing files -> mtime (to detect outputs of a later run)."""
     return {f: f.stat().st_mtime for f in out_dir.rglob("*") if f.is_file()}
 
 
@@ -294,7 +294,7 @@ def _pick_new_output(
 
 
 # ======================================================================
-# §3  Subprocess runner with VRAM isolation
+# S3  Subprocess runner with VRAM isolation
 # ======================================================================
 
 
@@ -357,7 +357,7 @@ def _run_cmd(
 
 
 # ======================================================================
-# §4  Step 1 — Image enhancement (BME-X or DeepN4)
+# S4  Step 1 -- Image enhancement (BME-X or DeepN4)
 # ======================================================================
 
 
@@ -434,7 +434,7 @@ def enhance_bmex(
 
     purge_vram()
     elapsed = time.time() - t0
-    logger.info("BME-X → %s (%.1fs)", out.name, elapsed)
+    logger.info("BME-X -> %s (%.1fs)", out.name, elapsed)
     return out
 
 
@@ -492,7 +492,7 @@ def enhance_deepn4(
         return out_tensor.cpu().numpy() if out_tensor.is_cuda else out_tensor.numpy()
 
     model._DeepN4__predict = _patched_predict
-    logger.debug("Patched DeepN4.__predict() for CUDA → cpu().numpy()")
+    logger.debug("Patched DeepN4.__predict() for CUDA -> cpu().numpy()")
 
     corrected = np.asarray(model.predict(data, affine), dtype=np.float32)
     # Store as float32: reusing the input header verbatim would keep e.g. a
@@ -507,7 +507,7 @@ def enhance_deepn4(
     purge_vram()
 
     elapsed = time.time() - t0
-    logger.info("DeepN4 → %s (%.1fs)", out.name, elapsed)
+    logger.info("DeepN4 -> %s (%.1fs)", out.name, elapsed)
     return out
 
 
@@ -577,7 +577,7 @@ def _enhance_impl(
 
 
 # ======================================================================
-# §5  Step 2 — Skull stripping (HD-BET or SynthStrip)
+# S5  Step 2 -- Skull stripping (HD-BET or SynthStrip)
 # ======================================================================
 
 
@@ -629,7 +629,7 @@ def skull_strip_hdbet(
     purge_vram()
     mask_path = out.parent / out.name.replace(".nii.gz", "_mask.nii.gz")
     elapsed = time.time() - t0
-    logger.info("HD-BET → %s (%.1fs)", out.name, elapsed)
+    logger.info("HD-BET -> %s (%.1fs)", out.name, elapsed)
     return out, mask_path if mask_path.exists() else None
 
 
@@ -674,7 +674,7 @@ def skull_strip_synthstrip(
 
     purge_vram()
     elapsed = time.time() - t0
-    logger.info("SynthStrip → %s (%.1fs)", out.name, elapsed)
+    logger.info("SynthStrip -> %s (%.1fs)", out.name, elapsed)
     return out, Path(mask_path) if mask_path and Path(mask_path).exists() else None
 
 
@@ -742,7 +742,7 @@ def _skull_strip_impl(
 
 
 # ======================================================================
-# §6  Step 3 — Registration (SynthMorph affine + uniGradICON deformable)
+# S6  Step 3 -- Registration (SynthMorph affine + uniGradICON deformable)
 # ======================================================================
 
 
@@ -795,7 +795,7 @@ def register_synthmorph_affine(
 
     purge_vram()
     elapsed = time.time() - t0
-    logger.info("SynthMorph affine → %s (%.1fs)", out.name, elapsed)
+    logger.info("SynthMorph affine -> %s (%.1fs)", out.name, elapsed)
     xfm_out = Path(transform_path) if transform_path and Path(transform_path).exists() else None
     return out, xfm_out
 
@@ -862,7 +862,7 @@ def register_unigradicon(
 
     purge_vram()
     elapsed = time.time() - t0
-    logger.info("uniGradICON → %s (%.1fs)", warp.name, elapsed)
+    logger.info("uniGradICON -> %s (%.1fs)", warp.name, elapsed)
     return warp, xfm
 
 
@@ -949,7 +949,7 @@ def register(
 
 
 # ======================================================================
-# §7  Step 4 — Tissue segmentation (SynthSeg+)
+# S7  Step 4 -- Tissue segmentation (SynthSeg+)
 # ======================================================================
 
 
@@ -972,7 +972,7 @@ def segment_synthseg(
     Parameters
     ----------
     input_path : PathLike
-        T1w NIfTI (raw or preprocessed — SynthSeg is contrast-agnostic).
+        T1w NIfTI (raw or preprocessed -- SynthSeg is contrast-agnostic).
     output_path : PathLike
         Segmentation output NIfTI.
     parc : bool
@@ -1021,7 +1021,7 @@ def segment_synthseg(
 
     purge_vram()
     elapsed = time.time() - t0
-    logger.info("SynthSeg → %s (%.1fs)", out.name, elapsed)
+    logger.info("SynthSeg -> %s (%.1fs)", out.name, elapsed)
     return out
 
 
@@ -1069,7 +1069,7 @@ def segment_fastsurfer(
 
     purge_vram()
     elapsed = time.time() - t0
-    logger.info("FastSurfer → %s/%s (%.1fs)", out, subject_id, elapsed)
+    logger.info("FastSurfer -> %s/%s (%.1fs)", out, subject_id, elapsed)
     return out / subject_id
 
 
@@ -1149,7 +1149,7 @@ def _segment_with_fastsurfer(input_path: PathLike, output_path: PathLike, **kwar
         nib.save(nib.MGHImage(data, img.affine), str(out))
     else:
         nib.save(nib.Nifti1Image(data, img.affine), str(out))
-    logger.info("FastSurfer %s → %s", seg_src.name, out)
+    logger.info("FastSurfer %s -> %s", seg_src.name, out)
     return out
 
 
@@ -1180,7 +1180,7 @@ def _segment_impl(
 
 
 # ======================================================================
-# §8  Step 5 — Parcellation (OpenMAP-T1 or BrainParc)
+# S8  Step 5 -- Parcellation (OpenMAP-T1 or BrainParc)
 # ======================================================================
 
 
@@ -1225,7 +1225,7 @@ def parcellate_openmap(
     )
     purge_vram()
     elapsed = time.time() - t0
-    logger.info("OpenMAP-T1 → %s (%.1fs)", result.name, elapsed)
+    logger.info("OpenMAP-T1 -> %s (%.1fs)", result.name, elapsed)
     return result
 
 
@@ -1264,12 +1264,12 @@ def parcellate_brainparc(
     result = _pick_new_output(out_dir, before, ("*parc*.nii*", "*.nii*"), "BrainParc")
     purge_vram()
     elapsed = time.time() - t0
-    logger.info("BrainParc → %s (%.1fs)", result.name, elapsed)
+    logger.info("BrainParc -> %s (%.1fs)", result.name, elapsed)
     return result
 
 
 # ======================================================================
-# §9  Pipeline result container
+# S9  Pipeline result container
 # ======================================================================
 
 
@@ -1330,7 +1330,7 @@ class PreprocessResult:
 
 
 # ======================================================================
-# §10  End-to-end pipeline orchestrator
+# S10  End-to-end pipeline orchestrator
 # ======================================================================
 
 
@@ -1352,10 +1352,10 @@ def preprocess_gpu(
 ) -> PreprocessResult:
     """End-to-end GPU-native preprocessing pipeline.
 
-    Chains enhancement → skull stripping → registration → segmentation
-    (→ parcellation) with VRAM purge between each step.  Replaces the
+    Chains enhancement -> skull stripping -> registration -> segmentation
+    (-> parcellation) with VRAM purge between each step.  Replaces the
     traditional FreeSurfer ``recon-all`` + ANTs pipeline with a fully
-    GPU-accelerated chain that runs in 2–4 minutes per subject on a
+    GPU-accelerated chain that runs in 2-4 minutes per subject on a
     24 GB consumer GPU.
 
     Parameters
@@ -1444,7 +1444,7 @@ def preprocess_gpu(
     result = PreprocessResult(input_path=inp)
     current = inp  # tracks the "current" image through the chain
 
-    # ── Step 1: Enhance ──
+    # -- Step 1: Enhance --
     if Step.ENHANCE in active_steps:
         t0 = time.time()
         enhanced = out_dir / f"{stem}_enhanced.nii.gz"
@@ -1454,7 +1454,7 @@ def preprocess_gpu(
         result.methods["enhance"] = used
         logger.info("VRAM after enhance: %s", vram_info())
 
-    # ── Step 2: Skull strip ──
+    # -- Step 2: Skull strip --
     if Step.SKULL_STRIP in active_steps:
         t0 = time.time()
         brain = out_dir / f"{stem}_brain.nii.gz"
@@ -1474,7 +1474,7 @@ def preprocess_gpu(
 
     native = current  # last subject-space image (segmentation input by default)
 
-    # ── Step 3: Register ──
+    # -- Step 3: Register --
     if Step.REGISTER in active_steps:
         t0 = time.time()
         seq = _detect_sequence(inp)
@@ -1498,7 +1498,7 @@ def preprocess_gpu(
         result.methods["register"] = f"unigradicon{aff_tag}"
         logger.info("VRAM after register: %s", vram_info())
 
-    # ── Step 4: Segment ──
+    # -- Step 4: Segment --
     if Step.SEGMENT in active_steps:
         t0 = time.time()
         seg = out_dir / f"{stem}_synthseg.nii.gz"
@@ -1521,7 +1521,7 @@ def preprocess_gpu(
         result.methods["segment"] = f"{used} ({segment_space})"
         logger.info("VRAM after segment: %s", vram_info())
 
-    # ── Step 5: Parcellate ──
+    # -- Step 5: Parcellate --
     if Step.PARCELLATE in active_steps and parcellate_method:
         t0 = time.time()
         parc_dir = out_dir / "parcellation"
@@ -1576,7 +1576,7 @@ def _unique_subject_keys(paths: list[Path]) -> list[str]:
 
 
 # ======================================================================
-# §11  Batch processing
+# S11  Batch processing
 # ======================================================================
 
 
@@ -1610,8 +1610,8 @@ def preprocess_gpu_batch(
     -------
     dict of {subject_stem: PreprocessResult}
         Results keyed by filename stem. When several inputs share a stem
-        (e.g. ``sub-01/T1w.nii.gz`` and ``sub-02/T1w.nii.gz``) the key — and
-        the per-subject output directory — is prefixed with the parent
+        (e.g. ``sub-01/T1w.nii.gz`` and ``sub-02/T1w.nii.gz``) the key -- and
+        the per-subject output directory -- is prefixed with the parent
         directory names until unique, so subjects never share (and silently
         reuse) each other's outputs.
     """
@@ -1645,11 +1645,11 @@ def preprocess_gpu_batch(
                 device=device,
             )
             results[stem] = result
-            logger.info("✓ %s: %.1fs total", stem, result.total_time)
+            logger.info("OK %s: %.1fs total", stem, result.total_time)
         except (TypeError, AttributeError, NameError, NotImplementedError, AssertionError):
             raise  # programming errors would otherwise fail every subject silently
         except Exception as exc:
-            logger.error("✗ %s: %s", stem, exc)
+            logger.error("FAILED %s: %s", stem, exc)
             failed[stem] = f"{type(exc).__name__}: {exc}"
             continue
 
@@ -1665,7 +1665,7 @@ def preprocess_gpu_batch(
 
 
 # ======================================================================
-# §12  File discovery utility
+# S12  File discovery utility
 # ======================================================================
 
 

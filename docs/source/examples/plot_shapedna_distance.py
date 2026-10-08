@@ -2,7 +2,7 @@
 ShapeDNA: comparing two shapes
 ==============================
 
-Compute the ShapeDNA fingerprint (the Laplace–Beltrami spectrum) of two
+Compute the ShapeDNA fingerprint (the Laplace-Beltrami spectrum) of two
 synthetic surfaces and quantify how different they are with the ShapeDNA
 distance. This example uses only matplotlib, so it is fast and dependency-light.
 """
@@ -41,7 +41,7 @@ ax.plot(sdna_a, "-o", ms=3, label="sphere")
 ax.plot(sdna_b, "-s", ms=3, label="ellipsoid")
 ax.set_xlabel("eigenvalue index $i$")
 ax.set_ylabel(r"normalized $\lambda_i$")
-ax.set_title(f"ShapeDNA spectra — distance = {dist:.3f}")
+ax.set_title(f"ShapeDNA spectra -- distance = {dist:.3f}")
 ax.legend(frameon=False)
 fig.tight_layout()
 plt.show()

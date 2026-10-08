@@ -1,4 +1,4 @@
-"""Smoke tests — verify that all subpackages import without errors.
+"""Smoke tests -- verify that all subpackages import without errors.
 
 Run with: pytest tests/test_smoke.py -v
 """
@@ -93,7 +93,7 @@ def test_combat_basic():
     original_gap = abs(data_a.mean() - data_b.mean())
     harmonized_gap = abs(harm_mean_a.mean() - harm_mean_b.mean())
     assert harmonized_gap < original_gap, (
-        f"ComBat should reduce gap: {original_gap:.3f} → {harmonized_gap:.3f}"
+        f"ComBat should reduce gap: {original_gap:.3f} -> {harmonized_gap:.3f}"
     )
 
 

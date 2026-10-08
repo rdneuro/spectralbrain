@@ -6,12 +6,12 @@ to the backends (PyMC NUTS, nutpie, or NumPyro).
 
 Models
 ------
-1. **HorseshoeRegression** — sparse regression for feature selection.
-2. **BayesianGroupComparison** — BEST (Kruschke 2013) with HDI + ROPE.
-3. **HierarchicalLinearModel** — multi-site random effects.
-4. **GaussianProcessNormative** — GP age-trajectory normative.
-5. **BayesianSpatialModel** — GMRF vertex-wise spatial prior.
-6. **BayesianConnectome** — hierarchical connectome comparison.
+1. **HorseshoeRegression** -- sparse regression for feature selection.
+2. **BayesianGroupComparison** -- BEST (Kruschke 2013) with HDI + ROPE.
+3. **HierarchicalLinearModel** -- multi-site random effects.
+4. **GaussianProcessNormative** -- GP age-trajectory normative.
+5. **BayesianSpatialModel** -- GMRF vertex-wise spatial prior.
+6. **BayesianConnectome** -- hierarchical connectome comparison.
 
 Examples
 --------
@@ -20,6 +20,13 @@ Examples
 >>> model.summary()
 >>> predictions = model.predict(new_descriptors)
 >>> model.score()  # LOO-CV
+
+Samplers
+--------
+The MCMC samplers that back these models also live here:
+:class:`PyMCSampler`, :class:`NutpieSampler` (CPU) and
+:class:`NumPyroSampler`, :class:`BlackjaxSampler` (GPU via JAX), with the
+factories :func:`get_bayesian_sampler` and :func:`get_gpu_bayesian_sampler`.
 
 Dependencies
 ------------
@@ -30,16 +37,15 @@ from __future__ import annotations
 
 import abc
 import warnings
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
 import numpy as np
 
-from spectralbrain.runtime import (
-    ConnectomeMatrix,
-    PathLike,
-    get_logger,
-)
+from spectralbrain.core.backends import _require_jax
+from spectralbrain.runtime import ConnectomeMatrix, PathLike, get_logger
 
 logger = get_logger(__name__)
 
@@ -129,7 +135,7 @@ def check_sampling(
 
 
 # ======================================================================
-# §0  BASE CLASS
+# S0  BASE CLASS
 # ======================================================================
 
 
@@ -183,7 +189,7 @@ class BayesianModel(abc.ABC):
         y : ndarray, shape (n,)
             Target variable.
         sampler : str
-            ``"auto"`` tries nutpie → numpyro → nuts.
+            ``"auto"`` tries nutpie -> numpyro -> nuts.
         draws, tune, chains, cores : int
             MCMC configuration.
         target_accept : float
@@ -228,7 +234,7 @@ class BayesianModel(abc.ABC):
                             self.trace_ = self._sample_nutpie(
                                 nutpie, draws, tune, chains, cores, target_accept, seed, kwargs
                             )
-                            logger.info("Fitted with nutpie (%d draws × %d chains).", draws, chains)
+                            logger.info("Fitted with nutpie (%d draws x %d chains).", draws, chains)
                             return self._finalize_fit()
                         except (ValueError, TypeError, NotImplementedError, RuntimeError) as exc:
                             warnings.warn(
@@ -250,7 +256,7 @@ class BayesianModel(abc.ABC):
                     idata_kwargs=idata_kwargs,
                     **kwargs,
                 )
-                logger.info("Fitted with PyMC NUTS (%d draws × %d chains).", draws, chains)
+                logger.info("Fitted with PyMC NUTS (%d draws x %d chains).", draws, chains)
 
             elif sampler == "nutpie":
                 import nutpie
@@ -258,7 +264,7 @@ class BayesianModel(abc.ABC):
                 self.trace_ = self._sample_nutpie(
                     nutpie, draws, tune, chains, cores, target_accept, seed, kwargs
                 )
-                logger.info("Fitted with nutpie (%d draws × %d chains).", draws, chains)
+                logger.info("Fitted with nutpie (%d draws x %d chains).", draws, chains)
 
             elif sampler == "numpyro":
                 import pymc.sampling.jax as pmjax
@@ -273,7 +279,7 @@ class BayesianModel(abc.ABC):
                     idata_kwargs=idata_kwargs,
                     **kwargs,
                 )
-                logger.info("Fitted with NumPyro (%d draws × %d chains).", draws, chains)
+                logger.info("Fitted with NumPyro (%d draws x %d chains).", draws, chains)
 
             elif sampler == "blackjax":
                 import pymc.sampling.jax as pmjax
@@ -290,7 +296,7 @@ class BayesianModel(abc.ABC):
                     idata_kwargs=idata_kwargs,
                     **kwargs,
                 )
-                logger.info("Fitted with BlackJAX (%d draws × %d chains).", draws, chains)
+                logger.info("Fitted with BlackJAX (%d draws x %d chains).", draws, chains)
 
             else:
                 raise ValueError(f"Unknown sampler: {sampler!r}")
@@ -400,8 +406,8 @@ class BayesianModel(abc.ABC):
         Parameters
         ----------
         method : str
-            ``"loo"`` — Leave-One-Out via PSIS.
-            ``"waic"`` — Widely Applicable Information Criterion.
+            ``"loo"`` -- Leave-One-Out via PSIS.
+            ``"waic"`` -- Widely Applicable Information Criterion.
 
         Returns
         -------
@@ -454,7 +460,7 @@ class BayesianModel(abc.ABC):
         _require_arviz()
         out = Path(path)
         self.trace_.to_netcdf(str(out))
-        logger.info("Trace saved → %s", out)
+        logger.info("Trace saved -> %s", out)
         return out
 
     @classmethod
@@ -470,7 +476,7 @@ class BayesianModel(abc.ABC):
 
 
 # ======================================================================
-# §1  HORSESHOE REGRESSION
+# S1  HORSESHOE REGRESSION
 # ======================================================================
 
 
@@ -479,7 +485,7 @@ class HorseshoeRegression(BayesianModel):
 
     The horseshoe prior (Carvalho, Polson & Scott 2009) provides
     aggressive shrinkage of irrelevant coefficients toward zero
-    while leaving large effects unshrunk — ideal for selecting
+    while leaving large effects unshrunk -- ideal for selecting
     which of 20+ spectral descriptors predict a clinical outcome.
 
     Parameters
@@ -539,7 +545,7 @@ class HorseshoeRegression(BayesianModel):
         return model
 
     def feature_importance(self) -> np.ndarray:
-        """Posterior mean of |β| — higher = more important.
+        """Posterior mean of |beta| -- higher = more important.
 
         Returns
         -------
@@ -552,7 +558,7 @@ class HorseshoeRegression(BayesianModel):
 
 
 # ======================================================================
-# §2  BAYESIAN GROUP COMPARISON (BEST — Kruschke 2013)
+# S2  BAYESIAN GROUP COMPARISON (BEST -- Kruschke 2013)
 # ======================================================================
 
 
@@ -672,7 +678,7 @@ class BayesianGroupComparison(BayesianModel):
 
 
 # ======================================================================
-# §3  HIERARCHICAL LINEAR MODEL
+# S3  HIERARCHICAL LINEAR MODEL
 # ======================================================================
 
 
@@ -683,13 +689,13 @@ class HierarchicalLinearModel(BayesianModel):
     and random intercepts/slopes per site, handling batch effects
     within the model rather than post-hoc harmonisation.
 
-    y ~ α + β·X + u_site + ε
+    y ~ alpha + beta*X + u_site + eps
 
     Parameters
     ----------
     random_effects : str
-        ``"intercept"`` — random intercept per site.
-        ``"slope"`` — random intercept + slope per site.
+        ``"intercept"`` -- random intercept per site.
+        ``"slope"`` -- random intercept + slope per site.
 
     Examples
     --------
@@ -786,7 +792,7 @@ class HierarchicalLinearModel(BayesianModel):
 
 
 # ======================================================================
-# §4  GAUSSIAN PROCESS NORMATIVE
+# S4  GAUSSIAN PROCESS NORMATIVE
 # ======================================================================
 
 
@@ -929,7 +935,7 @@ class GaussianProcessNormative(BayesianModel):
 
 
 # ======================================================================
-# §5  BAYESIAN SPATIAL MODEL
+# S5  BAYESIAN SPATIAL MODEL
 # ======================================================================
 
 
@@ -938,7 +944,7 @@ class BayesianSpatialModel(BayesianModel):
 
     Places a Gaussian Markov Random Field prior on the vertex-level
     group effects, so neighbouring vertices share information.  This is
-    Bayesian spatial smoothing — more principled than Gaussian
+    Bayesian spatial smoothing -- more principled than Gaussian
     kernel pre-smoothing.
 
     Model::
@@ -990,7 +996,7 @@ class BayesianSpatialModel(BayesianModel):
         self._group_labels = np.asarray(group_labels, dtype=np.float64).ravel()
         self._vertex_data = np.asarray(vertex_data, dtype=np.float64)
 
-        # Build as X (group) → y (mean vertex descriptor)
+        # Build as X (group) -> y (mean vertex descriptor)
         X = self._group_labels.reshape(-1, 1)
         y = self._vertex_data.mean(axis=1)  # collapse vertices for base .fit()
         return super().fit(X, y, **kwargs)
@@ -1053,7 +1059,7 @@ class BayesianSpatialModel(BayesianModel):
 
 
 # ======================================================================
-# §6  BAYESIAN CONNECTOME COMPARISON
+# S6  BAYESIAN CONNECTOME COMPARISON
 # ======================================================================
 
 
@@ -1204,15 +1210,557 @@ class BayesianConnectome(BayesianModel):
 
 
 # ======================================================================
+# BAYESIAN SAMPLERS -- CPU (PyMC NUTS, nutpie)
+# ======================================================================
+
+
+def _require_nutpie():
+    """Lazy-import nutpie, raising ImportError if unavailable."""
+    try:
+        import nutpie
+
+        return nutpie
+    except ImportError as exc:
+        raise ImportError(
+            "nutpie is required for the nutpie sampler backend.\n  pip install nutpie"
+        ) from exc
+
+
+@dataclass
+class SamplerConfig:
+    """Configuration for Bayesian MCMC samplers.
+
+    Parameters
+    ----------
+    draws : int
+        Number of posterior draws per chain.
+    tune : int
+        Number of tuning (burn-in) samples.
+    chains : int
+        Number of independent chains.
+    cores : int
+        CPU cores for parallel chains.
+    target_accept : float
+        Target acceptance probability for NUTS.
+    random_seed : int or None
+        RNG seed for reproducibility.
+    """
+
+    draws: int = 2000
+    tune: int = 1000
+    chains: int = 4
+    cores: int = 4
+    target_accept: float = 0.95
+    random_seed: int | None = 42
+
+
+class PyMCSampler:
+    """Bayesian sampler using PyMC's native NUTS implementation.
+
+    This is the default CPU sampler.  It wraps ``pymc.sample()`` with
+    SpectralBrain-compatible configuration and logging.
+
+    Parameters
+    ----------
+    config : SamplerConfig, optional
+        Sampling configuration.
+
+    Examples
+    --------
+    >>> sampler = PyMCSampler(SamplerConfig(draws=1000, chains=2))
+    >>> with pm.Model() as model:
+    ...     mu = pm.Normal("mu", 0, 1)
+    ...     obs = pm.Normal("obs", mu, 1, observed=data)
+    >>> trace = sampler.sample(model)
+    """
+
+    name: str = "nuts"
+
+    def __init__(self, config: SamplerConfig | None = None) -> None:
+        """Initialise with optional SamplerConfig."""
+        self.config = config or SamplerConfig()
+
+    def sample(
+        self,
+        model: Any,  # pm.Model
+        **kwargs: Any,
+    ) -> Any:  # az.InferenceData
+        """Run NUTS sampling on a PyMC model.
+
+        Parameters
+        ----------
+        model : pymc.Model
+            A fully specified PyMC model.
+        **kwargs
+            Overrides passed to ``pymc.sample()``.
+
+        Returns
+        -------
+        arviz.InferenceData
+            Posterior samples with diagnostics.
+        """
+        pm = _require_pymc()
+        cfg = self.config
+
+        sample_kwargs = dict(
+            draws=cfg.draws,
+            tune=cfg.tune,
+            chains=cfg.chains,
+            cores=cfg.cores,
+            target_accept=cfg.target_accept,
+            random_seed=cfg.random_seed,
+            return_inferencedata=True,
+            progressbar=True,
+        )
+        sample_kwargs.update(kwargs)
+
+        logger.info(
+            "PyMC NUTS: %d draws x %d chains (%d tune)",
+            sample_kwargs["draws"],
+            sample_kwargs["chains"],
+            sample_kwargs["tune"],
+        )
+
+        with model:
+            trace = pm.sample(**sample_kwargs)
+
+        return trace
+
+
+class NutpieSampler:
+    """Bayesian sampler using nutpie (Rust-based NUTS).
+
+    nutpie is a high-performance drop-in replacement for PyMC's
+    default sampler.  It compiles the PyMC model to Rust and runs
+    NUTS 2-10x faster on CPU.
+
+    Parameters
+    ----------
+    config : SamplerConfig, optional
+        Sampling configuration.
+
+    Examples
+    --------
+    >>> sampler = NutpieSampler(SamplerConfig(draws=2000))
+    >>> trace = sampler.sample(model)
+    """
+
+    name: str = "nutpie"
+
+    def __init__(self, config: SamplerConfig | None = None) -> None:
+        """Initialise with optional SamplerConfig."""
+        self.config = config or SamplerConfig()
+
+    def sample(
+        self,
+        model: Any,  # pm.Model
+        **kwargs: Any,
+    ) -> Any:  # az.InferenceData
+        """Run nutpie NUTS on a PyMC model.
+
+        Parameters
+        ----------
+        model : pymc.Model
+            A fully specified PyMC model.
+        **kwargs
+            Overrides passed to ``nutpie.sample()``.
+
+        Returns
+        -------
+        arviz.InferenceData
+        """
+        nutpie = _require_nutpie()
+        cfg = self.config
+
+        sample_kwargs: dict[str, Any] = dict(
+            draws=cfg.draws,
+            tune=cfg.tune,
+            chains=cfg.chains,
+            cores=cfg.cores,
+            seed=cfg.random_seed,
+            target_accept=cfg.target_accept,
+            progress_bar=True,
+        )
+        # Caller overrides win (no "multiple values for keyword" errors).
+        sample_kwargs.update(kwargs)
+        if sample_kwargs.get("seed") is None:
+            sample_kwargs.pop("seed", None)
+
+        logger.info(
+            "nutpie NUTS: %d draws x %d chains (%d tune)",
+            sample_kwargs["draws"],
+            sample_kwargs["chains"],
+            sample_kwargs["tune"],
+        )
+
+        compiled = nutpie.compile_pymc_model(model)
+        trace = nutpie.sample(compiled, **sample_kwargs)
+        return trace
+
+
+def get_bayesian_sampler(
+    backend: Literal["nuts", "nutpie"] = "nuts",
+    config: SamplerConfig | None = None,
+) -> PyMCSampler | NutpieSampler:
+    """Factory for CPU Bayesian samplers.
+
+    Parameters
+    ----------
+    backend : ``"nuts"`` or ``"nutpie"``
+        Which sampler to use.
+    config : SamplerConfig, optional
+        Sampling parameters.
+
+    Returns
+    -------
+    PyMCSampler or NutpieSampler
+    """
+    if backend == "nuts":
+        return PyMCSampler(config)
+    elif backend == "nutpie":
+        return NutpieSampler(config)
+    else:
+        raise ValueError(f"Unknown CPU Bayesian backend: {backend!r}")
+
+
+# ======================================================================
+# BAYESIAN SAMPLERS -- GPU (NumPyro, BlackJAX)
+# ======================================================================
+
+
+def _require_numpyro():
+    """Lazy-import NumPyro, raising ImportError if unavailable."""
+    try:
+        import numpyro
+        import numpyro.infer as infer
+
+        return numpyro, infer
+    except ImportError as exc:
+        raise ImportError(
+            "NumPyro is required for GPU Bayesian inference.\n  pip install numpyro"
+        ) from exc
+
+
+def _require_blackjax():
+    """Lazy-import BlackJAX (and JAX), raising ImportError if unavailable."""
+    try:
+        import blackjax
+        import jax
+
+        return blackjax, jax
+    except ImportError as exc:
+        raise ImportError(
+            "BlackJAX is required for the BlackJAX GPU sampler.\n"
+            "  pip install blackjax 'jax[cuda13]'"
+        ) from exc
+
+
+class NumPyroSampler:
+    """GPU-accelerated Bayesian MCMC using NumPyro + JAX.
+
+    NumPyro runs NUTS on XLA-compiled JAX graphs, achieving
+    substantial speedups over PyMC on GPU for models with many
+    parameters (e.g. hierarchical normative models with thousands
+    of vertex-level effects).
+
+    Parameters
+    ----------
+    num_warmup : int
+        Warmup (tuning) samples.
+    num_samples : int
+        Posterior draws.
+    num_chains : int
+        Independent chains.
+    seed : int
+        PRNG seed.
+
+    Examples
+    --------
+    >>> sampler = NumPyroSampler(num_warmup=500, num_samples=2000)
+    >>> # Define a NumPyro model function:
+    >>> def model(x, y=None):
+    ...     alpha = numpyro.sample("alpha", dist.Normal(0, 1))
+    ...     sigma = numpyro.sample("sigma", dist.HalfNormal(1))
+    ...     mu = alpha * x
+    ...     numpyro.sample("obs", dist.Normal(mu, sigma), obs=y)
+    >>> trace = sampler.sample(model, x=x_data, y=y_data)
+    """
+
+    name: str = "numpyro"
+
+    def __init__(
+        self,
+        num_warmup: int = 1000,
+        num_samples: int = 2000,
+        num_chains: int = 4,
+        seed: int = 42,
+    ) -> None:
+        """Initialise the NumPyro JAX sampler backend."""
+        self.num_warmup = num_warmup
+        self.num_samples = num_samples
+        self.num_chains = num_chains
+        self.seed = seed
+
+    def sample(
+        self,
+        model: Callable,
+        **model_kwargs: Any,
+    ) -> Any:
+        """Run NUTS on a NumPyro model function.
+
+        Parameters
+        ----------
+        model : callable
+            A NumPyro model function.
+        **model_kwargs
+            Data and hyperparameters passed to *model*.
+
+        Returns
+        -------
+        numpyro.infer.MCMC
+            MCMC object with ``.get_samples()`` and ``.print_summary()``.
+        """
+        _numpyro, infer = _require_numpyro()
+        jax, _, _ = _require_jax()
+
+        kernel = infer.NUTS(model)
+        mcmc = infer.MCMC(
+            kernel,
+            num_warmup=self.num_warmup,
+            num_samples=self.num_samples,
+            num_chains=self.num_chains,
+        )
+        rng_key = jax.random.PRNGKey(self.seed)
+
+        logger.info(
+            "NumPyro NUTS: %d draws x %d chains (%d warmup) on %s",
+            self.num_samples,
+            self.num_chains,
+            self.num_warmup,
+            jax.devices()[0],
+        )
+        mcmc.run(rng_key, **model_kwargs)
+        return mcmc
+
+    def to_arviz(self, mcmc: Any) -> Any:
+        """Convert NumPyro MCMC to ArviZ InferenceData.
+
+        Parameters
+        ----------
+        mcmc : numpyro.infer.MCMC
+
+        Returns
+        -------
+        arviz.InferenceData
+        """
+        try:
+            import arviz as az
+
+            return az.from_numpyro(mcmc)
+        except ImportError as exc:
+            raise ImportError(
+                "ArviZ is required to convert NumPyro traces.\n  pip install arviz"
+            ) from exc
+
+
+class BlackjaxSampler:
+    """GPU-accelerated Bayesian NUTS via BlackJAX.
+
+    BlackJAX is a low-level sampler that operates on a **log-density
+    function** rather than a model object, which makes it composable and
+    fast under JAX ``jit``/``vmap`` on the GPU.  This wrapper runs the
+    standard window-adaptation -> NUTS pipeline and (optionally) vectorises
+    independent chains with :func:`jax.vmap`.
+
+    Parameters
+    ----------
+    num_warmup : int
+        Window-adaptation (tuning) steps.
+    num_samples : int
+        Posterior draws per chain.
+    num_chains : int
+        Independent chains, run in parallel via ``vmap``.
+    seed : int
+        PRNG seed.
+
+    Examples
+    --------
+    >>> import jax.numpy as jnp
+    >>> def logdensity(theta):
+    ...     # standard-normal target
+    ...     return -0.5 * jnp.sum(theta ** 2)
+    >>> sampler = BlackjaxSampler(num_warmup=500, num_samples=1000)
+    >>> samples = sampler.sample(logdensity, initial_position=jnp.zeros(3))
+    >>> samples.shape  # (num_samples, 3)
+    """
+
+    name: str = "blackjax"
+
+    def __init__(
+        self,
+        num_warmup: int = 1000,
+        num_samples: int = 2000,
+        num_chains: int = 4,
+        seed: int = 42,
+    ) -> None:
+        """Initialise the BlackJAX sampler backend."""
+        self.num_warmup = num_warmup
+        self.num_samples = num_samples
+        self.num_chains = num_chains
+        self.seed = seed
+
+    def sample(
+        self,
+        logdensity_fn: Callable,
+        initial_position: Any,
+        *,
+        rng_key: Any = None,
+    ) -> Any:
+        """Run NUTS on a log-density function.
+
+        Parameters
+        ----------
+        logdensity_fn : callable
+            Maps a parameter pytree to a scalar log-density (unnormalised
+            log-posterior).  Must be JAX-traceable.
+        initial_position : pytree
+            Starting position for a *single* chain.  For ``num_chains > 1``
+            it is broadcast across chains.
+        rng_key : jax.Array, optional
+            PRNG key.  Defaults to ``jax.random.PRNGKey(self.seed)``.
+
+        Returns
+        -------
+        pytree
+            Posterior draws.  For a single chain each leaf has shape
+            ``(num_samples, *param_shape)``; for multiple chains
+            ``(num_chains, num_samples, *param_shape)``.
+        """
+        blackjax, jax = _require_blackjax()
+        import jax.numpy as jnp
+
+        if rng_key is None:
+            rng_key = jax.random.PRNGKey(self.seed)
+
+        warmup = blackjax.window_adaptation(blackjax.nuts, logdensity_fn)
+
+        def run_chain(key: Any, position: Any) -> Any:
+            warmup_key, sample_key = jax.random.split(key)
+            (state, parameters), _ = warmup.run(warmup_key, position, num_steps=self.num_warmup)
+            kernel = blackjax.nuts(logdensity_fn, **parameters).step
+
+            def one_step(carry_state: Any, step_key: Any) -> tuple[Any, Any]:
+                new_state, _ = kernel(step_key, carry_state)
+                return new_state, new_state.position
+
+            keys = jax.random.split(sample_key, self.num_samples)
+            _, positions = jax.lax.scan(one_step, state, keys)
+            return positions
+
+        logger.info(
+            "BlackJAX NUTS: %d draws x %d chains (%d warmup) on %s",
+            self.num_samples,
+            self.num_chains,
+            self.num_warmup,
+            jax.devices()[0],
+        )
+
+        if self.num_chains == 1:
+            return run_chain(rng_key, initial_position)
+
+        # Multiple chains: broadcast the initial position and vmap.
+        chain_keys = jax.random.split(rng_key, self.num_chains)
+        init_batched = jax.tree_util.tree_map(
+            lambda x: jnp.broadcast_to(
+                jnp.asarray(x), (self.num_chains, *jnp.shape(jnp.asarray(x)))
+            ),
+            initial_position,
+        )
+        return jax.vmap(run_chain)(chain_keys, init_batched)
+
+    def to_arviz(self, samples: Any, *, var_names: Sequence[str] | None = None) -> Any:
+        """Convert posterior draws to ArviZ InferenceData.
+
+        Parameters
+        ----------
+        samples : pytree
+            Output of :meth:`sample`.  A dict maps variable names to draws;
+            an array is wrapped under names from *var_names* (or ``"x"``).
+        var_names : sequence of str, optional
+            Names for array-valued samples.
+
+        Returns
+        -------
+        arviz.InferenceData
+        """
+        try:
+            import arviz as az
+        except ImportError as exc:
+            raise ImportError(
+                "ArviZ is required to convert BlackJAX traces.\n  pip install arviz"
+            ) from exc
+
+        if isinstance(samples, dict):
+            posterior = {k: np.asarray(v) for k, v in samples.items()}
+        else:
+            arr = np.asarray(samples)
+            posterior = {(var_names[0] if var_names else "x"): arr}
+        # ArviZ expects (chain, draw, *shape); add a chain axis for 1 chain.
+        if self.num_chains == 1:
+            posterior = {k: v[None, ...] for k, v in posterior.items()}
+
+        try:
+            # ArviZ < 1.0 -- InferenceData with the classic from_dict API.
+            return az.from_dict(posterior=posterior)
+        except TypeError:
+            # ArviZ >= 1.0 replaced InferenceData with xarray's DataTree.
+            import xarray as xr
+
+            ds = az.dict_to_dataset(posterior)
+            return xr.DataTree.from_dict({"posterior": ds})
+
+
+def get_gpu_bayesian_sampler(
+    backend: Literal["numpyro", "blackjax"] = "numpyro",
+    **kwargs: Any,
+) -> NumPyroSampler | BlackjaxSampler:
+    """Factory for GPU Bayesian samplers.
+
+    Parameters
+    ----------
+    backend : ``"numpyro"`` or ``"blackjax"``
+        Which JAX-based sampler to use.  NumPyro takes a model function;
+        BlackJAX takes a log-density function.
+    **kwargs
+        Passed to the sampler constructor (``num_warmup``, ``num_samples``,
+        ``num_chains``, ``seed``).
+
+    Returns
+    -------
+    NumPyroSampler or BlackjaxSampler
+    """
+    if backend == "numpyro":
+        return NumPyroSampler(**kwargs)
+    elif backend == "blackjax":
+        return BlackjaxSampler(**kwargs)
+    raise ValueError(f"Unknown GPU Bayesian backend: {backend!r}")
+
 
 __all__: list[str] = [
     "BayesianConnectome",
     "BayesianGroupComparison",
     "BayesianModel",
     "BayesianSpatialModel",
+    "BlackjaxSampler",
     "GaussianProcessNormative",
     "HierarchicalLinearModel",
     "HorseshoeRegression",
+    "NumPyroSampler",
+    "NutpieSampler",
+    "PyMCSampler",
+    "SamplerConfig",
     "SamplingWarning",
     "check_sampling",
+    "get_bayesian_sampler",
+    "get_gpu_bayesian_sampler",
 ]

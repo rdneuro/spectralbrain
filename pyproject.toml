@@ -11,7 +11,7 @@ build-backend = "hatchling.build"
 [project]
 name = "spectralbrain"
 dynamic = ["version"]
-description = "Spectral shape analysis for brain structures via the Laplace-Beltrami operator."
+description = "Spectral shape analysis of brain surface meshes via the Laplace-Beltrami operator and beyond."
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
 license = "MIT"
@@ -94,13 +94,12 @@ bayesian = [
 
 viz = [
     "vedo>=2024.5",
-    "open3d>=0.19; python_version < '3.13'",
     "scienceplots>=2.1",
     "yabplot; python_version == '3.11.*'",
     "hippunfold-plot",
     "brainspace",
     "hippomaps",
-    # Advanced 3D tractography (spectralbrain.viz.tracts3d)
+    # Advanced 3D tractography (spectralbrain.viz.render3d)
     "fury>=0.10",
     # trimesh is a core dependency (see [project].dependencies); kept out of
     # this extra to avoid a redundant pin.
@@ -119,13 +118,13 @@ neuro = [
     "robust_laplacian>=0.3",
 ]
 
-# ── Non-LBO operators & descriptors (spectralbrain.expanded) ─────────────────
-# Optional, lazily-imported scientific libraries used by the expanded
+# ── Non-LBO operators & descriptors (spectralbrain.spectral.operators) ──
+# Optional, lazily-imported scientific libraries used by the non-LBO
 # operator family (Dirac/Steklov, Hodge/Ricci, persistent homology, graph
 # spectra, elliptic-Fourier/SPHARM).  None are imported at `import
 # spectralbrain` time; each is loaded on first use of the descriptor that
-# needs it.  See src/spectralbrain/expanded/_base.py:require_optional.
-expanded = [
+# needs it.  See src/spectralbrain/spectral/operators/_base.py:require_optional.
+operators = [
     # Topology & persistence (Hodge, persistent Laplacian/homology/Dirac)
     "gudhi>=3.9",
     "ripser>=0.6",
@@ -141,6 +140,9 @@ expanded = [
     "robust_laplacian>=0.3",          # tufted Laplacian (Sharp & Crane)
     "potpourri3d>=1.0",               # vector heat / geodesics
 ]
+
+# Former name of the `operators` extra, kept so `pip install spectralbrain[expanded]` works.
+expanded = ["spectralbrain[operators]"]
 
 notebooks = [
     "jupyterlab>=4.2",
@@ -159,7 +161,7 @@ tuning = [
 ]
 
 full = [
-    "spectralbrain[gpu,bayesian,viz,neuro,notebooks,expanded,tuning]",
+    "spectralbrain[gpu,bayesian,viz,neuro,notebooks,operators,tuning]",
 ]
 
 # =============================================================================
@@ -211,7 +213,7 @@ Changelog     = "https://github.com/rdneuro/spectralbrain/blob/main/CHANGELOG.md
 # =============================================================================
 [tool.hatch.version]
 source = "vcs"
-fallback-version = "0.0.7"
+fallback-version = "0.1.0"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/spectralbrain"]
@@ -276,6 +278,8 @@ filterwarnings = [
     "ignore::DeprecationWarning:lapy.*",
     "ignore::DeprecationWarning:nibabel.*",
     "ignore::PendingDeprecationWarning",
+    # pyacvd (remeshing dependency) still calls a PyVista API deprecated in 0.46+
+    "ignore:.*_connectivity_array.*:pyvista.core.errors.PyVistaDeprecationWarning",
 ]
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",

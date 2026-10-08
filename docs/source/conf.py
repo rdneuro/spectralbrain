@@ -1,4 +1,4 @@
-# conf.py — SpectralBrain documentation
+# conf.py -- SpectralBrain documentation
 #
 # Sphinx + pydata-sphinx-theme + sphinx-design (home cards)
 #         + myst-nb       (Markdown pages AND pre-rendered tutorial notebooks)
@@ -66,7 +66,7 @@ myst_enable_extensions = [
 myst_heading_anchors = 3
 
 # Tutorials ship as notebooks with committed outputs (heavy: real brains / GPU).
-# Render them AS-IS — never execute on the build machine (pymc-style gallery).
+# Render them AS-IS -- never execute on the build machine (pymc-style gallery).
 nb_execution_mode = "off"
 nb_merge_streams = True
 

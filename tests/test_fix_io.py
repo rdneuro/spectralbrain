@@ -1,7 +1,7 @@
 """Regression tests for the spectralbrain.io bug-fix pass.
 
 Each test pins one previously confirmed bug (orientation, label mapping,
-silent drops, broken fallbacks, …). External tools (FreeSurfer, HD-BET,
+silent drops, broken fallbacks, ...). External tools (FreeSurfer, HD-BET,
 SynthSeg, FastSurfer) are never invoked: subprocess entry points are mocked.
 """
 
@@ -55,9 +55,7 @@ def test_marching_cubes_field_outward_for_any_affine(affine, mode):
 @pytest.mark.parametrize("closed", [True, False])
 def test_volume_to_mesh_improved_outward(affine, closed):
     pytest.importorskip("trimesh")
-    v, f = meshing.volume_to_mesh(
-        _ball(), affine, closed=closed, remesh=False, taubin_iterations=0
-    )
+    v, f = meshing.volume_to_mesh(_ball(), affine, closed=closed, remesh=False, taubin_iterations=0)
     assert _signed_volume(v, f) > 0
 
 
@@ -140,13 +138,6 @@ def test_apply_parcellation_ignores_unassigned():
     assert list(parcels) == [2]
     legacy = loaders.apply_parcellation(v, f, labels, ignore_unassigned=False)
     assert -1 in legacy
-
-
-def test_labels_to_pointcloud_float_labels():
-    vol = np.zeros((4, 4, 4), np.float32)
-    vol[1, 1, 1] = 16.9999997
-    pts = loaders.labels_to_pointcloud(vol, np.eye(4), 17)
-    assert pts.shape == (1, 3)
 
 
 def test_aggregate_accepts_plain_callable():
@@ -333,9 +324,7 @@ def test_surf2surf_uses_temp_sd_when_fsaverage_elsewhere(tmp_path, monkeypatch):
 def test_fastsurfer_seg_only_raises_clearly(tmp_path):
     (tmp_path / "sub-01" / "mri").mkdir(parents=True)
     with pytest.raises(RuntimeError, match="seg_only"):
-        parcellate._locate_fastsurfer_subject(
-            tmp_path, Path("sub-01_T1w.nii.gz"), "lh", "white"
-        )
+        parcellate._locate_fastsurfer_subject(tmp_path, Path("sub-01_T1w.nii.gz"), "lh", "white")
 
 
 def test_parcellate_batch_failures(monkeypatch, tmp_path):
@@ -345,9 +334,15 @@ def test_parcellate_batch_failures(monkeypatch, tmp_path):
         if kw["subject_id"] == "bug":
             raise AttributeError("bug")
         return parcellate.ParcellationResult(
-            atlas=parcellate._resolve_atlas("dkt"), hemi="lh", surface="white",
-            vertices=np.zeros((0, 3)), faces=np.zeros((0, 3), int), labels=np.zeros(0),
-            label_names=[], parcels={}, strategy_used="x",
+            atlas=parcellate._resolve_atlas("dkt"),
+            hemi="lh",
+            surface="white",
+            vertices=np.zeros((0, 3)),
+            faces=np.zeros((0, 3), int),
+            labels=np.zeros(0),
+            label_names=[],
+            parcels={},
+            strategy_used="x",
         )
 
     monkeypatch.setattr(parcellate, "parcellate", fake)
@@ -392,7 +387,10 @@ def test_skull_strip_auto_falls_back(tmp_path, monkeypatch):
     calls: list[str] = []
     monkeypatch.setattr(gpu_preprocess, "_run_cmd", _touch_outputs_run_cmd(calls))
     _b, _m, method = gpu_preprocess._skull_strip_impl(
-        tmp_path / "in.nii.gz", tmp_path / "b.nii.gz", method="auto", device="cuda:0",
+        tmp_path / "in.nii.gz",
+        tmp_path / "b.nii.gz",
+        method="auto",
+        device="cuda:0",
         save_mask=True,
     )
     assert method == "synthstrip"
@@ -412,8 +410,12 @@ def test_segment_fastsurfer_writes_requested_file(tmp_path, monkeypatch):
 
     monkeypatch.setattr(gpu_preprocess, "segment_fastsurfer", fake_fs)
     out = gpu_preprocess.segment(
-        tmp_path / "sub-01_T1w.nii.gz", tmp_path / "seg.nii.gz", method="fastsurfer",
-        parc=True, vol_path=None, qc_path=None,
+        tmp_path / "sub-01_T1w.nii.gz",
+        tmp_path / "seg.nii.gz",
+        method="fastsurfer",
+        parc=True,
+        vol_path=None,
+        qc_path=None,
     )
     assert out == tmp_path / "seg.nii.gz"
     assert np.all(np.asarray(nib.load(str(out)).dataobj) == 17)
@@ -429,8 +431,12 @@ def test_preprocess_gpu_segments_native_and_respects_skip_existing(tmp_path, mon
         return Path(out), None, "hdbet"
 
     def fake_register(cur, tmpl, out_dir, stem, **kw):
-        return {"affine": None, "affine_xfm": None,
-                "warped": Path(out_dir) / f"{stem}_MNI.nii.gz", "deformable_xfm": None}
+        return {
+            "affine": None,
+            "affine_xfm": None,
+            "warped": Path(out_dir) / f"{stem}_MNI.nii.gz",
+            "deformable_xfm": None,
+        }
 
     def fake_segment(cur, out, **kw):
         seen["seg_input"] = Path(cur)
@@ -443,7 +449,9 @@ def test_preprocess_gpu_segments_native_and_respects_skip_existing(tmp_path, mon
     monkeypatch.setattr(gpu_preprocess, "ensure_template", lambda *a, **k: tmp_path / "t.nii.gz")
     monkeypatch.setattr(gpu_preprocess, "vram_info", dict)
     res = gpu_preprocess.preprocess_gpu(
-        inp, tmp_path / "out", steps=["skull_strip", "register", "segment"],
+        inp,
+        tmp_path / "out",
+        steps=["skull_strip", "register", "segment"],
         skip_existing=False,
     )
     assert seen["seg_input"].name == "sub-01_T1w_brain.nii.gz"

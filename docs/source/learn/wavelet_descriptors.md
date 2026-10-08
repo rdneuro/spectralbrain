@@ -35,12 +35,12 @@ direction-sensitive — useful where both *scale* and *orientation* of a feature
 matter.
 
 ```python
-from spectralbrain.spectral.anisotropic import compute_asmwd
+from spectralbrain.spectral.lbo.anisotropic import compute_asmwd
 asmwd = compute_asmwd(mesh, ...)
 ```
 
 :::{seealso}
 API: {func}`~spectralbrain.sgw_transform`,
 {func}`~spectralbrain.sgw_descriptor`. ASMWD lives in
-`spectralbrain.spectral.anisotropic` alongside the anisotropic HKS/WKS.
+`spectralbrain.spectral.lbo.anisotropic` alongside the anisotropic HKS/WKS.
 :::

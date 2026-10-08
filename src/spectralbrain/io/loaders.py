@@ -2,7 +2,7 @@
 
 Every loader returns plain NumPy arrays using the canonical type
 aliases from :mod:`spectralbrain.runtime`.  No loader returns
-library-specific objects (nibabel images, PyVista meshes, etc.) —
+library-specific objects (nibabel images, PyVista meshes, etc.) --
 downstream modules receive only arrays and dicts.
 
 The auto-detection function :func:`load` inspects the file extension
@@ -11,11 +11,11 @@ format-specific loader.
 
 Dependencies
 ------------
-- **nibabel** — required for FreeSurfer, GIfTI, NIfTI, MGZ.
+- **nibabel** -- required for FreeSurfer, GIfTI, NIfTI, MGZ.
   Lazy-imported so ``import spectralbrain`` works without it.
-- **pyvista** — core dependency; reads generic meshes
+- **pyvista** -- core dependency; reads generic meshes
   (.ply / .obj / .stl / .vtk / .vtp) natively via VTK.
-- **h5py** — core dependency, for HDF5 cache files.
+- **h5py** -- core dependency, for HDF5 cache files.
 """
 
 from __future__ import annotations
@@ -35,7 +35,6 @@ from spectralbrain.runtime import (
     GeometryFormat,
     LabelArray,
     PathLike,
-    Points,
     ScalarMap,
     Vertices,
     get_logger,
@@ -44,7 +43,7 @@ from spectralbrain.runtime import (
 logger = get_logger(__name__)
 
 # ======================================================================
-# Lazy imports — keep ``import spectralbrain`` fast
+# Lazy imports -- keep ``import spectralbrain`` fast
 # ======================================================================
 
 
@@ -71,10 +70,10 @@ def _require_h5py():
 
 
 # ======================================================================
-# §1  FORMAT DETECTION
+# S1  FORMAT DETECTION
 # ======================================================================
 
-# Extension → GeometryFormat mapping.  Checked in order; first match
+# Extension -> GeometryFormat mapping.  Checked in order; first match
 # wins.  Compound extensions (.surf.gii) are tried before simple ones.
 
 _EXT_MAP: dict[str, GeometryFormat] = {
@@ -137,7 +136,7 @@ def detect_format(path: PathLike) -> GeometryFormat:
         if name.endswith(ext):
             return fmt
 
-    # FreeSurfer surfaces have no extension — check magic bytes.
+    # FreeSurfer surfaces have no extension -- check magic bytes.
     if p.is_file():
         try:
             with open(p, "rb") as fh:
@@ -170,7 +169,7 @@ def detect_format(path: PathLike) -> GeometryFormat:
 
 
 # ======================================================================
-# §2  UNIFIED LOADER
+# S2  UNIFIED LOADER
 # ======================================================================
 
 
@@ -255,10 +254,10 @@ def load(
 
 
 # ======================================================================
-# §3  FORMAT-SPECIFIC LOADERS
+# S3  FORMAT-SPECIFIC LOADERS
 # ======================================================================
 
-# ── FreeSurfer surface (.white, .pial, …) ────────────────────────────
+# -- FreeSurfer surface (.white, .pial, ...) ----------------------------
 
 
 def _load_fs_surface(path: Path) -> dict[str, Any]:
@@ -278,7 +277,7 @@ def load_freesurfer_surface(path: PathLike) -> tuple[Vertices, Faces]:
     ----------
     path : PathLike
         Path to a FreeSurfer surface (``.white``, ``.pial``,
-        ``.inflated``, ``.sphere``, …).
+        ``.inflated``, ``.sphere``, ...).
 
     Returns
     -------
@@ -297,7 +296,7 @@ def load_freesurfer_surface(path: PathLike) -> tuple[Vertices, Faces]:
     return result["vertices"], result["faces"]
 
 
-# ── FreeSurfer annotation (.annot) ────────────────────────────────────
+# -- FreeSurfer annotation (.annot) ------------------------------------
 
 
 def _load_fs_annot(path: Path) -> dict[str, Any]:
@@ -342,7 +341,7 @@ def load_freesurfer_annot(
     return result["labels"], result["ctab"], result["names"]
 
 
-# ── FreeSurfer morphometry (.thickness, .curv, .sulc, .area) ─────────
+# -- FreeSurfer morphometry (.thickness, .curv, .sulc, .area) ---------
 
 
 def _load_fs_morph(path: Path) -> dict[str, Any]:
@@ -370,7 +369,7 @@ def load_freesurfer_morph(path: PathLike) -> ScalarMap:
     return _load_fs_morph(Path(path))["scalars"]
 
 
-# ── FreeSurfer label (.label) ─────────────────────────────────────────
+# -- FreeSurfer label (.label) -----------------------------------------
 
 
 def _load_fs_label(path: Path) -> dict[str, Any]:
@@ -388,7 +387,7 @@ def _load_fs_label(path: Path) -> dict[str, Any]:
     }
 
 
-# ── GIfTI surface (.surf.gii) ────────────────────────────────────────
+# -- GIfTI surface (.surf.gii) ----------------------------------------
 
 
 def _load_gifti_surface(path: Path) -> dict[str, Any]:
@@ -444,7 +443,7 @@ def load_gifti_surface(path: PathLike) -> tuple[Vertices, Faces]:
     return r["vertices"], r["faces"]
 
 
-# ── GIfTI functional / shape (.func.gii, .shape.gii) ─────────────────
+# -- GIfTI functional / shape (.func.gii, .shape.gii) -----------------
 
 
 def _load_gifti_func(path: Path) -> dict[str, Any]:
@@ -455,7 +454,7 @@ def _load_gifti_func(path: Path) -> dict[str, Any]:
     arrays = [np.asarray(da.data, dtype=np.float64) for da in img.darrays]
     if len(arrays) == 1:
         return {"scalars": arrays[0]}
-    # Stack frames → (N, T) descriptor matrix.
+    # Stack frames -> (N, T) descriptor matrix.
     return {"scalars": np.column_stack(arrays)}
 
 
@@ -475,7 +474,7 @@ def load_gifti_func(path: PathLike) -> ScalarMap | DescriptorMatrix:
     return _load_gifti_func(Path(path))["scalars"]
 
 
-# ── GIfTI label (.label.gii) ─────────────────────────────────────────
+# -- GIfTI label (.label.gii) -----------------------------------------
 
 
 def _load_gifti_label(path: Path) -> dict[str, Any]:
@@ -484,7 +483,7 @@ def _load_gifti_label(path: Path) -> dict[str, Any]:
     img = nib.load(str(path))
     labels = np.asarray(img.darrays[0].data, dtype=np.int32)
     # Extract the label table.  GIfTI label values are *keys* into the table,
-    # not positions in it (e.g. HCP-MMP uses keys 181–360 for one hemisphere),
+    # not positions in it (e.g. HCP-MMP uses keys 181-360 for one hemisphere),
     # so ``names`` is indexed by key: ``names[k]`` is the name of label ``k``.
     table: dict[int, str] = {}
     lt = img.labeltable
@@ -525,7 +524,7 @@ def load_gifti_label(path: PathLike) -> tuple[LabelArray, list[str]]:
     return r["labels"], r["names"]
 
 
-# ── NIfTI / MGZ volume ────────────────────────────────────────────────
+# -- NIfTI / MGZ volume ------------------------------------------------
 
 
 def _load_nifti(path: Path) -> dict[str, Any]:
@@ -558,13 +557,13 @@ def load_nifti(path: PathLike) -> tuple[np.ndarray, np.ndarray]:
     return r["data"], r["affine"]
 
 
-# ── Generic mesh (.ply, .obj, .stl, .vtk) ────────────────────────────
+# -- Generic mesh (.ply, .obj, .stl, .vtk) ----------------------------
 
 
 def _load_generic_mesh(path: Path) -> dict[str, Any]:
     """Load a generic mesh file (.ply, .obj, .stl, .vtk, .vtp).
 
-    Uses PyVista — a core dependency, VTK-backed — which reads all of
+    Uses PyVista -- a core dependency, VTK-backed -- which reads all of
     these formats natively.  The mesh is triangulated on load, so the
     returned ``faces`` array is always ``(F, 3)`` even if the source
     stored quads or triangle strips.
@@ -572,7 +571,7 @@ def _load_generic_mesh(path: Path) -> dict[str, Any]:
     import pyvista as pv
 
     mesh = pv.read(str(path))
-    # Non-PolyData (e.g. UnstructuredGrid from some .vtk files) → surface.
+    # Non-PolyData (e.g. UnstructuredGrid from some .vtk files) -> surface.
     if not isinstance(mesh, pv.PolyData):
         mesh = mesh.extract_surface()
     mesh = mesh.triangulate()
@@ -607,7 +606,7 @@ def load_mesh(path: PathLike) -> tuple[Vertices, Faces]:
     return r["vertices"], r["faces"]
 
 
-# ── HDF5 (.h5) ───────────────────────────────────────────────────────
+# -- HDF5 (.h5) -------------------------------------------------------
 
 
 def _load_hdf5(path: Path) -> dict[str, Any]:
@@ -620,12 +619,12 @@ def _load_hdf5(path: Path) -> dict[str, Any]:
             if hasattr(ds, "shape"):
                 result[key] = np.asarray(ds)
             else:
-                # Group — recurse one level.
+                # Group -- recurse one level.
                 result[key] = {k: np.asarray(v) for k, v in ds.items()}
     return result
 
 
-# ── NumPy archive (.npz) ─────────────────────────────────────────────
+# -- NumPy archive (.npz) ---------------------------------------------
 
 
 def _load_npz(path: Path) -> dict[str, Any]:
@@ -635,99 +634,7 @@ def _load_npz(path: Path) -> dict[str, Any]:
 
 
 # ======================================================================
-# §4  VOLUMETRIC LABEL → POINT CLOUD
-# ======================================================================
-
-
-def labels_to_pointcloud(
-    label_volume: np.ndarray,
-    affine: np.ndarray,
-    label_id: int,
-    *,
-    jitter: bool = False,
-    jitter_scale: float = 0.25,
-    seed: int | None = None,
-) -> Points:
-    """Extract a point cloud from a volumetric segmentation.
-
-    Given a 3D integer label volume (e.g. FreeSurfer ``aseg.mgz``)
-    and a target label ID, returns the world-space (RAS) coordinates
-    of all voxels with that label.
-
-    This is the pathway ③ from the SpectralBrain I/O diagram:
-    volumetric segmentation → point cloud → spectral descriptors.
-
-    Parameters
-    ----------
-    label_volume : ndarray, shape (X, Y, Z)
-        Integer label volume.
-    affine : ndarray, shape (4, 4)
-        Voxel-to-world affine matrix.
-    label_id : int
-        Target label (e.g. 17 for left hippocampus in aseg).
-    jitter : bool
-        Add sub-voxel Gaussian jitter to break the grid pattern.
-        Useful for point-cloud Laplacian estimation, where a
-        regular grid causes degenerate eigenvalues.
-    jitter_scale : float
-        Standard deviation of the jitter in voxel units (default
-        0.25 — i.e. ±0.25 voxels).
-    seed : int, optional
-        RNG seed for reproducible jitter.
-
-    Returns
-    -------
-    points : ndarray, shape (N, 3)
-        World-space coordinates of the extracted voxels.
-
-    Raises
-    ------
-    ValueError
-        If *label_id* is not found in the volume.
-
-    Examples
-    --------
-    >>> data, affine = sb.io.load_nifti("aseg.mgz")
-    >>> hippo_L = sb.io.labels_to_pointcloud(data, affine, label_id=17)
-    >>> hippo_L.shape
-    (4231, 3)
-    """
-    label_volume = np.asarray(label_volume)
-    affine = np.asarray(affine, dtype=np.float64)
-
-    if label_volume.ndim != 3:
-        raise ValueError(f"Expected 3D volume, got shape {label_volume.shape}")
-
-    if np.issubdtype(label_volume.dtype, np.floating):
-        # Label maps stored with scl_slope/inter (or resampled) load as float;
-        # exact equality would silently miss voxels such as 16.9999997.
-        mask = np.isclose(label_volume, label_id, rtol=0.0, atol=1e-3)
-    else:
-        mask = label_volume == label_id
-    if not mask.any():
-        raise ValueError(
-            f"Label {label_id} not found in volume.  "
-            f"Unique labels (first 20): {np.unique(label_volume)[:20]!r}…"
-        )
-
-    # Voxel indices → (N, 3) int array.
-    ijk = np.argwhere(mask).astype(np.float64)  # (N, 3)
-
-    if jitter:
-        rng = np.random.default_rng(seed)
-        ijk += rng.normal(scale=jitter_scale, size=ijk.shape)
-
-    # Apply affine: world = affine @ [i, j, k, 1]ᵀ
-    ones = np.ones((ijk.shape[0], 1), dtype=np.float64)
-    ijk_h = np.hstack([ijk, ones])  # (N, 4)
-    xyz = (affine @ ijk_h.T).T[:, :3]  # (N, 3)
-
-    logger.info("Extracted %d points for label %d", xyz.shape[0], label_id)
-    return xyz
-
-
-# ======================================================================
-# §5  PARCELLATION UTILITIES
+# S5  PARCELLATION UTILITIES
 # ======================================================================
 
 
@@ -762,7 +669,7 @@ def extract_submesh(
     face_mask = vertex_mask[faces].all(axis=1)  # (F,) bool
     kept_faces = faces[face_mask]  # (G, 3)
 
-    # Build old→new index map.
+    # Build old->new index map.
     old_to_new = np.full(vertices.shape[0], -1, dtype=np.int64)
     new_indices = np.where(vertex_mask)[0]
     old_to_new[new_indices] = np.arange(new_indices.size, dtype=np.int64)
@@ -814,7 +721,7 @@ def apply_parcellation(
     -----
     This is the building block for the geometric connectome:
     apply a Schaefer-200 parcellation, compute spectral descriptors
-    per parcel, and build a 200×200 similarity matrix.
+    per parcel, and build a 200x200 similarity matrix.
 
     Examples
     --------
@@ -842,12 +749,12 @@ def apply_parcellation(
         mask = labels == lab
         n_verts = mask.sum()
         if n_verts < 3:
-            logger.warning("Label %d has only %d vertices — skipping.", lab, n_verts)
+            logger.warning("Label %d has only %d vertices -- skipping.", lab, n_verts)
             continue
         sub_v, sub_f = extract_submesh(vertices, faces, mask)
         if sub_f.shape[0] == 0:
             logger.warning(
-                "Label %d has vertices but no complete triangles — skipping.",
+                "Label %d has vertices but no complete triangles -- skipping.",
                 lab,
             )
             continue
@@ -862,10 +769,10 @@ def apply_parcellation(
 
 
 # ======================================================================
-# §5b  PARCELLATION REMAPPING AND AGGREGATION
+# S5b  PARCELLATION REMAPPING AND AGGREGATION
 # ======================================================================
 
-# ── Predefined lobe/network groupings ────────────────────────────────
+# -- Predefined lobe/network groupings --------------------------------
 
 DESIKAN_LOBE_MAP: dict[str, str] = {
     # Frontal
@@ -972,13 +879,13 @@ def remap_parcellation(
         Region names, one per unique label in the annotation colour
         table.  Index *i* corresponds to label integer *i*.
     mapping : dict of {str: str}
-        Source region name → target group name.
+        Source region name -> target group name.
     match : ``"exact"`` or ``"contains"``
         How to match region names to mapping keys.
 
-        * ``"exact"`` — the region name (lowered, stripped) must equal
+        * ``"exact"`` -- the region name (lowered, stripped) must equal
           a mapping key.
-        * ``"contains"`` — the region name is assigned to the first
+        * ``"contains"`` -- the region name is assigned to the first
           mapping key that appears as a substring.  Useful for
           Schaefer parcels whose names embed the network prefix
           (e.g. ``"7Networks_LH_Vis_1"`` matches key ``"Vis"``).
@@ -1020,7 +927,7 @@ def remap_parcellation(
     for n in names:
         decoded.append(n.decode("utf-8") if isinstance(n, bytes) else str(n))
 
-    # Build old-label → group-name map.
+    # Build old-label -> group-name map.
     label_to_group: dict[int, str] = {}
     mapping_lower = {k.lower().strip(): v for k, v in mapping.items()}
 
@@ -1053,7 +960,7 @@ def remap_parcellation(
     new_names = {v: k for k, v in group_to_int.items()}
 
     logger.info(
-        "Remapped %d labels → %d groups (%s)",
+        "Remapped %d labels -> %d groups (%s)",
         len(set(labels.tolist())),
         len(unique_groups),
         ", ".join(unique_groups),
@@ -1122,7 +1029,7 @@ def aggregate_by_parcellation(
     -------
     pandas.DataFrame
         One row per parcel, columns are ``"label"`` (or region name)
-        plus one column per data dimension (``"d0"``, ``"d1"``, …
+        plus one column per data dimension (``"d0"``, ``"d1"``, ...
         or ``"value"`` for 1-D input).
 
     Examples
@@ -1209,7 +1116,7 @@ def aggregate_by_parcellation(
 
 
 # ======================================================================
-# §6  __all__
+# S6  __all__
 # ======================================================================
 
 __all__: list[str] = [
@@ -1220,8 +1127,6 @@ __all__: list[str] = [
     "detect_format",
     # Parcellation
     "extract_submesh",
-    # Volumetric → point cloud
-    "labels_to_pointcloud",
     # Auto-detection
     "load",
     "load_freesurfer_annot",

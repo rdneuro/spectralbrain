@@ -24,7 +24,7 @@ logger = get_logger(__name__)
 
 
 # ======================================================================
-# §1  TIMING
+# S1  TIMING
 # ======================================================================
 
 
@@ -103,7 +103,7 @@ class Timer:
 
 
 # ======================================================================
-# §2  REPRODUCIBILITY
+# S2  REPRODUCIBILITY
 # ======================================================================
 
 
@@ -114,7 +114,7 @@ def seed_everything(seed: int = 42) -> None:
     sets the SpectralBrain library-wide default seed
     (:func:`spectralbrain.runtime.set_global_seed`), which every library
     function taking ``seed=None`` falls back to (FPS subsampling, jitter,
-    clustering, …).  Generators created with ``np.random.default_rng()``
+    clustering, ...).  Generators created with ``np.random.default_rng()``
     *outside* SpectralBrain are not affected.
 
     Notes
@@ -196,7 +196,7 @@ def get_reproducibility_info() -> dict[str, str]:
 
 
 # ======================================================================
-# §3  FILE / PATH HELPERS
+# S3  FILE / PATH HELPERS
 # ======================================================================
 
 
@@ -253,7 +253,7 @@ def find_files(
 
 
 # ======================================================================
-# §4  SUBJECTS / BIDS HELPERS
+# S4  SUBJECTS / BIDS HELPERS
 # ======================================================================
 
 
@@ -303,7 +303,7 @@ def collect_subjects(
 
 
 # ======================================================================
-# §5  PRETTY PRINTING
+# S5  PRETTY PRINTING
 # ======================================================================
 
 

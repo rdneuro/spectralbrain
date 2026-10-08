@@ -2,19 +2,21 @@
 
 This module defines:
 
-- :class:`SpectralDecomposition` — the central object of the library,
+- :class:`SpectralDecomposition` -- the central object of the library,
   holding eigenvalues/eigenvectors and providing access to all
   spectral descriptors.
-- :class:`GeometricObject` — abstract protocol that both
-  :class:`BrainMesh` and :class:`BrainPointCloud` implement.
-- Shared geometric functions that operate on raw ``(N, 3)``
-  coordinate arrays regardless of mesh or point-cloud origin.
+- :class:`GeometricObject` -- the structural protocol that
+  :class:`~spectralbrain.core.meshes.BrainMesh` implements. Any external
+  geometry type that satisfies it (e.g. the geometry objects of the sibling
+  library ``pointsbrain``) can feed the same spectral pipeline.
+- Shared geometric functions that operate on raw ``(N, 3)`` vertex
+  coordinate arrays.
 
 Design principle
 ----------------
 SpectralBrain's data flow is:
 
-    io.loaders → core.meshes / core.pointclouds → **core.base.SpectralDecomposition** → spectral.*
+    io.loaders -> core.meshes -> **core.base.SpectralDecomposition** -> spectral.*
 
 The SpectralDecomposition is what ``core/`` produces and ``spectral/``
 consumes.  It is the single handoff point between geometry and
@@ -44,28 +46,26 @@ from spectralbrain.runtime import (
     Normals,
     PathLike,
     Points,
-    ScalarMap,
     SparseMatrix,
     Vertices,
     get_logger,
-    resolve_seed,
 )
 
 logger = get_logger(__name__)
 
 
 # ======================================================================
-# §1  SPECTRAL DECOMPOSITION — the central object
+# S1  SPECTRAL DECOMPOSITION -- the central object
 # ======================================================================
 
 
 class SpectralDecomposition:
-    """Eigenvalues and eigenvectors of a Laplace–Beltrami operator.
+    """Eigenvalues and eigenvectors of a Laplace-Beltrami operator.
 
     This is the **central object** of SpectralBrain.  It is produced
-    by ``core.meshes.BrainMesh.decompose()`` or
-    ``core.pointclouds.BrainPointCloud.decompose()`` and consumed
-    by every function in ``spectral/``.
+    by ``core.meshes.BrainMesh.decompose()`` (or by any operator in
+    :mod:`spectralbrain.spectral.operators`) and consumed by every
+    function in ``spectral/``.
 
     Parameters
     ----------
@@ -80,7 +80,7 @@ class SpectralDecomposition:
     surface_area : float, optional
         Total surface area (for eigenvalue normalisation).
     metadata : dict, optional
-        Provenance info (subject, hemisphere, structure, backend, …).
+        Provenance info (subject, hemisphere, structure, backend, ...).
 
     Attributes
     ----------
@@ -137,7 +137,7 @@ class SpectralDecomposition:
         self.surface_area = surface_area
         self.metadata = metadata or {}
 
-    # ── properties ────────────────────────────────────────────────────
+    # -- properties ----------------------------------------------------
 
     @property
     def n_vertices(self) -> int:
@@ -156,7 +156,7 @@ class SpectralDecomposition:
 
     @property
     def fiedler_value(self) -> float:
-        """First non-trivial eigenvalue λ₁ (the Fiedler value).
+        """First non-trivial eigenvalue lambda_1 (the Fiedler value).
 
         Encodes global connectivity of the shape.  Larger values
         indicate tighter geometry.
@@ -167,14 +167,14 @@ class SpectralDecomposition:
 
     @property
     def spectral_gap(self) -> float:
-        """Gap between λ₁ and λ₂."""
+        """Gap between lambda_1 and lambda_2."""
         if self.n_eigenvalues < 3:
             return 0.0
         return float(self.eigenvalues[2] - self.eigenvalues[1])
 
     @property
     def shape_dna(self) -> GlobalDescriptor:
-        """ShapeDNA — the raw eigenvalue sequence (excluding λ₀ ≈ 0).
+        """ShapeDNA -- the raw eigenvalue sequence (excluding lambda_0 ~ 0).
 
         Returns
         -------
@@ -206,7 +206,7 @@ class SpectralDecomposition:
             )
         return self.eigenvalues[1:] * self.surface_area
 
-    # ── manipulation ──────────────────────────────────────────────────
+    # -- manipulation --------------------------------------------------
 
     def truncate(self, k: int) -> SpectralDecomposition:
         """Return a copy with only the first *k* eigenpairs.
@@ -214,7 +214,7 @@ class SpectralDecomposition:
         Parameters
         ----------
         k : int
-            Number of eigenpairs to keep (must be ≤ current k).
+            Number of eigenpairs to keep (must be <= current k).
 
         Returns
         -------
@@ -244,9 +244,9 @@ class SpectralDecomposition:
         Parameters
         ----------
         method : str
-            ``"area"`` — multiply by surface area (Reuter convention).
-            ``"volume"`` — multiply by volume^{2/3}.
-            ``"fiedler"`` — divide by λ₁.
+            ``"area"`` -- multiply by surface area (Reuter convention).
+            ``"volume"`` -- multiply by volume^{2/3}.
+            ``"fiedler"`` -- divide by lambda_1.
         area : float, optional
             Override surface area.
         volume : float, optional
@@ -269,7 +269,7 @@ class SpectralDecomposition:
             evals *= volume ** (2 / 3)
         elif method == "fiedler":
             if evals[1] <= 0:
-                raise ValueError("Fiedler value is zero — cannot normalise.")
+                raise ValueError("Fiedler value is zero -- cannot normalise.")
             evals /= evals[1]
         else:
             raise ValueError(f"Unknown normalisation method: {method!r}")
@@ -283,7 +283,7 @@ class SpectralDecomposition:
             metadata={**self.metadata, "eigenvalue_normalisation": method},
         )
 
-    # ── persistence ───────────────────────────────────────────────────
+    # -- persistence ---------------------------------------------------
 
     def save(self, path: PathLike, **kwargs: Any) -> Path:
         """Save to HDF5 via :func:`spectralbrain.io.export.save_hdf5`.
@@ -336,7 +336,7 @@ class SpectralDecomposition:
             metadata=meta,
         )
 
-    # ── repr ──────────────────────────────────────────────────────────
+    # -- repr ----------------------------------------------------------
 
     def __repr__(self) -> str:
         """Return a compact summary of the decomposition."""
@@ -352,17 +352,18 @@ class SpectralDecomposition:
 
 
 # ======================================================================
-# §2  GEOMETRIC OBJECT PROTOCOL
+# S2  GEOMETRIC OBJECT PROTOCOL
 # ======================================================================
 
 
 @runtime_checkable
 class GeometricObject(Protocol):
-    """Protocol that :class:`BrainMesh` and :class:`BrainPointCloud`
-    both implement.
+    """Structural protocol implemented by :class:`BrainMesh`.
 
-    Any function that accepts a ``GeometricObject`` can work with
-    either representation.
+    SpectralBrain itself handles triangle meshes only; the protocol is
+    kept public so that external geometry types (for instance those of the
+    sibling library ``pointsbrain``) can plug into the same
+    ``decompose() -> SpectralDecomposition`` pipeline.
     """
 
     @property
@@ -389,13 +390,12 @@ class GeometricObject(Protocol):
 
 
 # ======================================================================
-# §3  SHARED GEOMETRIC FUNCTIONS
+# S3  SHARED GEOMETRIC FUNCTIONS
 # ======================================================================
-# All functions operate on (N, 3) coordinate arrays and are agnostic
-# to whether the input is a mesh or a point cloud.
+# All functions operate on (N, 3) vertex-coordinate arrays.
 
 
-# ── Basic geometry ────────────────────────────────────────────────────
+# -- Basic geometry ----------------------------------------------------
 
 
 def compute_centroid(points: Points) -> np.ndarray:
@@ -436,7 +436,7 @@ def compute_bounding_box(
 def compute_pca_axes(
     points: Points,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """PCA of a point set — principal axes and explained variance.
+    """PCA of a point set -- principal axes and explained variance.
 
     Parameters
     ----------
@@ -460,7 +460,7 @@ def compute_pca_axes(
     return eigvecs[:, order].T, eigvals[order], centroid
 
 
-# ── Normalisation / alignment ─────────────────────────────────────────
+# -- Normalisation / alignment -----------------------------------------
 
 
 def center_points(points: Points) -> Points:
@@ -489,9 +489,9 @@ def normalize_scale(
     ----------
     points : ndarray, shape (N, 3)
     method : str
-        ``"bbox"`` — divide by bounding-box diagonal.
-        ``"rms"`` — divide by RMS distance from centroid.
-        ``"area"`` — divide by sqrt(surface_area).
+        ``"bbox"`` -- divide by bounding-box diagonal.
+        ``"rms"`` -- divide by RMS distance from centroid.
+        ``"area"`` -- divide by sqrt(surface_area).
     area : float, optional
         Surface area (required for ``method="area"``).
 
@@ -548,7 +548,7 @@ def procrustes_align(
     """Rigid + uniform scale alignment (Procrustes).
 
     Finds the rotation R, translation t, and scale s that minimise
-    ||s·R·source + t − target||².
+    ||s*R*source + t - target||^2.
 
     Parameters
     ----------
@@ -593,63 +593,7 @@ def procrustes_align(
     return aligned, R, scale
 
 
-# ── Subsampling ───────────────────────────────────────────────────────
-
-
-def farthest_point_sampling(
-    points: Points,
-    n_samples: int,
-    *,
-    seed: int | None = None,
-) -> tuple[Points, np.ndarray]:
-    """Farthest-point sampling (FPS) for uniform subsampling.
-
-    Iteratively selects the point farthest from the current set,
-    producing an approximately uniform subset.  Essential for
-    standardising point-cloud density from volumetric segmentations.
-
-    Parameters
-    ----------
-    points : ndarray, shape (N, 3)
-    n_samples : int
-        Number of points to select.
-    seed : int, optional
-        RNG seed for the initial point.  ``None`` falls back to the
-        library-wide seed set by :func:`~spectralbrain.utils.seed_everything`.
-
-    Returns
-    -------
-    sampled : ndarray, shape (n_samples, 3)
-        Selected points.
-    indices : ndarray, shape (n_samples,)
-        Indices into *points*.
-
-    Notes
-    -----
-    Complexity: O(N · n_samples).  For N > 100 k, consider the
-    approximate FPS in Open3D or PyTorch3D.
-    """
-    N = points.shape[0]
-    if n_samples >= N:
-        return points.copy(), np.arange(N)
-
-    rng = np.random.default_rng(resolve_seed(seed))
-    indices = np.zeros(n_samples, dtype=np.int64)
-    indices[0] = rng.integers(N)
-
-    # min_dist[i] = distance from point i to the closest selected point.
-    min_dist = np.full(N, np.inf, dtype=np.float64)
-
-    for j in range(1, n_samples):
-        last = points[indices[j - 1]]  # (3,)
-        dist = np.sum((points - last) ** 2, axis=1)  # (N,)
-        min_dist = np.minimum(min_dist, dist)
-        indices[j] = np.argmax(min_dist)
-
-    return points[indices], indices
-
-
-# ── Neighbourhood queries ─────────────────────────────────────────────
+# -- Neighbourhood queries ---------------------------------------------
 
 
 def knn_search(
@@ -705,69 +649,7 @@ def radius_search(
     return tree.query_ball_point(q, r=radius, workers=-1)
 
 
-def _knn_excluding_self(points: Points, k: int) -> tuple[np.ndarray, np.ndarray]:
-    """kNN self-query returning the *k* nearest **other** points.
-
-    Queries ``k + 1`` neighbours and drops the query point itself (which
-    also handles exact duplicates robustly by removing the self index
-    wherever it appears in the row).
-    """
-    N = points.shape[0]
-    kq = min(k + 1, N)
-    distances, indices = knn_search(points, k=kq)
-    distances = np.asarray(distances).reshape(N, kq)
-    indices = np.asarray(indices).reshape(N, kq)
-    self_idx = np.arange(N)[:, None]
-    is_self = indices == self_idx
-    # Drop exactly one entry per row: the self index if present, else the last.
-    drop = np.where(is_self.any(axis=1), is_self.argmax(axis=1), kq - 1)
-    keep = np.ones((N, kq), dtype=bool)
-    keep[np.arange(N), drop] = False
-    k_eff = kq - 1
-    return distances[keep].reshape(N, k_eff), indices[keep].reshape(N, k_eff)
-
-
-def compute_adjacency_from_knn(
-    points: Points,
-    k: int = 20,
-    *,
-    symmetric: bool = True,
-) -> SparseMatrix:
-    """Build a kNN adjacency matrix (binary or weighted).
-
-    Parameters
-    ----------
-    points : ndarray, shape (N, 3)
-    k : int
-        Number of neighbours.
-    symmetric : bool
-        Symmetrise the adjacency (``A = max(A, A.T)``).
-
-    Returns
-    -------
-    SparseMatrix, shape (N, N)
-        Binary adjacency (no self-loops; each point linked to its *k*
-        nearest *other* points).
-    """
-    import scipy.sparse as sp
-
-    _distances, indices = _knn_excluding_self(points, k)
-    N = points.shape[0]
-    k_eff = indices.shape[1]
-
-    rows = np.repeat(np.arange(N), k_eff)
-    cols = indices.ravel()
-    data = np.ones(N * k_eff, dtype=np.float64)
-
-    A = sp.csr_matrix((data, (rows, cols)), shape=(N, N))
-    A.setdiag(0)
-    A.eliminate_zeros()
-    if symmetric:
-        A = A.maximum(A.T)
-    return A
-
-
-# ── Shape distances ───────────────────────────────────────────────────
+# -- Shape distances ---------------------------------------------------
 
 
 def hausdorff_distance(
@@ -782,7 +664,7 @@ def hausdorff_distance(
     ----------
     A, B : ndarray, shape (N, 3) and (M, 3)
     symmetric : bool
-        If True, return max(d(A→B), d(B→A)).
+        If True, return max(d(A->B), d(B->A)).
 
     Returns
     -------
@@ -796,10 +678,10 @@ def hausdorff_distance(
 
 
 def chamfer_distance(A: Points, B: Points) -> float:
-    """L² Chamfer distance between two point sets.
+    """L^2 Chamfer distance between two point sets.
 
-    Chamfer = (1/|A|) Σ_{a∈A} min_{b∈B} ||a−b||²
-            + (1/|B|) Σ_{b∈B} min_{a∈A} ||b−a||²
+    Chamfer = (1/|A|) Sigma_{a in A} min_{b in B} ||a-b||^2
+            + (1/|B|) Sigma_{b in B} min_{a in A} ||b-a||^2
 
     Parameters
     ----------
@@ -816,7 +698,7 @@ def chamfer_distance(A: Points, B: Points) -> float:
     return float(np.mean(d_ab**2) + np.mean(d_ba**2))
 
 
-# ── Volume/surface conversion ─────────────────────────────────────────
+# -- Volume/surface conversion -----------------------------------------
 
 
 def marching_cubes(
@@ -891,7 +773,7 @@ def marching_cubes(
     )
 
 
-# ── Convex hull ───────────────────────────────────────────────────────
+# -- Convex hull -------------------------------------------------------
 
 
 def convex_hull_volume(points: Points) -> float:
@@ -920,71 +802,13 @@ def convex_hull_area(points: Points) -> float:
     Returns
     -------
     float
-        Area in mm².
+        Area in mm^2.
     """
     hull = ConvexHull(points)
     return float(hull.area)
 
 
-# ── Point density ─────────────────────────────────────────────────────
-
-
-def estimate_point_density(
-    points: Points,
-    k: int = 6,
-) -> ScalarMap:
-    """Estimate local point density via k-NN distance.
-
-    Density at each point is approximated as ``k / V_k`` where
-    ``V_k = (4/3)π r_k³`` and ``r_k`` is the distance to the k-th
-    nearest neighbour.
-
-    Parameters
-    ----------
-    points : ndarray, shape (N, 3)
-    k : int
-        Neighbour count for density estimation.
-
-    Returns
-    -------
-    density : ndarray, shape (N,)
-        Points per mm³ (approximate).
-    """
-    distances, _ = _knn_excluding_self(points, k)
-    r_k = distances[:, -1]  # (N,) distance to k-th NN (self excluded)
-    r_k = np.clip(r_k, 1e-10, None)  # avoid div by zero
-    volume_k = (4 / 3) * np.pi * r_k**3
-    return k / volume_k
-
-
-def detect_density_outliers(
-    points: Points,
-    k: int = 6,
-    threshold_sigma: float = 3.0,
-) -> np.ndarray:
-    """Flag points with anomalously low or high local density.
-
-    Parameters
-    ----------
-    points : ndarray, shape (N, 3)
-    k : int
-        Neighbour count.
-    threshold_sigma : float
-        Number of standard deviations from the mean log-density
-        to flag as outlier.
-
-    Returns
-    -------
-    outlier_mask : ndarray, shape (N,), bool
-        True for outlier points.
-    """
-    density = estimate_point_density(points, k=k)
-    log_d = np.log(density + 1e-30)
-    z = (log_d - log_d.mean()) / (log_d.std() + 1e-30)
-    return np.abs(z) > threshold_sigma
-
-
-# ── Triangle area helper (used by meshes.py and here) ─────────────────
+# -- Triangle area helper (used by meshes.py and here) -----------------
 
 
 def triangle_areas(
@@ -1001,7 +825,7 @@ def triangle_areas(
     Returns
     -------
     areas : ndarray, shape (F,)
-        Area of each triangle in mm².
+        Area of each triangle in mm^2.
     """
     v0 = vertices[faces[:, 0]]
     v1 = vertices[faces[:, 1]]
@@ -1021,13 +845,13 @@ def mesh_surface_area(vertices: Vertices, faces: Faces) -> float:
     Returns
     -------
     float
-        Total area in mm².
+        Total area in mm^2.
     """
     return float(triangle_areas(vertices, faces).sum())
 
 
 # ======================================================================
-# §4  __all__
+# S4  __all__
 # ======================================================================
 
 __all__: list[str] = [
@@ -1038,7 +862,6 @@ __all__: list[str] = [
     # Normalisation
     "center_points",
     "chamfer_distance",
-    "compute_adjacency_from_knn",
     "compute_bounding_box",
     # Basic geometry
     "compute_centroid",
@@ -1046,11 +869,6 @@ __all__: list[str] = [
     "convex_hull_area",
     # Convex hull
     "convex_hull_volume",
-    "detect_density_outliers",
-    # Point density
-    "estimate_point_density",
-    # Subsampling
-    "farthest_point_sampling",
     # Shape distances
     "hausdorff_distance",
     # Neighbourhood

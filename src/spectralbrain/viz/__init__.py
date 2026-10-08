@@ -1,20 +1,21 @@
-"""SpectralBrain visualization — 7 modules across 2D stats, 3D brain, geometry, and clustering.
+"""SpectralBrain visualisation -- one rendering module per analysis module.
 
-============================  ==========================  ============================
-Viz module                    Domain                      Paired statistics module
-============================  ==========================  ============================
-``graphics``                  Palettes, distplot, stats   ``statistics.analysis``
-``brainplots``                Cortical / subcortical 3D   ``statistics.normative``
-``hipp``                      Hippocampal surfaces        ``statistics.normative``
-``bayes``                     Posterior / trace / ROPE     ``statistics.bayesian``
-``geometry.points``           Point cloud 3D renders      ``statistics.eda``
-``geometry.meshes``           Mesh 3D renders             ``statistics.eda``
-``clusters``                  Cluster 3D + 2D plots       ``statistics.clustering``
-============================  ==========================  ============================
+============================  ===================================  =============================
+Viz module                    Domain                               Paired module
+============================  ===================================  =============================
+``graphics``                  Style, palettes, 2D statistics       ``statistics.analysis``
+``bayes``                     Posterior / forest / ROPE / GP       ``statistics.bayesian``
+``clusters``                  Cluster maps (3D) + 2D diagnostics,  ``statistics.clustering``
+                              parcellation-vs-cluster grids
+``spectral``                  Eigenmode panels, spectral           ``spectral.lbo``
+                              deformation maps
+``hipp``                      Hippocampal surfaces + flatmaps,     ``statistics.normative``
+                              template-free six-view
+``render3d``                  3D engine: cortex / subcortex,       (shared by all of the above)
+                              tracts, generic meshes, six-view
+============================  ===================================  =============================
 """
 
-# ── graphics.py ──
-# ── bayes.py ──
 from spectralbrain.viz.bayes import (  # noqa: F401
     plot_best_posterior,
     plot_connectome_posterior,
@@ -27,95 +28,9 @@ from spectralbrain.viz.bayes import (  # noqa: F401
     plot_rope_decision,
     plot_site_effects,
 )
-
-# ── brainplots.py ──
-from spectralbrain.viz.brainplots import (  # noqa: F401
-    DESCRIPTOR_STYLES,
-    VIEWS_CORTEX,
-    VIEWS_FULL,
-    VIEWS_MEDIAL,
-    BrainPlotSpec,
-    plot_bilateral_comparison,
-    plot_brain,
-    plot_brain_subcortical,
-    plot_brain_tracts,
-    plot_clustering_map,
-    plot_group_comparison,
-    plot_morphometric_gallery,
-    plot_multi_descriptor_panel,
-    plot_normative_map,
-    plot_spectral_progression,
-    plot_top10_morphometrics,
-)
-
-# ── clusters ──
 from spectralbrain.viz.clusters import (  # noqa: F401
-    CLUSTER_COLORS,
-    VIEWS_3POSE,
-    plot_agreement_heatmap,
-    plot_bayesian_confirmation,
-    plot_cluster_boundaries,
-    plot_cluster_exploded,
-    # 3D mesh renders (vedo)
-    plot_cluster_map,
-    # 2D statistical plots (matplotlib)
-    plot_cluster_profiles,
-    plot_cluster_scatter,
-    plot_cluster_sizes,
-    # Summary panel
-    plot_cluster_summary,
-    plot_coclustering_heatmap,
-    plot_descriptor_evolution_comparison,
-    plot_fusion_panel,
-    plot_gnmf_components,
-    plot_gnmf_temporal_factors,
-    plot_hks_cluster_progression,
-    plot_hovmoller,
-    plot_kymograph,
-    plot_method_comparison_3d,
-    plot_persistence_diagram,
-    plot_quality_comparison,
-    plot_silhouette_diagram,
-    plot_soft_membership,
-    plot_spatiotemporal_animation,
-    # Spatio-temporal field visualization
-    plot_spatiotemporal_field,
-    plot_warped_surface,
-)
-
-# ── eigenmodes.py (painel de eigenmodes estilo Mode-Based Morphometry, Cao 2024) ──
-from spectralbrain.viz.eigenmodes import (  # noqa: F401
-    assemble_eigenmode_panel,
-    compute_geometric_eigenmodes,
-    eigenmode_wavelength,
-    plot_eigenmode_panel,
-    render_eigenmodes,
-    select_mode_indices,
-    standardize_sign,
-)
-
-# ── geometry.meshes ──
-from spectralbrain.viz.geometry.meshes import (  # noqa: F401
-    CAMERA_PRESETS,
-    CURVATURE_METHODS,
-    plot_curvature,
-    plot_mesh,
-    plot_mesh_comparison,
-    plot_mesh_pyvista,
-    plot_multi_view,
-    plot_scalar_difference,
-    plot_wireframe,
-)
-
-# ── geometry.points ──
-from spectralbrain.viz.geometry.points import (  # noqa: F401
-    plot_clusters,
-    plot_mls_reconstruction,
-    plot_point_cloud,
-    plot_point_cloud_o3d,
-    plot_point_cloud_panel,
-    plot_voronoi,
-    plot_warp,
+    plot_parcellation_cluster_grid,
+    plot_parcellation_vs_clusters,
 )
 from spectralbrain.viz.graphics import (  # noqa: F401
     CMAP_DIVERGING,
@@ -123,10 +38,10 @@ from spectralbrain.viz.graphics import (  # noqa: F401
     CMAP_SEQUENTIAL,
     CMAP_SPECTRAL,
     COLOR_CONTROL,
-    COLOR_NS,
     COLOR_PATIENT,
-    COLOR_SIGNIFICANT,
+    DPI,
     PALETTE,
+    PALETTE_LIST,
     distplot,
     figure,
     plot_connectome_matrix,
@@ -140,50 +55,67 @@ from spectralbrain.viz.graphics import (  # noqa: F401
     savefig,
     set_style,
 )
-
-# ── hipp.py ──
 from spectralbrain.viz.hipp import (  # noqa: F401
     DENSITIES,
+    HIPP_DESCRIPTOR_STYLES,
+    HIPP_LABELS,
+    HIPP_VIEWS_3D,
+    HIPP_VIEWS_FULL,
     plot_hippocampus,
     plot_hippocampus_bilateral,
     plot_hippocampus_comparison,
     plot_hippocampus_gallery,
     plot_hippocampus_hovmoller,
     plot_hippocampus_normative,
+    plot_hippocampus_sixview,
     plot_hippocampus_spatiotemporal,
 )
-
-# ── hipp3d.py (template-free vedo six-view) ──
-from spectralbrain.viz.hipp3d import (  # noqa: F401
+from spectralbrain.viz.render3d import (  # noqa: F401
+    CAMERA_PRESETS,
+    CURVATURE_METHODS,
+    DESCRIPTOR_STYLES,
     SIXVIEWS,
-    plot_hippocampus_sixview,
-    plot_surface_sixview,
-)
-
-# ── panels.py (parcellation-vs-clustering 3D grid) ──
-from spectralbrain.viz.panels import (  # noqa: F401
-    plot_parcellation_cluster_grid,
-    plot_parcellation_vs_clusters,
-)
-
-# ── spectral_deformation.py (variação espectral L-vs-R, Hu & Hua 2017) ──
-from spectralbrain.viz.spectral_deformation import (  # noqa: F401
-    cotangent_stiffness,
-    lateralization_map,
-    lumped_mass,
-    render_scale_on_mesh,
-    spectral_deformation,
-)
-
-# ── tracts3d.py (advanced 3D tractography, neuro-tracts conventions) ──
-from spectralbrain.viz.tracts3d import (  # noqa: F401
     TRACT_VIEWS,
+    VIEWS_CORTEX,
+    VIEWS_FULL,
+    VIEWS_MEDIAL,
+    BrainPlotSpec,
     add_glass_brain,
     compose_tract_panel,
+    get_cmap,
     load_streamlines,
     mask_to_mesh,
+    plot_bilateral_comparison,
+    plot_brain,
+    plot_brain_subcortical,
+    plot_brain_tracts,
+    plot_clustering_map,
+    plot_curvature,
+    plot_group_comparison,
+    plot_mesh,
+    plot_mesh_comparison,
+    plot_mesh_pyvista,
+    plot_morphometric_gallery,
+    plot_multi_descriptor_panel,
+    plot_multi_view,
+    plot_normative_map,
+    plot_scalar_difference,
+    plot_spectral_progression,
+    plot_surface_sixview,
+    plot_top10_morphometrics,
+    plot_wireframe,
     render_bundle_surface,
     render_streamlines,
+    resolve_scalar_clim,
+    robust_clim,
     spectral_overlay,
     streamlines_multiview,
+)
+from spectralbrain.viz.spectral import (  # noqa: F401
+    assemble_eigenmode_panel,
+    plot_eigenmode_panel,
+    render_eigenmodes,
+    render_scale_on_mesh,
+    select_mode_indices,
+    standardize_sign,
 )

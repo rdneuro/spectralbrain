@@ -57,7 +57,7 @@ def _make_bids_overlays(root, n=6):
 
 
 def test_discover_bids_and_load_maps(tmp_path):
-    """BIDS discovery → maps load → stacked array with parsed covariates."""
+    """BIDS discovery -> maps load -> stacked array with parsed covariates."""
     pytest.importorskip("nibabel")
     n_vert = _make_bids_overlays(tmp_path, n=6)
 
@@ -105,7 +105,7 @@ def test_explicit_paths_parse_subject_ids(tmp_path):
 
 
 def test_freesurfer_discovery_and_pipeline(tmp_path):
-    """FreeSurfer surfaces → pipeline mode → stacked HKS descriptor fields."""
+    """FreeSurfer surfaces -> pipeline mode -> stacked HKS descriptor fields."""
     nib = pytest.importorskip("nibabel")
     v, f = _icosphere()
     rng = np.random.default_rng(1)

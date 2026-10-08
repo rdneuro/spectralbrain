@@ -6,8 +6,8 @@ in :class:`~spectralbrain.runtime.AtlasScheme`.
 
 The two primary use cases are:
 
-1. **Point-cloud extraction**: look up label IDs for a structure
-   (``get_label_id("aseg", "Left-Hippocampus") → 17``).
+1. **Structure extraction**: look up label IDs for a structure to mesh
+   (``get_label_id("aseg", "Left-Hippocampus") -> 17``).
 2. **Geometric connectome**: map Schaefer parcels to Yeo networks
    for block-level aggregation.
 
@@ -29,7 +29,7 @@ logger = get_logger(__name__)
 
 
 # ======================================================================
-# §1  FREESURFER ASEG
+# S1  FREESURFER ASEG
 # ======================================================================
 
 ASEG_LABELS: dict[int, str] = {
@@ -80,7 +80,7 @@ ASEG_LABELS: dict[int, str] = {
 
 
 # ======================================================================
-# §2  HIPPOCAMPAL SUBFIELDS (FreeSurfer v7.x, T1-based)
+# S2  HIPPOCAMPAL SUBFIELDS (FreeSurfer v7.x, T1-based)
 # ======================================================================
 
 HIPPOCAMPAL_SUBFIELDS: dict[int, str] = {
@@ -109,7 +109,7 @@ HIPPOCAMPAL_SUBFIELDS: dict[int, str] = {
 
 # FreeSurfer writes one hippocampal-subfield volume per hemisphere
 # (``lh.hippoAmygLabels*.mgz`` / ``rh.hippoAmygLabels*.mgz``) and both use
-# the *same* label IDs — there is no "+1000" right-hemisphere code.  The
+# the *same* label IDs -- there is no "+1000" right-hemisphere code.  The
 # right-hemisphere table is therefore identical to the left one.
 HIPPOCAMPAL_SUBFIELDS_RIGHT: dict[int, str] = dict(HIPPOCAMPAL_SUBFIELDS)
 
@@ -118,7 +118,7 @@ _HEMISPHERE_AGNOSTIC: frozenset[str] = frozenset({"hippocampal_subfields"})
 
 
 # ======================================================================
-# §3  THALAMIC NUCLEI (FreeSurfer v7.x)
+# S3  THALAMIC NUCLEI (FreeSurfer v7.x)
 # ======================================================================
 
 THALAMIC_NUCLEI: dict[int, str] = {
@@ -157,7 +157,7 @@ THALAMIC_NUCLEI_RIGHT: dict[int, str] = {
 
 
 # ======================================================================
-# §4  AMYGDALA NUCLEI (FreeSurfer v7.x)
+# S4  AMYGDALA NUCLEI (FreeSurfer v7.x)
 # ======================================================================
 
 AMYGDALA_NUCLEI: dict[int, str] = {
@@ -179,7 +179,7 @@ AMYGDALA_NUCLEI_RIGHT: dict[int, str] = {
 
 
 # ======================================================================
-# §5  YEO NETWORK ASSIGNMENTS
+# S5  YEO NETWORK ASSIGNMENTS
 # ======================================================================
 
 YEO_7_NETWORKS: dict[int, str] = {
@@ -214,7 +214,7 @@ YEO_17_NETWORKS: dict[int, str] = {
 
 
 # ======================================================================
-# §6  UNIFIED LOOKUP
+# S6  UNIFIED LOOKUP
 # ======================================================================
 
 _REGISTRIES: dict[str, dict[int, str]] = {
@@ -250,12 +250,12 @@ def get_label_name(atlas: str, label_id: int) -> str:
 
 
 def get_label_id(atlas: str, name: str) -> int | None:
-    """Reverse lookup: region name → label ID.
+    """Reverse lookup: region name -> label ID.
 
     An exact (case-insensitive) name match always wins.  Otherwise a
     case-insensitive substring match is used; if several regions match
-    (e.g. ``"Hippocampus"`` → Left *and* Right) the first in table order is
-    returned and a :class:`UserWarning` lists the alternatives — pass the
+    (e.g. ``"Hippocampus"`` -> Left *and* Right) the first in table order is
+    returned and a :class:`UserWarning` lists the alternatives -- pass the
     full name (``"Left-Hippocampus"``) to disambiguate.
 
     Parameters
@@ -288,7 +288,7 @@ def get_label_id(atlas: str, name: str) -> int | None:
 
 
 def list_labels(atlas: str) -> dict[int, str]:
-    """Return all label ID → name mappings for an atlas.
+    """Return all label ID -> name mappings for an atlas.
 
     Parameters
     ----------
@@ -341,7 +341,7 @@ _SCHAEFER_7_TOKENS: dict[str, str] = {
     "Default": "Default",
 }
 
-# Schaefer 17-network label tokens → names used in :data:`YEO_17_NETWORKS`.
+# Schaefer 17-network label tokens -> names used in :data:`YEO_17_NETWORKS`.
 _SCHAEFER_17_TOKENS: dict[str, str] = {
     "VisCent": "VisCent",
     "VisPeri": "VisPeri",
@@ -409,7 +409,7 @@ def schaefer_to_yeo(
     """Map a Schaefer parcel ID to its Yeo network name.
 
     Schaefer parcels encode the network in their naming convention:
-    ``7Networks_LH_Vis_1`` → "Visual".
+    ``7Networks_LH_Vis_1`` -> "Visual".
 
     Parameters
     ----------
@@ -434,8 +434,8 @@ def schaefer_to_yeo(
     -----
     Without *parcel_names* the mapping is a heuristic that assumes an
     equal number of parcels per network, which is **not** true for the
-    Schaefer atlases (e.g. Schaefer-100/7: LH Vis = parcels 1–9, but the
-    heuristic assigns 8–9 to Somatomotor).  A :class:`UserWarning` is
+    Schaefer atlases (e.g. Schaefer-100/7: LH Vis = parcels 1-9, but the
+    heuristic assigns 8-9 to Somatomotor).  A :class:`UserWarning` is
     emitted in that case.
     """
     if parcel_names is not None:

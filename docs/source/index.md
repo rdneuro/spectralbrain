@@ -14,8 +14,8 @@ Spectral shape analysis for brain structures
 
 ```{div} sd-text-center sd-mb-4
 Compute, analyze, and visualize intrinsic spectral shape descriptors of
-cortical surfaces, subcortical and hippocampal meshes, white-matter tracts, and
-point clouds — from the **Laplace–Beltrami operator** straight through to
+cortical surfaces, subcortical and hippocampal meshes and white-matter tract
+surfaces — from the **Laplace–Beltrami operator** straight through to
 rigorous statistics and publication-ready figures.
 ```
 
@@ -102,7 +102,7 @@ parameterization*, capturing geometry that volume alone misses. SpectralBrain
 packages those descriptors together with the I/O, multi-site harmonization,
 correct multiple-comparison statistics, and rendering that a neuroimaging study
 needs end to end — with a primary focus on the hippocampus in mesial temporal
-lobe epilepsy, while staying general to any brain surface or point cloud.
+lobe epilepsy, while staying general to any brain surface mesh.
 
 ```{toctree}
 :hidden:

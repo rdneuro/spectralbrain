@@ -7,12 +7,12 @@ are non-inferior to conventional morphometrics.
 
 Sections
 --------
-§1  ComBat / ComBat-GAM harmonization
-§2  NormativeModel — build, evaluate, persist
-§3  Centile curves — age-trajectory percentile charts
-§4  Individual deviation scoring
-§5  Non-inferiority & equivalence testing (TOST, AUC comparison)
-§6  Method comparison — spectral vs volumetric discrimination
+S1  ComBat / ComBat-GAM harmonization
+S2  NormativeModel -- build, evaluate, persist
+S3  Centile curves -- age-trajectory percentile charts
+S4  Individual deviation scoring
+S5  Non-inferiority & equivalence testing (TOST, AUC comparison)
+S6  Method comparison -- spectral vs volumetric discrimination
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ logger = get_logger(__name__)
 
 
 # ======================================================================
-# §1  COMBAT / COMBAT-GAM HARMONIZATION
+# S1  COMBAT / COMBAT-GAM HARMONIZATION
 # ======================================================================
 
 
@@ -684,7 +684,7 @@ def harmonize(
 
 
 # ======================================================================
-# §2  NORMATIVE MODEL
+# S2  NORMATIVE MODEL
 # ======================================================================
 
 
@@ -1129,7 +1129,7 @@ class NormativeModel:
 
 
 # ======================================================================
-# §3  CENTILE CURVES
+# S3  CENTILE CURVES
 # ======================================================================
 
 
@@ -1201,7 +1201,7 @@ def _moving_average(x: np.ndarray, w: int) -> np.ndarray:
 
 
 # ======================================================================
-# §4  INDIVIDUAL DEVIATION SCORING
+# S4  INDIVIDUAL DEVIATION SCORING
 # ======================================================================
 
 
@@ -1242,7 +1242,7 @@ def extreme_value_map(z_scores: np.ndarray, *, threshold: float = 2.0) -> np.nda
 
 
 # ======================================================================
-# §5  NON-INFERIORITY & EQUIVALENCE TESTING
+# S5  NON-INFERIORITY & EQUIVALENCE TESTING
 # ======================================================================
 
 
@@ -1495,8 +1495,8 @@ def auc_comparison_delong(
 
     References
     ----------
-    DeLong ER, DeLong DM, Clarke-Pearson DL. *Biometrics* 44(3):837–845,
-    1988. Sun X, Xu W. *IEEE Signal Process Lett* 21(11):1389–1393, 2014.
+    DeLong ER, DeLong DM, Clarke-Pearson DL. *Biometrics* 44(3):837-845,
+    1988. Sun X, Xu W. *IEEE Signal Process Lett* 21(11):1389-1393, 2014.
     """
     y = np.asarray(y_true)
     s_new = np.asarray(scores_new, dtype=np.float64)
@@ -1524,7 +1524,7 @@ def auc_comparison_delong(
 
 
 # ======================================================================
-# §6  METHOD COMPARISON
+# S6  METHOD COMPARISON
 # ======================================================================
 
 

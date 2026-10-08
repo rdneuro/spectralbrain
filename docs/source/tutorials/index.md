@@ -21,11 +21,10 @@ the {doc}`../about/contributing` page to rebuild them from their generators.
 03_shapedna_global_fingerprint
 04_heat_kernel_signature
 05_wave_kernel_and_gps
-06_pointclouds_and_tracts
-07_functional_maps_and_distances
-08_cohorts_and_vertexwise_stats
-09_effectsizes_classification_harmonization
-10_bayesian_and_visualization
+06_functional_maps_and_distances
+07_cohorts_and_vertexwise_stats
+08_effectsizes_classification_harmonization
+09_bayesian_and_visualization
 ```
 
 ## The arc
@@ -35,8 +34,7 @@ the {doc}`../about/contributing` page to rebuild them from their generators.
 3. **ShapeDNA** — the global fingerprint and shape distance.
 4. **Heat Kernel Signature** — multiscale per-vertex geometry.
 5. **Wave Kernel & GPS** — band-pass signatures and spectral embedding.
-6. **Point clouds & tracts** — volumetric segmentations and white-matter bundles.
-7. **Functional maps & distances** — cross-shape correspondence and metrics.
-8. **Cohorts & vertex-wise stats** — group loading, FWE permutation, FDR, TFCE.
-9. **Effect sizes, classification & harmonization** — ComBat/ComBat-GAM, AUC.
-10. **Bayesian & visualization** — PyMC models and publication figures.
+6. **Functional maps & distances** — cross-shape correspondence and metrics.
+7. **Cohorts & vertex-wise stats** — group loading, FWE permutation, FDR, TFCE.
+8. **Effect sizes, classification & harmonization** — ComBat/ComBat-GAM, AUC.
+9. **Bayesian & visualization** — PyMC models and publication figures.

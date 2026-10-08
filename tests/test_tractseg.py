@@ -32,15 +32,16 @@ def test_discover_tractseg_bundles(tmp_path):
     assert sorted(files) == ["AF_left", "CST_left"]
 
 
-def test_load_tractseg_pointcloud(tmp_path):
-    """A bundle mask loads as a BrainPointCloud of its voxels."""
+def test_load_tractseg_pointcloud_points_to_pointsbrain(tmp_path):
+    """SpectralBrain is mesh-only: asking for point clouds fails loudly, once."""
     pytest.importorskip("nibabel")
     ts = _write_tractseg(tmp_path, {"CST_left": ((16, 16, 16), 6)})
-    clouds = sb.load_tractseg(ts, output="pointcloud")
-    cloud = clouds["CST_left"]
-    assert cloud.points.shape[1] == 3
-    assert cloud.n_points > 0
-    assert cloud.metadata["bundle"] == "CST_left"
+    with pytest.raises(ValueError, match="pointsbrain"):
+        sb.load_tractseg(ts, output="pointcloud")
+    with pytest.raises(ValueError, match="pointsbrain"):
+        sb.load_tractseg_bundle(
+            ts / "bundle_segmentations" / "CST_left.nii.gz", output="pointcloud"
+        )
 
 
 def test_load_tractseg_mesh_decomposes(tmp_path):
@@ -54,7 +55,7 @@ def test_load_tractseg_mesh_decomposes(tmp_path):
     assert mesh.faces.shape[1] == 3
     decomp = mesh.decompose(k=10)
     assert len(decomp.eigenvalues) == 10
-    assert abs(decomp.eigenvalues[0]) < 1e-6  # closed surface → λ₀ ≈ 0
+    assert abs(decomp.eigenvalues[0]) < 1e-6  # closed surface -> lambda_0 ~ 0
 
 
 def test_load_tractseg_bundle_selection(tmp_path):
@@ -64,7 +65,7 @@ def test_load_tractseg_bundle_selection(tmp_path):
         tmp_path,
         {"CST_left": ((16, 16, 16), 6), "AF_left": ((10, 20, 16), 5), "CC": ((16, 16, 20), 4)},
     )
-    out = sb.load_tractseg(ts, bundles=["CST_left", "CC"], output="pointcloud")
+    out = sb.load_tractseg(ts, bundles=["CST_left", "CC"])
     assert sorted(out) == ["CC", "CST_left"]
 
 
@@ -76,5 +77,5 @@ def test_empty_mask_is_skipped(tmp_path):
     nib.save(
         nib.Nifti1Image(np.zeros((16, 16, 16), np.uint8), np.eye(4)), str(seg / "EMPTY.nii.gz")
     )
-    out = sb.load_tractseg(tmp_path / "tractseg_output", output="pointcloud")
+    out = sb.load_tractseg(tmp_path / "tractseg_output")
     assert out == {}

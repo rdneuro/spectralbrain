@@ -134,7 +134,7 @@ jobs:
           /tmp/test-env/bin/python -c "
           import spectralbrain as sb
           print(f'SpectralBrain {sb.__version__} imported OK')
-          print('Subpackages: core, io, spectral, statistics, backends, utils, viz')
+          print('Subpackages: core, io, spectral, statistics, utils, viz')
           "
 
   # ── Visualization + Bayesian tests (need vedo / PyMC; run headless) ──

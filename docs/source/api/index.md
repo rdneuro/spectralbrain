@@ -18,10 +18,12 @@ Everything below is importable from the top-level `spectralbrain` namespace
    spectralbrain.core
    spectralbrain.io
    spectralbrain.spectral
+   spectralbrain.spectral.lbo
+   spectralbrain.spectral.operators
    spectralbrain.statistics
+   spectralbrain.statistics.clustering
    spectralbrain.viz
    spectralbrain.utils
-   spectralbrain.backends
    spectralbrain.runtime
 ```
 
@@ -36,7 +38,6 @@ Everything below is importable from the top-level `spectralbrain` namespace
    :toctree: _autosummary
 
    BrainMesh
-   BrainPointCloud
    SpectralDecomposition
 
 .. rubric:: Spectral descriptors
